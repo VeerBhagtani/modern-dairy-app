@@ -1,0 +1,12 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // All real reads/writes go through the backend (Cloud Run, using the Admin
+    // SDK, which bypasses these rules entirely via a service account). These
+    // rules exist as a hard backstop in case a client ever talks to Firestore
+    // directly — default is deny-all.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
