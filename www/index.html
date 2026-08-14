@@ -192,7 +192,7 @@ svg{display:block;flex-shrink:0;}
 .prow:active{background:var(--line-2);}
 .prow{transition:background var(--fast) linear;}
 .pthumb{
-  width:52px;height:52px;border-radius:var(--r-sm);background:var(--surface-2);
+  width:76px;height:76px;border-radius:var(--r-sm);background:var(--surface-2);
   border:1px solid var(--line-2);overflow:hidden;flex-shrink:0;
 }
 .pthumb img{width:100%;height:100%;object-fit:contain;padding:3px;}
@@ -1957,7 +1957,8 @@ function scrAdminLogin(){
 }
 function doAdminLogin(){
   const pw = document.getElementById('f-admin-pw').value;
-  if(pw !== ADMIN_PASSWORD){ toast('Incorrect password','alert'); return; }
+  const stored = localStorage.getItem('mda_admin_password') || ADMIN_PASSWORD;
+  if(pw !== stored){ toast('Incorrect password','alert'); return; }
   ADMIN.authed = true;
   sessionStorage.setItem('mda_admin_authed','1');
   go('admin',{replace:true});
@@ -2006,26 +2007,108 @@ function scrAdmin(){
           <div class="card mb-8" style="padding:14px;">
             <div class="t-base mb-8" style="font-weight:600;">${esc(p.name)}</div>
             ${p.variants.map(v=>`
-              <div class="row gap-8 mb-8" style="align-items:flex-end;">
-                <div class="grow t-sm muted">${esc(v.label)}</div>
-                <div class="field" style="margin:0;width:84px;"><label class="label">MRP</label>
-                  <input id="adm-mrp-${pid}-${v.id}" type="number" value="${v.mrp}"></div>
-                <div class="field" style="margin:0;width:84px;"><label class="label">B2B price</label>
-                  <input id="adm-b2b-${pid}-${v.id}" type="number" value="${v.b2b}"></div>
-                <div class="field" style="margin:0;width:72px;"><label class="label">MOQ</label>
-                  <input id="adm-moq-${pid}-${v.id}" type="number" value="${v.moq}"></div>
-                <select id="adm-stock-${pid}-${v.id}" style="height:40px;border:1px solid var(--line);border-radius:var(--r-sm);">
-                  <option value="in" ${v.stock==='in'?'selected':''}>In stock</option>
-                  <option value="low" ${v.stock==='low'?'selected':''}>Low stock</option>
-                  <option value="out" ${v.stock==='out'?'selected':''}>Out of stock</option>
-                </select>
+              <div style="border-top:1px solid var(--line-2);padding-top:10px;margin-top:10px;">
+                <div class="t-sm muted mb-8" style="font-weight:600;">${esc(v.label)}</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                  <div class="field" style="margin:0;"><label class="label">MRP</label>
+                    <input id="adm-mrp-${pid}-${v.id}" type="number" inputmode="decimal" value="${v.mrp}"></div>
+                  <div class="field" style="margin:0;"><label class="label">B2B price</label>
+                    <input id="adm-b2b-${pid}-${v.id}" type="number" inputmode="decimal" value="${v.b2b}"></div>
+                  <div class="field" style="margin:0;"><label class="label">MOQ</label>
+                    <input id="adm-moq-${pid}-${v.id}" type="number" inputmode="numeric" value="${v.moq}"></div>
+                  <div class="field" style="margin:0;"><label class="label">Stock</label>
+                    <select id="adm-stock-${pid}-${v.id}" style="width:100%;height:44px;border:1px solid var(--line);border-radius:var(--r-sm);font:inherit;padding:0 10px;">
+                      <option value="in" ${v.stock==='in'?'selected':''}>In stock</option>
+                      <option value="low" ${v.stock==='low'?'selected':''}>Low stock</option>
+                      <option value="out" ${v.stock==='out'?'selected':''}>Out of stock</option>
+                    </select></div>
+                </div>
               </div>`).join('')}
             <button class="btn btn-quiet" onclick="saveAdminProduct('${pid}')">Save ${esc(p.name)}</button>
           </div>`).join('')}
       </div>
+
+      <div class="section-head"><span class="eyebrow">Orders (${S.orders.length})</span></div>
+      <div class="section" style="padding-top:0;">
+        <div class="banner warn mb-12">${icon('alert',17)}
+          <div>This lists orders placed on <b>this device</b> only. A real backend is required
+          to see every customer's orders across all devices in one place.</div></div>
+        ${!S.orders.length ? `<div class="card" style="padding:16px;text-align:center;" class="t-sm muted">No orders on this device yet.</div>` :
+          S.orders.map(o=>`
+          <div class="card mb-8" style="padding:14px;">
+            <div class="row between mb-4">
+              <span class="t-base" style="font-weight:600;">${esc(o.orderNo||o.id||'—')}</span>
+              <span class="t-sm" style="font-weight:600;">${money(o.total||0)}</span></div>
+            <div class="row between">
+              <span class="t-sm muted">${o.placedAt?dtFmt(o.placedAt):''}</span>
+              <span class="t-sm muted">${esc(o.status||'placed')}</span></div>
+          </div>`).join('')}
+      </div>
+
+      <div class="section-head"><span class="eyebrow">API &amp; integration keys</span></div>
+      <div class="section" style="padding-top:0;">
+        <div class="banner warn mb-12">${icon('alert',17)}
+          <div><b>Local demo storage only.</b> Keys typed here are saved in this browser/app's
+          localStorage on this device — they are <b>not encrypted, not sent anywhere, and not
+          secure.</b> Do not enter real production secrets until a backend exists. Once a
+          backend is connected, these values must move to secure server-side storage and this
+          screen should only show a Configured/Missing status, never the raw key.</div></div>
+        ${adminApiKeyField('gofrugal', 'GoFrugal', 'API key + outlet/company ID from GoFrugal support or your GoFrugal admin console (Settings → API access). Used to sync orders/invoices to your billing system.')}
+        ${adminApiKeyField('gst', 'GST verification', 'API key from your GST-verification provider (e.g. Cleartax, Masters India, or a GSP of your choice) — sign up on their developer portal and generate a key. Used to verify customer GSTIN during signup.')}
+        ${adminApiKeyField('razorpay', 'Razorpay', 'Key ID + Key Secret from the Razorpay Dashboard → Settings → API Keys (use Test mode keys first). Used for online payments.')}
+        ${adminApiKeyField('whatsapp', 'WhatsApp Business API', 'Access token + Phone Number ID from Meta for Developers → your WhatsApp Business app → API Setup. Used for order notifications.')}
+        ${adminApiKeyField('uber', 'Uber Direct (delivery)', 'Customer ID + Client ID + Client Secret from the Uber Direct dashboard (developer.uber.com → Uber Direct). Used to book courier deliveries to customers.')}
+      </div>
+
+      <div class="section-head"><span class="eyebrow">Admin password</span></div>
+      <div class="section" style="padding-top:0;">
+        <div class="card" style="padding:16px;">
+          <div class="field"><label class="label">Current password</label>
+            <input id="adm-pw-cur" type="password" autocomplete="off"></div>
+          <div class="field"><label class="label">New password</label>
+            <input id="adm-pw-new" type="password" autocomplete="off"></div>
+          <div class="field"><label class="label">Confirm new password</label>
+            <input id="adm-pw-confirm" type="password" autocomplete="off"></div>
+          <button class="btn mt-8" onclick="changeAdminPassword()">Change password</button>
+        </div>
+      </div>
+
       <div style="height:calc(24px + var(--safe-b));"></div>
     </div>
   </div>`;
+}
+function adminApiKeyField(key, label, howTo){
+  const keys = loadAdminOverrides().apiKeys || {};
+  const val = keys[key] || '';
+  return `<div class="card mb-8" style="padding:14px;">
+    <div class="row between mb-4"><span class="t-base" style="font-weight:600;">${esc(label)}</span>
+      <span class="pill ${val?'b':'n'}">${val?'Configured':'Missing'}</span></div>
+    <div class="t-xs muted mb-8" style="line-height:1.5;">${esc(howTo)}</div>
+    <input id="adm-key-${key}" type="password" placeholder="Paste key here" value="${esc(val)}" style="margin-bottom:8px;">
+    <button class="btn btn-quiet" onclick="saveAdminApiKey('${key}')">Save ${esc(label)} key</button>
+  </div>`;
+}
+function saveAdminApiKey(key){
+  const val = document.getElementById(`adm-key-${key}`).value.trim();
+  const cur = loadAdminOverrides();
+  const apiKeys = {...(cur.apiKeys||{}), [key]: val};
+  saveAdminOverrides({apiKeys});
+  toast('Key saved locally','check');
+  paint();
+}
+function changeAdminPassword(){
+  const cur = document.getElementById('adm-pw-cur').value;
+  const next = document.getElementById('adm-pw-new').value;
+  const confirm = document.getElementById('adm-pw-confirm').value;
+  const stored = localStorage.getItem('mda_admin_password') || ADMIN_PASSWORD;
+  if(cur !== stored){ toast('Current password is incorrect','alert'); return; }
+  if(next.length < 6){ toast('New password must be at least 6 characters','alert'); return; }
+  if(next !== confirm){ toast('New passwords do not match','alert'); return; }
+  localStorage.setItem('mda_admin_password', next);
+  toast('Password changed','check');
+  document.getElementById('adm-pw-cur').value='';
+  document.getElementById('adm-pw-new').value='';
+  document.getElementById('adm-pw-confirm').value='';
 }
 function saveAdminBusiness(){
   const val = id=>document.getElementById(id).value;
@@ -2091,14 +2174,34 @@ function confirmSignOut(){
     <button class="btn btn-quiet mt-8" onclick="closeSheet()">Stay signed in</button></div>`);
 }
 function scrAbout(){
+  const chapters = [
+    { year:'1956', title:'Shyam Sundar Dairy', body:
+`Modern Dairy's journey began in 1956 with a small lassi shop called Shyam Sundar Dairy, founded by Late Shyam Das Valiram Bhagtani. With limited resources but unwavering determination, the foundation was built on hard work, honesty, and survival.
+
+From borrowed benches to operating in the most basic conditions, life was far from easy. Growing up in a large family with financial challenges, education and daily needs were constant struggles. Despite hardships, strong values and discipline shaped the early years.
+
+This phase was not just about business — it was about resilience, responsibility, and the will to rise above circumstances.` },
+    { year:'', title:'The founding of Modern Dairy', body:
+`In a bold and unexpected move, Shyam Sundar Dairy was closed, and a new journey began. With just ₹5,000 and a loan of ₹50,000, Modern Dairy was established.
+
+The early days were challenging, with slow sales and limited income. But one thing remained constant — an uncompromising commitment to quality and trust. Every promise made to customers was honored, building strong relationships and credibility in the market.
+
+With consistent effort and dedication, the business slowly transitioned from survival to stability. What once seemed uncertain started showing signs of growth, marking a true turning point in the journey.` },
+    { year:'', title:'The next generation', body:
+`As the business grew, the next generation stepped in to take it forward. With fresh perspectives, education, and modern strategies, Modern Dairy evolved into a strong and scalable brand.
+
+Today, the leadership team continues to expand the vision — focusing on innovation, quality, and growth across markets while staying rooted in its core values.` },
+  ];
   return `<div class="screen on">${navBar('About Modern Dairy')}
     <div class="scroll section">
       <img src="${APPCFG.logo}" style="width:56px;height:56px;object-fit:contain;margin-bottom:16px;">
-      <div class="t-xl mb-8">Supplying Pune since 1975</div>
-      <div class="t-md muted mb-16" style="line-height:1.65;">
-        Modern Dairy manufactures ghee, paneer, curd and frozen foods at our facility in Karad, Maharashtra,
-        and supplies hotels, restaurants and retailers across Pune. Our products are also exported to Dubai,
-        Singapore, Africa and Panama.</div>
+      <div class="t-xl mb-16">Our journey</div>
+      ${chapters.map(c=>`
+        <div class="mb-24">
+          ${c.year?`<div class="t-sm" style="font-weight:700;color:var(--brand-3);letter-spacing:.04em;margin-bottom:2px;">${esc(c.year)}</div>`:''}
+          <div class="t-lg mb-8" style="font-weight:700;">${esc(c.title)}</div>
+          ${esc(c.body).split('\n\n').map(p=>`<div class="t-md muted mb-12" style="line-height:1.65;">${esc(p)}</div>`).join('')}
+        </div>`).join('')}
       <div class="card">
         ${arow('shield','FSSAI licensed','Food Safety and Standards Authority of India','')}
         ${arow('building','Manufacturing','MIDC Tasawade, Karad','')}
