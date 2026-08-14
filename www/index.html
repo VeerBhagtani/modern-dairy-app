@@ -16,39 +16,41 @@
    One scale for type, space, radius, elevation. No exceptions.
    ═══════════════════════════════════════════════════════════ */
 :root{
-  /* ── INK · AA contrast verified on cream ────────────────── */
-  --ink:#101828; --ink-2:#475467; --ink-3:#79879B; --ink-4:#AFBACA;
-  /* ── SURFACE · warm cream base, not sterile white ───────── */
-  --bg:#F7F4EE; --surface:#FFFFFF; --surface-2:#FBF9F5;
-  --line:#E7E2D9; --line-2:#F1EDE6;
-  /* ── BRAND · navy trust anchor + Modern Dairy crimson ───── */
-  --brand:#12294B; --brand-2:#1E4B8F; --brand-3:#3A6FB8;
-  --brand-tint:#EAF1FB; --brand-line:#C2D6F0;
-  --crimson:#B4302A; --crimson-tint:#FCEEEC;
-  /* ── SEMANTIC · fresh green, ghee gold ──────────────────── */
-  --fresh:#0E7A3D; --fresh-tint:#E7F5EC;
-  --gold:#9C6F1C;  --gold-tint:#FBF3E2;
-  --warn:#A65D06;  --warn-tint:#FDF3E5;
-  --bad:#A82820;   --bad-tint:#FCECEA;
-  /* ── TYPE SCALE ─────────────────────────────────────────── */
-  --t-xs:11px; --t-sm:12px; --t-md:13px; --t-base:14px;
-  --t-lg:16px; --t-xl:19px; --t-2xl:23px; --t-3xl:28px;
-  /* ── RADIUS · three only ────────────────────────────────── */
-  --r-sm:8px; --r:12px; --r-lg:18px;
-  /* ── ELEVATION · warm-tinted, three steps ───────────────── */
-  --e-1:0 1px 2px rgba(28,25,20,.05), 0 1px 3px rgba(28,25,20,.04);
-  --e-2:0 2px 6px rgba(28,25,20,.06), 0 6px 16px rgba(28,25,20,.07);
-  --e-3:0 12px 32px rgba(18,41,75,.16);
-  /* ── MOTION · 150–300ms per checklist ───────────────────── */
+  /* ── INK · slate-cool, AA verified on porcelain base ─────── */
+  --ink:#161B22; --ink-2:#4B5768; --ink-3:#7C8798; --ink-4:#B4BCC8;
+  /* ── SURFACE · porcelain, not cream, not sterile white ───── */
+  --bg:#F1F2EE; --surface:#FFFFFF; --surface-2:#F7F8F5;
+  --line:#DEE1DB; --line-2:#ECEEE9;
+  /* ── BRAND · deep ink-navy + Modern Dairy crimson accent ── */
+  --brand:#0E2036; --brand-2:#153A63; --brand-3:#2A5B93;
+  --brand-tint:#E8EFF6; --brand-line:#C7D6E6;
+  --crimson:#9E2B22; --crimson-tint:#FBEBE8;
+  /* ── SEMANTIC · milk-fresh green, ghee-gold ──────────────── */
+  --fresh:#116B3A; --fresh-tint:#E4F3EA;
+  --gold:#8A5F14;  --gold-tint:#FAF1DE;
+  --warn:#93520A;  --warn-tint:#FBF0DF;
+  --bad:#9C2B22;   --bad-tint:#FBEAE8;
+  /* ── TYPE SCALE · display → caption, distinct roles ──────── */
+  --t-caption:10px; --t-xs:11px; --t-sm:12px; --t-md:13px; --t-base:14.5px;
+  --t-lg:16.5px; --t-xl:19px; --t-h3:21px; --t-h2:25px; --t-h1:30px; --t-display:34px;
+  --t-price:20px;
+  /* ── RADIUS · restrained, product-not-toy ────────────────── */
+  --r-sm:6px; --r:10px; --r-lg:14px;
+  /* ── ELEVATION · low-contrast, functional not decorative ── */
+  --e-1:0 1px 2px rgba(14,18,25,.06);
+  --e-2:0 1px 2px rgba(14,18,25,.05), 0 4px 10px rgba(14,18,25,.06);
+  --e-3:0 8px 24px rgba(14,32,54,.14);
+  /* ── MOTION · quick, workmanlike ─────────────────────────── */
   --ease:cubic-bezier(.4,0,.2,1);
-  --fast:140ms; --mid:220ms; --slow:300ms;
-  /* ── CATEGORY ACCENTS · each AA-contrast on its own tint ─ */
-  --c-dairy:#1E4B8F;     --c-dairy-t:#E8F0FC;
-  --c-curd:#0F6E70;      --c-curd-t:#E2F4F4;
-  --c-beverages:#B35309; --c-beverages-t:#FDF0E3;
-  --c-sweets:#9C2B63;    --c-sweets-t:#FBEAF2;
-  --c-frozen:#0B6A9E;    --c-frozen-t:#E4F2FA;
+  --fast:110ms; --mid:170ms; --slow:240ms;
+  /* ── CATEGORY ACCENTS · muted, functional tags not decor ── */
+  --c-dairy:#153A63;     --c-dairy-t:#E8EFF6;
+  --c-curd:#0F5C56;      --c-curd-t:#E3F1EE;
+  --c-beverages:#8A4A16; --c-beverages-t:#F7EDE1;
+  --c-sweets:#7C2955;    --c-sweets-t:#F5E9EF;
+  --c-frozen:#175577;    --c-frozen-t:#E6EFF4;
   --font:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --font-display:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   --tap:44px;
   --safe-b:env(safe-area-inset-bottom,0px);
   --safe-t:env(safe-area-inset-top,0px);
@@ -86,14 +88,21 @@ svg{display:block;flex-shrink:0;}
 .scroll{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
         overscroll-behavior:contain;}
 
-/* ── TYPOGRAPHY ────────────────────────────────────────── */
-.t-2xl{font-size:var(--t-2xl);font-weight:700;letter-spacing:-.02em;line-height:1.2;}
-.t-xl{font-size:var(--t-xl);font-weight:700;letter-spacing:-.015em;line-height:1.25;}
-.t-lg{font-size:var(--t-lg);font-weight:600;letter-spacing:-.01em;line-height:1.3;}
-.t-base{font-size:var(--t-base);font-weight:500;}
-.t-md{font-size:var(--t-md);}
-.t-sm{font-size:var(--t-sm);}
-.t-xs{font-size:var(--t-xs);}
+/* ── TYPOGRAPHY · display → caption, one hierarchy, no exceptions ── */
+.t-display{font-size:var(--t-display);font-weight:700;letter-spacing:-.025em;line-height:1.08;}
+.t-h1{font-size:var(--t-h1);font-weight:700;letter-spacing:-.02em;line-height:1.15;}
+.t-h2{font-size:var(--t-h2);font-weight:700;letter-spacing:-.018em;line-height:1.2;}
+.t-h3{font-size:var(--t-h3);font-weight:700;letter-spacing:-.015em;line-height:1.22;}
+.t-2xl{font-size:var(--t-h3);font-weight:700;letter-spacing:-.015em;line-height:1.22;}
+.t-xl{font-size:var(--t-xl);font-weight:700;letter-spacing:-.012em;line-height:1.28;}
+.t-lg{font-size:var(--t-lg);font-weight:600;letter-spacing:-.008em;line-height:1.32;}
+.t-base{font-size:var(--t-base);font-weight:500;line-height:1.4;}
+.t-md{font-size:var(--t-md);line-height:1.4;}
+.t-sm{font-size:var(--t-sm);line-height:1.42;}
+.t-xs{font-size:var(--t-xs);line-height:1.4;}
+.t-caption{font-size:var(--t-caption);font-weight:600;letter-spacing:.03em;line-height:1.3;}
+.t-price{font-size:var(--t-price);font-weight:700;letter-spacing:-.015em;font-variant-numeric:tabular-nums;}
+.t-label{font-size:var(--t-xs);font-weight:600;letter-spacing:.04em;text-transform:uppercase;}
 .muted{color:var(--ink-2);}
 .muted-2{color:var(--ink-3);}
 .num{font-variant-numeric:tabular-nums;font-feature-settings:'tnum';}
@@ -102,7 +111,7 @@ svg{display:block;flex-shrink:0;}
 /* ── HEADER ────────────────────────────────────────────── */
 .appbar{
   background:var(--brand);color:#fff;padding:calc(var(--safe-t) + 12px) 16px 12px;
-  flex-shrink:0;position:relative;z-index:10;
+  flex-shrink:0;position:relative;z-index:10;border-bottom:2px solid var(--crimson);
 }
 .appbar-row{display:flex;align-items:center;gap:12px;}
 .topbar{
@@ -126,21 +135,23 @@ svg{display:block;flex-shrink:0;}
 .search input::placeholder{color:var(--ink-3);}
 .search:focus-within{border-color:var(--brand-line);background:var(--surface);}
 
-/* ── BUTTONS ───────────────────────────────────────────── */
+/* ── BUTTONS · flat, functional, no lift/glow gimmicks ───── */
 .btn{
   display:inline-flex;align-items:center;justify-content:center;gap:8px;
-  height:48px;padding:0 18px;border-radius:var(--r);font-size:var(--t-base);font-weight:600;
-  background:var(--brand);color:#fff;width:100%;box-shadow:var(--e-1);
-  transition:transform var(--fast) var(--ease),box-shadow var(--fast) var(--ease),filter var(--fast) var(--ease);
+  height:46px;padding:0 18px;border-radius:var(--r-sm);font-size:var(--t-base);font-weight:700;
+  letter-spacing:-.005em;background:var(--brand);color:#fff;width:100%;
+  border:1px solid var(--brand);
+  transition:background var(--fast) linear,opacity var(--fast) linear;
 }
-@media(hover:hover){.btn:hover{filter:brightness(1.12);box-shadow:var(--e-2);transform:translateY(-1px);}}
-.btn:active{transform:translateY(0) scale(.985);box-shadow:var(--e-1);}
-.btn:disabled{background:var(--line);color:var(--ink-3);pointer-events:none;}
-.btn-sm{height:36px;padding:0 14px;font-size:var(--t-md);border-radius:var(--r-sm);width:auto;}
-.btn-ghost{background:var(--surface);color:var(--brand);border:1px solid var(--brand-line);}
-.btn-ghost:active{background:var(--brand-tint);}
+@media(hover:hover){.btn:hover{background:var(--brand-2);border-color:var(--brand-2);}}
+.btn:active{opacity:.85;}
+.btn:disabled{background:var(--line);color:var(--ink-3);border-color:var(--line);pointer-events:none;}
+.btn-sm{height:34px;padding:0 14px;font-size:var(--t-md);border-radius:var(--r-sm);width:auto;}
+.btn-ghost{background:var(--surface);color:var(--brand);border:1px solid var(--line);}
+@media(hover:hover){.btn-ghost:hover{border-color:var(--brand-3);}}
+.btn-ghost:active{background:var(--surface-2);}
 .btn-quiet{background:var(--surface-2);color:var(--ink);border:1px solid var(--line);}
-.btn-danger{background:var(--surface);color:var(--bad);border:1px solid #F3C9C4;}
+.btn-danger{background:var(--surface);color:var(--bad);border:1px solid var(--line);}
 
 /* ── FORM ──────────────────────────────────────────────── */
 .field{margin-bottom:16px;}
@@ -165,35 +176,36 @@ svg{display:block;flex-shrink:0;}
 .seg-item.on{background:var(--surface);color:var(--brand);box-shadow:var(--e-1);}
 
 /* ── CHIPS ─────────────────────────────────────────────── */
-.chiprow{display:flex;gap:8px;overflow-x:auto;padding:12px 16px;scroll-snap-type:x proximity;flex-shrink:0;}
+.chiprow{display:flex;gap:6px;overflow-x:auto;padding:10px 16px;scroll-snap-type:x proximity;flex-shrink:0;border-bottom:1px solid var(--line-2);}
 .chip{
-  flex-shrink:0;height:34px;padding:0 14px;border-radius:var(--r-sm);border:1px solid var(--line);
-  background:var(--surface);font-size:var(--t-md);font-weight:600;color:var(--ink-2);
+  flex-shrink:0;height:32px;padding:0 13px;border-radius:999px;border:1px solid var(--line);
+  background:var(--surface);font-size:var(--t-sm);font-weight:600;color:var(--ink-2);
   display:flex;align-items:center;gap:6px;white-space:nowrap;scroll-snap-align:start;
 }
-.chip{transition:all var(--fast) var(--ease);}
-@media(hover:hover){.chip:hover{border-color:var(--brand-line);background:var(--brand-tint);}}
-.chip.on{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:var(--e-1);}
+@media(hover:hover){.chip:hover{border-color:var(--ink-4);}}
+.chip.on{background:var(--brand);border-color:var(--brand);color:#fff;}
 
-/* ── PRODUCT ROW (B2B density) ─────────────────────────── */
+/* ── PRODUCT ROW (B2B density — SKU sheet, not a social card) ── */
 .plist{background:var(--surface);}
-.prow{display:flex;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line-2);align-items:flex-start;}
+.prow{display:flex;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line-2);align-items:flex-start;}
 @media(hover:hover){.prow:hover{background:var(--surface-2);}}
 .prow:active{background:var(--line-2);}
-.prow{transition:background var(--fast) var(--ease);}
+.prow{transition:background var(--fast) linear;}
 .pthumb{
-  width:58px;height:58px;border-radius:var(--r-sm);background:var(--surface-2);
+  width:52px;height:52px;border-radius:var(--r-sm);background:var(--surface-2);
   border:1px solid var(--line-2);overflow:hidden;flex-shrink:0;
 }
 .pthumb img{width:100%;height:100%;object-fit:contain;padding:3px;}
 .pinfo{flex:1;min-width:0;}
-.pname{font-size:var(--t-base);font-weight:600;line-height:1.3;margin-bottom:3px;}
-.pmeta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:var(--t-sm);color:var(--ink-2);}
+.pname{font-size:var(--t-base);font-weight:600;line-height:1.28;margin-bottom:2px;}
+.pmeta{display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-size:var(--t-sm);color:var(--ink-2);}
+.punit{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink-2);}
 .dot{width:3px;height:3px;border-radius:50%;background:var(--ink-4);flex-shrink:0;}
-.pprice{display:flex;align-items:baseline;gap:6px;margin-top:6px;}
-.price{font-size:var(--t-lg);font-weight:700;letter-spacing:-.01em;}
-.mrp{font-size:var(--t-sm);color:var(--ink-3);text-decoration:line-through;}
-.save{font-size:var(--t-xs);font-weight:600;color:var(--fresh);background:var(--fresh-tint);padding:2px 6px;border-radius:4px;}
+.pprice{display:flex;align-items:baseline;gap:6px;margin-top:5px;}
+.price{font-size:var(--t-lg);font-weight:700;letter-spacing:-.01em;font-variant-numeric:tabular-nums;}
+.mrp{font-size:var(--t-sm);color:var(--ink-3);text-decoration:line-through;font-variant-numeric:tabular-nums;}
+.save{font-size:var(--t-xs);font-weight:700;color:var(--fresh);background:var(--fresh-tint);padding:2px 6px;border-radius:4px;}
+.pmoq{font-size:var(--t-xs);font-weight:600;color:var(--ink-3);margin-top:3px;}
 
 /* ── STOCK BADGE ───────────────────────────────────────── */
 .stk{display:inline-flex;align-items:center;gap:5px;font-size:var(--t-xs);font-weight:600;}
@@ -202,24 +214,26 @@ svg{display:block;flex-shrink:0;}
 .stk.low{color:var(--warn);} .stk.low::before{background:var(--warn);}
 .stk.out{color:var(--ink-3);} .stk.out::before{background:var(--ink-4);}
 
-/* ── QUANTITY STEPPER (bulk-friendly) ──────────────────── */
-.qty{display:flex;align-items:center;border:1px solid var(--brand-line);border-radius:var(--r-sm);overflow:hidden;background:var(--surface);height:36px;}
-.qty button{width:36px;height:100%;display:flex;align-items:center;justify-content:center;color:var(--brand);}
-.qty button:active{background:var(--brand-tint);}
+/* ── QUANTITY STEPPER · bulk-friendly, direct entry is primary ── */
+.qty{display:flex;align-items:center;border:1px solid var(--ink);border-radius:var(--r-sm);overflow:hidden;background:var(--surface);height:36px;}
+.qty button{width:34px;height:100%;display:flex;align-items:center;justify-content:center;color:var(--ink);flex-shrink:0;}
+.qty button:active{background:var(--surface-2);}
 .qty button:disabled{color:var(--ink-4);pointer-events:none;}
 .qty input{
-  width:44px;height:100%;text-align:center;border:none;border-left:1px solid var(--line-2);
-  border-right:1px solid var(--line-2);font-size:var(--t-md);font-weight:700;
-  font-variant-numeric:tabular-nums;background:var(--surface);
+  width:48px;height:100%;text-align:center;border:none;border-left:1px solid var(--line);
+  border-right:1px solid var(--line);font-size:var(--t-md);font-weight:700;
+  font-variant-numeric:tabular-nums;background:var(--surface);min-width:0;
 }
-.addbtn{height:36px;padding:0 16px;border-radius:var(--r-sm);background:var(--brand);color:#fff;font-size:var(--t-md);font-weight:600;}
-.addbtn:active{opacity:.88;}
-.addbtn.out{background:var(--line);color:var(--ink-3);pointer-events:none;}
+.qty-case{font-size:var(--t-caption);color:var(--ink-3);text-align:center;margin-top:3px;font-weight:600;letter-spacing:.02em;}
+.addbtn{height:36px;padding:0 16px;border-radius:var(--r-sm);background:var(--brand);color:#fff;font-size:var(--t-md);font-weight:700;border:1px solid var(--brand);}
+.addbtn:active{opacity:.85;}
+.addbtn.out{background:var(--surface);color:var(--ink-3);border-color:var(--line);pointer-events:none;}
 
-/* ── CARDS / SECTIONS ──────────────────────────────────── */
-.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;transition:box-shadow var(--mid) var(--ease),transform var(--mid) var(--ease);}
+/* ── CARDS / SECTIONS · bordered, not floating ───────────── */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden;}
 .section{padding:16px;}
 .section-head{display:flex;align-items:center;justify-content:space-between;padding:18px 16px 10px;}
+.section-head .t-lg{font-weight:700;}
 .divider{height:8px;background:var(--bg);border-top:1px solid var(--line);border-bottom:1px solid var(--line);}
 
 /* ── LIST ROWS ─────────────────────────────────────────── */
@@ -236,21 +250,24 @@ svg{display:block;flex-shrink:0;}
 }
 .tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 0 7px;color:var(--ink-3);position:relative;}
 .tab.on{color:var(--brand);}
-.tab-lbl{font-size:10px;font-weight:600;letter-spacing:.01em;}
+.tab.on::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:22px;height:2px;background:var(--crimson);}
+.tab-lbl{font-size:10px;font-weight:700;letter-spacing:.015em;}
 .tab-badge{
   position:absolute;top:4px;left:calc(50% + 6px);background:var(--bad);color:#fff;
   font-size:9px;font-weight:700;min-width:16px;height:16px;border-radius:8px;
   display:flex;align-items:center;justify-content:center;padding:0 4px;
 }
 
-/* ── STICKY ORDER BAR ──────────────────────────────────── */
+/* ── STICKY ORDER BAR · always shows distance-to-minimum-order ── */
 .orderbar{
   position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--line);
-  padding:10px 16px calc(10px + var(--safe-b));z-index:15;box-shadow:0 -2px 12px rgba(15,23,41,.06);
+  padding:10px 16px calc(10px + var(--safe-b));z-index:15;
 }
-.mov-track{height:3px;background:var(--line);border-radius:2px;overflow:hidden;margin-bottom:9px;}
-.mov-fill{height:100%;background:var(--brand);border-radius:2px;transition:width .3s cubic-bezier(.4,0,.2,1);}
+.mov-track{height:3px;background:var(--line-2);border-radius:2px;overflow:hidden;margin-bottom:9px;}
+.mov-fill{height:100%;background:var(--brand);border-radius:2px;transition:width .25s var(--ease);}
 .mov-fill.met{background:var(--fresh);}
+.mov-msg{display:flex;align-items:center;justify-content:space-between;font-size:var(--t-xs);font-weight:600;color:var(--ink-2);margin-bottom:8px;}
+.mov-msg.met{color:var(--fresh);}
 
 /* ── BANNERS ───────────────────────────────────────────── */
 .banner{display:flex;gap:10px;padding:11px 12px;border-radius:var(--r-sm);font-size:var(--t-md);line-height:1.45;align-items:flex-start;}
@@ -278,13 +295,13 @@ svg{display:block;flex-shrink:0;}
 @keyframes sp{to{transform:rotate(360deg)}}
 
 /* ── SHEET ─────────────────────────────────────────────── */
-.sheet-bg{position:fixed;inset:0;background:rgba(15,23,41,.42);z-index:100;opacity:0;pointer-events:none;transition:opacity .2s;}
+.sheet-bg{position:fixed;inset:0;background:rgba(14,18,25,.46);z-index:100;opacity:0;pointer-events:none;transition:opacity .2s;}
 .sheet-bg.on{opacity:1;pointer-events:auto;}
 .sheet{
   position:fixed;left:0;right:0;bottom:0;max-width:520px;margin:0 auto;background:var(--surface);
   border-radius:var(--r-lg) var(--r-lg) 0 0;z-index:101;transform:translateY(100%);
-  transition:transform .26s cubic-bezier(.32,.72,0,1);max-height:88dvh;display:flex;flex-direction:column;
-  padding-bottom:var(--safe-b);
+  transition:transform .22s var(--ease);max-height:88dvh;display:flex;flex-direction:column;
+  padding-bottom:var(--safe-b);border-top:1px solid var(--line);
 }
 .sheet.on{transform:translateY(0);}
 .sheet-grip{width:34px;height:4px;background:var(--line);border-radius:2px;margin:10px auto 4px;flex-shrink:0;}
@@ -461,7 +478,7 @@ const CONFIG = window.APP_CONFIG;   // build/environment config — see config.j
 /* Remote config — Admin Panel is the source of truth for all of this */
 let APPCFG = {
   businessName:'Modern Dairy',
-  logo:'https://res.cloudinary.com/dovozcgxb/image/upload/v1778859272/Screenshot_2026-05-11_222239_obbfc4.png',
+  logo:'assets/logo.png',
   supportPhone:'+919881232966',
   whatsapp:'919881232966',
   email:'info@moderndairy.in',
@@ -1035,44 +1052,41 @@ function scrHome(){
   return `<div class="screen on">
     <div class="scroll">
 
-      <!-- Masthead -->
-      <header style="background:linear-gradient(168deg,var(--brand) 0%,#1B3A66 100%);
-                     padding:calc(var(--safe-t) + 18px) 18px 26px;position:relative;overflow:hidden;">
-        <div style="position:absolute;right:-52px;top:-52px;width:180px;height:180px;border-radius:50%;
-                    background:rgba(255,255,255,.045);"></div>
-        <div style="position:absolute;right:14px;bottom:-72px;width:130px;height:130px;border-radius:50%;
-                    background:rgba(255,255,255,.03);"></div>
-        <div class="row between" style="position:relative;">
+      <!-- Masthead: flat, functional — no decorative gradient/blobs -->
+      <header style="background:var(--brand);padding:calc(var(--safe-t) + 16px) 16px 14px;">
+        <div class="row between">
           <div style="min-width:0;">
-            <div style="font-size:var(--t-sm);color:rgba(255,255,255,.66);">${greet}, ${esc(first)}</div>
-            <div class="truncate" style="font-size:var(--t-xl);font-weight:700;color:#fff;letter-spacing:-.02em;margin-top:1px;">
+            <div class="t-caption" style="color:rgba(255,255,255,.6);">${greet}, ${esc(first)}</div>
+            <div class="truncate t-h3" style="color:#fff;margin-top:1px;">
               ${esc(S.user?.company || S.user?.name || 'Modern Dairy')}</div>
-            ${isB2B()?`<div class="row gap-6" style="margin-top:7px;">
-              <span style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,.14);
-                    padding:3px 9px;border-radius:99px;font-size:var(--t-xs);font-weight:600;color:#fff;">
-                ${icon('building',12)} Business account</span></div>`:''}
           </div>
-          <button class="iconbtn on-brand" onclick="go('cart')" style="position:relative;" aria-label="Cart">
-            ${icon('cart',23)}
-            ${t.count?`<span style="position:absolute;top:2px;right:0;background:var(--crimson);color:#fff;
-              font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;
-              display:flex;align-items:center;justify-content:center;padding:0 5px;
-              box-shadow:0 0 0 2px var(--brand);">${t.count}</span>`:''}
-          </button>
+          <div class="row gap-8">
+            ${isB2B()?`<span class="t-caption" style="color:#fff;background:rgba(255,255,255,.14);
+                  padding:4px 9px;border-radius:var(--r-sm);font-weight:600;">
+                  ${icon('building',12)} Business</span>`:''}
+            <button class="iconbtn on-brand" onclick="go('cart')" style="position:relative;" aria-label="Cart">
+              ${icon('cart',22)}
+              ${t.count?`<span style="position:absolute;top:1px;right:1px;background:var(--crimson);color:#fff;
+                font-size:10px;font-weight:700;min-width:17px;height:17px;border-radius:9px;
+                display:flex;align-items:center;justify-content:center;padding:0 4px;
+                box-shadow:0 0 0 2px var(--brand);">${t.count}</span>`:''}
+            </button>
+          </div>
         </div>
 
-        <!-- Delivery promise: the single most useful fact -->
-        <div style="position:relative;margin-top:18px;background:rgba(255,255,255,.11);
-                    border:1px solid rgba(255,255,255,.16);border-radius:var(--r);padding:12px 14px;">
-          <div class="row gap-12">
-            <div style="width:34px;height:34px;border-radius:var(--r-sm);background:rgba(255,255,255,.15);
-                        display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;">
-              ${icon('truck',18)}</div>
-            <div class="grow">
-              <div style="font-size:var(--t-md);font-weight:600;color:#fff;">Next delivery tomorrow</div>
-              <div style="font-size:var(--t-sm);color:rgba(255,255,255,.66);">
-                Order before ${esc(APPCFG.orderCutoff)} to be included</div>
-            </div>
+        <!-- Search: the fastest path to a known SKU, always one tap away -->
+        <button class="search" style="width:100%;margin-top:12px;background:rgba(255,255,255,.12);
+                border-color:rgba(255,255,255,.2);color:rgba(255,255,255,.85);text-align:left;"
+                onclick="switchTab('catalogue');setTimeout(()=>document.getElementById('q')?.focus(),60)">
+          ${icon('search',17)}<span class="t-base" style="color:rgba(255,255,255,.6);">Search paneer, ghee, curd…</span>
+        </button>
+
+        <!-- Delivery promise: flat info row, not a decorative panel -->
+        <div class="row gap-10" style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.14);">
+          ${icon('truck',16)}
+          <div class="grow">
+            <span class="t-sm" style="color:#fff;font-weight:600;">Next delivery tomorrow</span>
+            <span class="t-sm" style="color:rgba(255,255,255,.6);"> · Order before ${esc(APPCFG.orderCutoff)}</span>
           </div>
         </div>
       </header>
@@ -1328,7 +1342,11 @@ function renderOrderBar(){
   const met=t.sub>=mov;
   const pct=mov?Math.min(100,(t.sub/mov)*100):100;
   slot.innerHTML=`<div class="orderbar">
-    ${mov?`<div class="mov-track"><div class="mov-fill ${met?'met':''}" style="width:${pct}%"></div></div>`:''}
+    ${mov?`<div class="mov-msg ${met?'met':''}">
+        <span>${met?`${icon('check',13)} Minimum order met`:`Minimum order: ${money(mov)}`}</span>
+        ${met?'':`<span class="num">${money(t.sub)} / ${money(mov)}</span>`}
+      </div>
+      <div class="mov-track"><div class="mov-fill ${met?'met':''}" style="width:${pct}%"></div></div>`:''}
     <div class="row between gap-12">
       <div style="min-width:0;">
         <div class="t-lg num" style="font-weight:700;">${money(t.sub)}</div>
@@ -1336,7 +1354,7 @@ function renderOrderBar(){
           ${met? `${t.count} item${t.count>1?'s':''} · excl. GST`
                : `Add ${money(mov-t.sub)} more to order`}</div>
       </div>
-      <button class="btn btn-sm" style="height:42px;padding:0 20px;${met?'':'background:var(--line);color:var(--ink-3);pointer-events:none;'}"
+      <button class="btn btn-sm" style="height:42px;padding:0 20px;${met?'':'background:var(--line);color:var(--ink-3);border-color:var(--line);pointer-events:none;'}"
               onclick="go('cart')">Review order ${icon('right',17)}</button>
     </div>
   </div>`;
@@ -1429,8 +1447,10 @@ function cartBody(){
   const mov=isB2B()?APPCFG.minOrderValue:0;
   const short=mov-t.sub;
   return `
-    ${short>0?`<div style="padding:12px 16px 0;"><div class="banner warn">${icon('alert',17)}
-      <div>Add <b>${money(short)}</b> more to reach the ${money(mov)} minimum order for business accounts.</div></div></div>`:''}
+    ${mov>0?(short>0?`<div style="padding:12px 16px 0;"><div class="banner warn">${icon('alert',17)}
+      <div>Add <b>${money(short)}</b> more to reach the ${money(mov)} minimum order for business accounts.</div></div></div>`
+      :`<div style="padding:12px 16px 0;"><div class="banner" style="background:var(--fresh-tint);color:var(--fresh);">${icon('check',17)}
+      <div>Minimum order met — ready for checkout.</div></div></div>`):''}
     <div class="plist mt-12">
       ${S.cart.map(i=>`<div class="prow">
         <div class="pthumb"><img src="${i.img}" alt="" onerror="this.style.opacity=0"></div>
@@ -1969,8 +1989,8 @@ function scrWallet(){
     <div class="scroll">
       <div class="section">
         <div class="card" style="padding:20px;background:var(--brand);border-color:var(--brand);">
-          <div class="t-xs" style="color:rgba(255,255,255,.66);font-weight:600;letter-spacing:.05em;text-transform:uppercase;">Available balance</div>
-          <div class="num" style="font-size:32px;font-weight:700;color:#fff;letter-spacing:-.02em;margin:6px 0 2px;">${money(w.balance)}</div>
+          <div class="t-label" style="color:rgba(255,255,255,.66);">Available balance</div>
+          <div class="num t-display" style="color:#fff;margin:6px 0 2px;">${money(w.balance)}</div>
           <div class="t-sm" style="color:rgba(255,255,255,.7);">Deducted automatically when you place an order</div>
         </div>
         <button class="btn mt-12" onclick="topUpSheet()">${icon('plus',18)} Add credit</button>
