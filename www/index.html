@@ -1898,25 +1898,169 @@ function arow(ic,title,sub,onclick){
     ${icon('right',17)}</div>`;
 }
 
-/* Admin panel — opens the panel served by the backend at /admin.
-   Requires an admin sign-in; the customer session gives no access. */
+/* Admin panel.
+   With a live backend (CONFIG.API_BASE set), opens the real server-hosted panel at /admin.
+   Without one (current DEMO mode), falls back to a local in-app admin panel that edits
+   APPCFG/CATALOGUE and persists overrides to localStorage on this device only — a working
+   preview, not a substitute for the real multi-device backend admin panel. */
 function openAdmin(){
-  const base = CONFIG.API_BASE
-    ? CONFIG.API_BASE.replace(/\/api\/?$/, '')
-    : (location.protocol.startsWith('http') ? location.origin : '');
-  if(!base){
-    openSheet(`<div class="sheet-head"><div class="t-lg">Admin panel unavailable</div>
-      <button class="iconbtn" onclick="closeSheet()">${icon('close',20)}</button></div>
-      <div class="section">
-        <div class="banner warn mb-16">${icon('alert',17)}
-          <div>The app is not connected to a server, so the admin panel cannot be opened.</div></div>
-        <div class="t-md muted" style="line-height:1.6;">
-          Set <b>API_BASE</b> in the CONFIG block at the top of this file to your backend URL,
-          then reopen the app. The panel lives at <b>&lt;server&gt;/admin</b>.</div>
-      </div>`);
-    return;
+  const base = CONFIG.API_BASE ? CONFIG.API_BASE.replace(/\/api\/?$/, '') : '';
+  if(base){ window.open(base + '/admin/', '_blank'); return; }
+  go(ADMIN.authed ? 'admin' : 'adminLogin');
+}
+
+/* ═══════════════════════════════════════════════════════════
+   22. LOCAL ADMIN PANEL (demo mode — no backend yet)
+   Edits are stored in localStorage under mda_admin_overrides and merged over
+   APPCFG/CATALOGUE on every boot, so they persist across app restarts on this
+   device. Once a real backend exists, openAdmin() above should be pointed at
+   CONFIG.API_BASE and this local panel becomes a fallback only.
+   ═══════════════════════════════════════════════════════════ */
+const ADMIN_PASSWORD = 'moderndairy2026'; // local-only gate; replace with real backend auth once available
+const ADMIN = { authed: sessionStorage.getItem('mda_admin_authed')==='1' };
+
+function loadAdminOverrides(){
+  try{ return JSON.parse(localStorage.getItem('mda_admin_overrides')||'{}'); }
+  catch(e){ return {}; }
+}
+function saveAdminOverrides(patch){
+  const cur = loadAdminOverrides();
+  const next = {...cur, ...patch};
+  localStorage.setItem('mda_admin_overrides', JSON.stringify(next));
+  return next;
+}
+function applyAdminOverrides(){
+  const o = loadAdminOverrides();
+  if(o.appcfg) APPCFG = {...APPCFG, ...o.appcfg};
+  if(o.products){
+    Object.keys(o.products).forEach(pid=>{
+      if(!CATALOGUE[pid]) return;
+      const patch = o.products[pid];
+      if(patch.variants){
+        CATALOGUE[pid].variants = CATALOGUE[pid].variants.map(v=>
+          patch.variants[v.id] ? {...v, ...patch.variants[v.id]} : v);
+      }
+    });
   }
-  window.open(base + '/admin/', '_blank');
+}
+
+function scrAdminLogin(){
+  return `<div class="screen on">${navBar('Admin sign in')}
+    <div class="scroll"><div class="section">
+      <div class="banner warn mb-16">${icon('alert',17)}
+        <div>Local demo mode — no backend is connected yet. This panel edits app content on
+        this device only. It is not the secure production admin system.</div></div>
+      <div class="field"><label class="label">Admin password</label>
+        <input id="f-admin-pw" type="password" placeholder="Enter password" autocomplete="off"></div>
+      <button class="btn mt-8" onclick="doAdminLogin()">Sign in</button>
+    </div></div>`;
+}
+function doAdminLogin(){
+  const pw = document.getElementById('f-admin-pw').value;
+  if(pw !== ADMIN_PASSWORD){ toast('Incorrect password','alert'); return; }
+  ADMIN.authed = true;
+  sessionStorage.setItem('mda_admin_authed','1');
+  go('admin',{replace:true});
+}
+
+function scrAdmin(){
+  if(!ADMIN.authed){ return scrAdminLogin(); }
+  const products = Object.entries(CATALOGUE);
+  return `<div class="screen on">
+    ${navBar('Admin panel', {action:`<button class="iconbtn" onclick="adminSignOut()">${icon('logout',20)}</button>`})}
+    <div class="scroll">
+      <div class="section">
+        <div class="banner info mb-16">${icon('info',17)}
+          <div>Local demo mode. Changes save to this device's storage and apply immediately in
+          this app, but do not sync to other devices until a backend is connected.</div></div>
+      </div>
+
+      <div class="section-head"><span class="eyebrow">Business settings</span></div>
+      <div class="section" style="padding-top:0;">
+        <div class="card" style="padding:16px;">
+          <div class="field"><label class="label">Business name</label>
+            <input id="adm-businessName" value="${esc(APPCFG.businessName)}"></div>
+          <div class="field"><label class="label">Support phone</label>
+            <input id="adm-supportPhone" value="${esc(APPCFG.supportPhone)}"></div>
+          <div class="field"><label class="label">WhatsApp number</label>
+            <input id="adm-whatsapp" value="${esc(APPCFG.whatsapp)}"></div>
+          <div class="field"><label class="label">Email</label>
+            <input id="adm-email" value="${esc(APPCFG.email)}"></div>
+          <div class="field"><label class="label">Instagram URL</label>
+            <input id="adm-instagram" value="${esc(APPCFG.instagram)}"></div>
+          <div class="field"><label class="label">Address</label>
+            <input id="adm-address" value="${esc(APPCFG.address)}"></div>
+          <div class="field"><label class="label">Business hours</label>
+            <input id="adm-businessHours" value="${esc(APPCFG.businessHours)}"></div>
+          <div class="field"><label class="label">Minimum order value (₹)</label>
+            <input id="adm-minOrderValue" type="number" value="${APPCFG.minOrderValue}"></div>
+          <div class="field"><label class="label">Announcement banner</label>
+            <input id="adm-announcement" value="${esc(APPCFG.announcement||'')}" placeholder="Leave blank to hide"></div>
+          <button class="btn mt-8" onclick="saveAdminBusiness()">Save business settings</button>
+        </div>
+      </div>
+
+      <div class="section-head"><span class="eyebrow">Products (${products.length})</span></div>
+      <div class="section" style="padding-top:0;">
+        ${products.map(([pid,p])=>`
+          <div class="card mb-8" style="padding:14px;">
+            <div class="t-base mb-8" style="font-weight:600;">${esc(p.name)}</div>
+            ${p.variants.map(v=>`
+              <div class="row gap-8 mb-8" style="align-items:flex-end;">
+                <div class="grow t-sm muted">${esc(v.label)}</div>
+                <div class="field" style="margin:0;width:84px;"><label class="label">MRP</label>
+                  <input id="adm-mrp-${pid}-${v.id}" type="number" value="${v.mrp}"></div>
+                <div class="field" style="margin:0;width:84px;"><label class="label">B2B price</label>
+                  <input id="adm-b2b-${pid}-${v.id}" type="number" value="${v.b2b}"></div>
+                <div class="field" style="margin:0;width:72px;"><label class="label">MOQ</label>
+                  <input id="adm-moq-${pid}-${v.id}" type="number" value="${v.moq}"></div>
+                <select id="adm-stock-${pid}-${v.id}" style="height:40px;border:1px solid var(--line);border-radius:var(--r-sm);">
+                  <option value="in" ${v.stock==='in'?'selected':''}>In stock</option>
+                  <option value="low" ${v.stock==='low'?'selected':''}>Low stock</option>
+                  <option value="out" ${v.stock==='out'?'selected':''}>Out of stock</option>
+                </select>
+              </div>`).join('')}
+            <button class="btn btn-quiet" onclick="saveAdminProduct('${pid}')">Save ${esc(p.name)}</button>
+          </div>`).join('')}
+      </div>
+      <div style="height:calc(24px + var(--safe-b));"></div>
+    </div>
+  </div>`;
+}
+function saveAdminBusiness(){
+  const val = id=>document.getElementById(id).value;
+  const patch = {
+    businessName: val('adm-businessName'), supportPhone: val('adm-supportPhone'),
+    whatsapp: val('adm-whatsapp'), email: val('adm-email'), instagram: val('adm-instagram'),
+    address: val('adm-address'), businessHours: val('adm-businessHours'),
+    minOrderValue: parseInt(val('adm-minOrderValue'))||0, announcement: val('adm-announcement'),
+  };
+  APPCFG = {...APPCFG, ...patch};
+  const cur = loadAdminOverrides();
+  saveAdminOverrides({appcfg: {...(cur.appcfg||{}), ...patch}});
+  toast('Business settings saved','check');
+}
+function saveAdminProduct(pid){
+  const p = CATALOGUE[pid];
+  const variantPatch = {};
+  p.variants.forEach(v=>{
+    const mrp = parseInt(document.getElementById(`adm-mrp-${pid}-${v.id}`).value)||0;
+    const b2b = parseInt(document.getElementById(`adm-b2b-${pid}-${v.id}`).value)||0;
+    const moq = parseInt(document.getElementById(`adm-moq-${pid}-${v.id}`).value)||1;
+    const stock = document.getElementById(`adm-stock-${pid}-${v.id}`).value;
+    v.mrp=mrp; v.b2b=b2b; v.moq=moq; v.stock=stock;
+    variantPatch[v.id] = {mrp,b2b,moq,stock};
+  });
+  const cur = loadAdminOverrides();
+  const products = {...(cur.products||{})};
+  products[pid] = {variants: {...(products[pid]?.variants||{}), ...variantPatch}};
+  saveAdminOverrides({products});
+  toast(`${p.name} saved`,'check');
+}
+function adminSignOut(){
+  ADMIN.authed = false;
+  sessionStorage.removeItem('mda_admin_authed');
+  go('account',{replace:true});
 }
 
 function showHours(){
@@ -2052,6 +2196,7 @@ const ROUTES = {
   cart:scrCart, checkout:scrCheckout, placed:scrPlaced,
   orders:scrOrders, order:scrOrder, reorder:scrReorder,
   account:scrAccount, wallet:scrWallet, about:scrAbout,
+  adminLogin:scrAdminLogin, admin:scrAdmin,
 };
 window.addEventListener('popstate',()=>{ if(NAV.length) back(); });
 
@@ -2075,6 +2220,7 @@ async function boot(){
   } else {
     const cfg=await API.get('/config'); if(cfg.success) APPCFG={...APPCFG,...cfg.data};
   }
+  applyAdminOverrides();
   if(!S.user){ S.screen='login'; paint(); return; }
   S.screen='home'; S.tab='home'; paint();
   await Promise.all([loadWallet(), loadOrders()]);
