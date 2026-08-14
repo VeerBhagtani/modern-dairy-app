@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<script src="config.js"></script>
 <style>
 /* ═══════════════════════════════════════════════════════════
    MODERN DAIRY — DESIGN SYSTEM
@@ -455,11 +456,7 @@ const CATALOGUE={"cow-milk":{"name":"Cow Milk","cat":"dairy","img":"https://res.
    so the Admin Panel can change it without an APK rebuild.
    ═══════════════════════════════════════════════════════════ */
 let FB = null;   // Firebase bridge, resolved during boot
-const CONFIG = {
-  API_BASE: '',            // e.g. 'https://api.moderndairy.in/api'
-  DEMO: true,              // works fully offline until API_BASE is set
-  RAZORPAY_KEY: '',
-};
+const CONFIG = window.APP_CONFIG;   // build/environment config — see config.js
 
 /* Remote config — Admin Panel is the source of truth for all of this */
 let APPCFG = {
