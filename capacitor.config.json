@@ -1,0 +1,13 @@
+{
+  "appId": "in.moderndairy.app",
+  "appName": "Modern Dairy",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

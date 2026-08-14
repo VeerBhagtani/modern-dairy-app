@@ -1,0 +1,19 @@
+{
+  "name": "modern-dairy-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Modern Dairy — Business Ordering Android app (Capacitor wrapper around the existing web app)",
+  "scripts": {
+    "sync": "cap sync android",
+    "open:android": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/app": "^6.0.1",
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/network": "^6.0.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2"
+  }
+}

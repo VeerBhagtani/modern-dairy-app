@@ -1,0 +1,2096 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#12294B">
+<title>Modern Dairy — Business Ordering</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<style>
+/* ═══════════════════════════════════════════════════════════
+   MODERN DAIRY — DESIGN SYSTEM
+   One scale for type, space, radius, elevation. No exceptions.
+   ═══════════════════════════════════════════════════════════ */
+:root{
+  /* ── INK · AA contrast verified on cream ────────────────── */
+  --ink:#101828; --ink-2:#475467; --ink-3:#79879B; --ink-4:#AFBACA;
+  /* ── SURFACE · warm cream base, not sterile white ───────── */
+  --bg:#F7F4EE; --surface:#FFFFFF; --surface-2:#FBF9F5;
+  --line:#E7E2D9; --line-2:#F1EDE6;
+  /* ── BRAND · navy trust anchor + Modern Dairy crimson ───── */
+  --brand:#12294B; --brand-2:#1E4B8F; --brand-3:#3A6FB8;
+  --brand-tint:#EAF1FB; --brand-line:#C2D6F0;
+  --crimson:#B4302A; --crimson-tint:#FCEEEC;
+  /* ── SEMANTIC · fresh green, ghee gold ──────────────────── */
+  --fresh:#0E7A3D; --fresh-tint:#E7F5EC;
+  --gold:#9C6F1C;  --gold-tint:#FBF3E2;
+  --warn:#A65D06;  --warn-tint:#FDF3E5;
+  --bad:#A82820;   --bad-tint:#FCECEA;
+  /* ── TYPE SCALE ─────────────────────────────────────────── */
+  --t-xs:11px; --t-sm:12px; --t-md:13px; --t-base:14px;
+  --t-lg:16px; --t-xl:19px; --t-2xl:23px; --t-3xl:28px;
+  /* ── RADIUS · three only ────────────────────────────────── */
+  --r-sm:8px; --r:12px; --r-lg:18px;
+  /* ── ELEVATION · warm-tinted, three steps ───────────────── */
+  --e-1:0 1px 2px rgba(28,25,20,.05), 0 1px 3px rgba(28,25,20,.04);
+  --e-2:0 2px 6px rgba(28,25,20,.06), 0 6px 16px rgba(28,25,20,.07);
+  --e-3:0 12px 32px rgba(18,41,75,.16);
+  /* ── MOTION · 150–300ms per checklist ───────────────────── */
+  --ease:cubic-bezier(.4,0,.2,1);
+  --fast:140ms; --mid:220ms; --slow:300ms;
+  /* ── CATEGORY ACCENTS · each AA-contrast on its own tint ─ */
+  --c-dairy:#1E4B8F;     --c-dairy-t:#E8F0FC;
+  --c-curd:#0F6E70;      --c-curd-t:#E2F4F4;
+  --c-beverages:#B35309; --c-beverages-t:#FDF0E3;
+  --c-sweets:#9C2B63;    --c-sweets-t:#FBEAF2;
+  --c-frozen:#0B6A9E;    --c-frozen-t:#E4F2FA;
+  --font:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --tap:44px;
+  --safe-b:env(safe-area-inset-bottom,0px);
+  --safe-t:env(safe-area-inset-top,0px);
+}
+/* Accessibility: honour reduced-motion (pre-delivery checklist) */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
+    transition-duration:.01ms!important;scroll-behavior:auto!important;}
+}
+/* Keyboard focus is always visible */
+:focus-visible{outline:2px solid var(--brand-2);outline-offset:2px;border-radius:4px;}
+/* Every interactive element shows a pointer */
+button,[onclick],a,.chip,.prow,.lrow,.tab{cursor:pointer;}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+html,body{height:100%;overflow:hidden;}   /* app shell — inner panes do the scrolling */
+body{
+  font-family:var(--font);font-size:var(--t-base);line-height:1.45;color:var(--ink);
+  background:var(--bg);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  overscroll-behavior-y:none;
+}
+button,input,select,textarea{font:inherit;color:inherit;}
+button{background:none;border:none;cursor:pointer;}
+input,textarea{outline:none;}
+a{color:inherit;text-decoration:none;}
+svg{display:block;flex-shrink:0;}
+::-webkit-scrollbar{width:0;height:0;}
+
+/* ── APP SHELL ─────────────────────────────────────────── */
+#app{max-width:520px;margin:0 auto;height:100dvh;background:var(--surface);position:relative;
+     display:flex;flex-direction:column;overflow:hidden;}
+.screen{display:none;flex-direction:column;height:100%;min-height:0;overflow:hidden;}
+.screen.on{display:flex;}
+/* min-height:0 is required — without it flex items refuse to shrink below
+   their content size and overflow-y:auto never engages. */
+.scroll{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+        overscroll-behavior:contain;}
+
+/* ── TYPOGRAPHY ────────────────────────────────────────── */
+.t-2xl{font-size:var(--t-2xl);font-weight:700;letter-spacing:-.02em;line-height:1.2;}
+.t-xl{font-size:var(--t-xl);font-weight:700;letter-spacing:-.015em;line-height:1.25;}
+.t-lg{font-size:var(--t-lg);font-weight:600;letter-spacing:-.01em;line-height:1.3;}
+.t-base{font-size:var(--t-base);font-weight:500;}
+.t-md{font-size:var(--t-md);}
+.t-sm{font-size:var(--t-sm);}
+.t-xs{font-size:var(--t-xs);}
+.muted{color:var(--ink-2);}
+.muted-2{color:var(--ink-3);}
+.num{font-variant-numeric:tabular-nums;font-feature-settings:'tnum';}
+.eyebrow{font-size:var(--t-xs);font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
+
+/* ── HEADER ────────────────────────────────────────────── */
+.appbar{
+  background:var(--brand);color:#fff;padding:calc(var(--safe-t) + 12px) 16px 12px;
+  flex-shrink:0;position:relative;z-index:10;
+}
+.appbar-row{display:flex;align-items:center;gap:12px;}
+.topbar{
+  display:flex;align-items:center;gap:12px;padding:calc(var(--safe-t) + 10px) 12px 10px;
+  border-bottom:1px solid var(--line);background:var(--surface);flex-shrink:0;z-index:20;
+}
+.iconbtn{
+  width:var(--tap);height:var(--tap);display:flex;align-items:center;justify-content:center;
+  border-radius:var(--r-sm);flex-shrink:0;color:var(--ink-2);margin:-10px;
+}
+.iconbtn:active{background:var(--line-2);}
+.iconbtn.on-brand{color:#fff;}
+.iconbtn.on-brand:active{background:rgba(255,255,255,.14);}
+
+/* ── SEARCH ────────────────────────────────────────────── */
+.search{
+  display:flex;align-items:center;gap:8px;background:var(--surface-2);
+  border:1px solid var(--line);border-radius:var(--r);padding:0 12px;height:42px;
+}
+.search input{flex:1;border:none;background:none;font-size:var(--t-base);min-width:0;}
+.search input::placeholder{color:var(--ink-3);}
+.search:focus-within{border-color:var(--brand-line);background:var(--surface);}
+
+/* ── BUTTONS ───────────────────────────────────────────── */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  height:48px;padding:0 18px;border-radius:var(--r);font-size:var(--t-base);font-weight:600;
+  background:var(--brand);color:#fff;width:100%;box-shadow:var(--e-1);
+  transition:transform var(--fast) var(--ease),box-shadow var(--fast) var(--ease),filter var(--fast) var(--ease);
+}
+@media(hover:hover){.btn:hover{filter:brightness(1.12);box-shadow:var(--e-2);transform:translateY(-1px);}}
+.btn:active{transform:translateY(0) scale(.985);box-shadow:var(--e-1);}
+.btn:disabled{background:var(--line);color:var(--ink-3);pointer-events:none;}
+.btn-sm{height:36px;padding:0 14px;font-size:var(--t-md);border-radius:var(--r-sm);width:auto;}
+.btn-ghost{background:var(--surface);color:var(--brand);border:1px solid var(--brand-line);}
+.btn-ghost:active{background:var(--brand-tint);}
+.btn-quiet{background:var(--surface-2);color:var(--ink);border:1px solid var(--line);}
+.btn-danger{background:var(--surface);color:var(--bad);border:1px solid #F3C9C4;}
+
+/* ── FORM ──────────────────────────────────────────────── */
+.field{margin-bottom:16px;}
+.label{display:block;font-size:var(--t-sm);font-weight:600;color:var(--ink-2);margin-bottom:6px;}
+.input{
+  width:100%;height:46px;padding:0 12px;border:1px solid var(--line);border-radius:var(--r);
+  background:var(--surface);font-size:var(--t-base);transition:border-color .12s;
+}
+.input:focus{border-color:var(--brand-2);box-shadow:0 0 0 3px var(--brand-tint);}
+.input::placeholder{color:var(--ink-3);}
+.input.err{border-color:var(--bad);}
+.hint{font-size:var(--t-xs);color:var(--ink-3);margin-top:5px;}
+.hint.err{color:var(--bad);}
+.phone-field{display:flex;align-items:center;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--surface);}
+.phone-field:focus-within{border-color:var(--brand-2);box-shadow:0 0 0 3px var(--brand-tint);}
+.phone-cc{display:flex;align-items:center;gap:6px;padding:0 12px;height:46px;background:var(--surface-2);border-right:1px solid var(--line);font-size:var(--t-base);font-weight:600;color:var(--ink-2);flex-shrink:0;}
+.phone-field input{flex:1;height:46px;border:none;padding:0 12px;font-size:var(--t-base);letter-spacing:.02em;min-width:0;}
+
+/* ── SEGMENTED CONTROL ─────────────────────────────────── */
+.seg{display:flex;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r);padding:3px;gap:3px;}
+.seg-item{flex:1;height:38px;display:flex;align-items:center;justify-content:center;gap:6px;border-radius:var(--r-sm);font-size:var(--t-md);font-weight:600;color:var(--ink-2);transition:background .14s,color .14s;}
+.seg-item.on{background:var(--surface);color:var(--brand);box-shadow:var(--e-1);}
+
+/* ── CHIPS ─────────────────────────────────────────────── */
+.chiprow{display:flex;gap:8px;overflow-x:auto;padding:12px 16px;scroll-snap-type:x proximity;flex-shrink:0;}
+.chip{
+  flex-shrink:0;height:34px;padding:0 14px;border-radius:var(--r-sm);border:1px solid var(--line);
+  background:var(--surface);font-size:var(--t-md);font-weight:600;color:var(--ink-2);
+  display:flex;align-items:center;gap:6px;white-space:nowrap;scroll-snap-align:start;
+}
+.chip{transition:all var(--fast) var(--ease);}
+@media(hover:hover){.chip:hover{border-color:var(--brand-line);background:var(--brand-tint);}}
+.chip.on{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:var(--e-1);}
+
+/* ── PRODUCT ROW (B2B density) ─────────────────────────── */
+.plist{background:var(--surface);}
+.prow{display:flex;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line-2);align-items:flex-start;}
+@media(hover:hover){.prow:hover{background:var(--surface-2);}}
+.prow:active{background:var(--line-2);}
+.prow{transition:background var(--fast) var(--ease);}
+.pthumb{
+  width:58px;height:58px;border-radius:var(--r-sm);background:var(--surface-2);
+  border:1px solid var(--line-2);overflow:hidden;flex-shrink:0;
+}
+.pthumb img{width:100%;height:100%;object-fit:contain;padding:3px;}
+.pinfo{flex:1;min-width:0;}
+.pname{font-size:var(--t-base);font-weight:600;line-height:1.3;margin-bottom:3px;}
+.pmeta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:var(--t-sm);color:var(--ink-2);}
+.dot{width:3px;height:3px;border-radius:50%;background:var(--ink-4);flex-shrink:0;}
+.pprice{display:flex;align-items:baseline;gap:6px;margin-top:6px;}
+.price{font-size:var(--t-lg);font-weight:700;letter-spacing:-.01em;}
+.mrp{font-size:var(--t-sm);color:var(--ink-3);text-decoration:line-through;}
+.save{font-size:var(--t-xs);font-weight:600;color:var(--fresh);background:var(--fresh-tint);padding:2px 6px;border-radius:4px;}
+
+/* ── STOCK BADGE ───────────────────────────────────────── */
+.stk{display:inline-flex;align-items:center;gap:5px;font-size:var(--t-xs);font-weight:600;}
+.stk::before{content:'';width:6px;height:6px;border-radius:50%;}
+.stk.in{color:var(--fresh);} .stk.in::before{background:var(--fresh);}
+.stk.low{color:var(--warn);} .stk.low::before{background:var(--warn);}
+.stk.out{color:var(--ink-3);} .stk.out::before{background:var(--ink-4);}
+
+/* ── QUANTITY STEPPER (bulk-friendly) ──────────────────── */
+.qty{display:flex;align-items:center;border:1px solid var(--brand-line);border-radius:var(--r-sm);overflow:hidden;background:var(--surface);height:36px;}
+.qty button{width:36px;height:100%;display:flex;align-items:center;justify-content:center;color:var(--brand);}
+.qty button:active{background:var(--brand-tint);}
+.qty button:disabled{color:var(--ink-4);pointer-events:none;}
+.qty input{
+  width:44px;height:100%;text-align:center;border:none;border-left:1px solid var(--line-2);
+  border-right:1px solid var(--line-2);font-size:var(--t-md);font-weight:700;
+  font-variant-numeric:tabular-nums;background:var(--surface);
+}
+.addbtn{height:36px;padding:0 16px;border-radius:var(--r-sm);background:var(--brand);color:#fff;font-size:var(--t-md);font-weight:600;}
+.addbtn:active{opacity:.88;}
+.addbtn.out{background:var(--line);color:var(--ink-3);pointer-events:none;}
+
+/* ── CARDS / SECTIONS ──────────────────────────────────── */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;transition:box-shadow var(--mid) var(--ease),transform var(--mid) var(--ease);}
+.section{padding:16px;}
+.section-head{display:flex;align-items:center;justify-content:space-between;padding:18px 16px 10px;}
+.divider{height:8px;background:var(--bg);border-top:1px solid var(--line);border-bottom:1px solid var(--line);}
+
+/* ── LIST ROWS ─────────────────────────────────────────── */
+.lrow{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line-2);min-height:var(--tap);}
+.lrow:last-child{border-bottom:none;}
+.lrow:active{background:var(--surface-2);}
+.lrow-ic{width:34px;height:34px;border-radius:var(--r-sm);background:var(--surface-2);display:flex;align-items:center;justify-content:center;color:var(--ink-2);flex-shrink:0;}
+.lrow-body{flex:1;min-width:0;}
+
+/* ── BOTTOM NAV ────────────────────────────────────────── */
+.tabbar{
+  display:flex;background:var(--surface);border-top:1px solid var(--line);
+  padding-bottom:var(--safe-b);flex-shrink:0;
+}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 0 7px;color:var(--ink-3);position:relative;}
+.tab.on{color:var(--brand);}
+.tab-lbl{font-size:10px;font-weight:600;letter-spacing:.01em;}
+.tab-badge{
+  position:absolute;top:4px;left:calc(50% + 6px);background:var(--bad);color:#fff;
+  font-size:9px;font-weight:700;min-width:16px;height:16px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;padding:0 4px;
+}
+
+/* ── STICKY ORDER BAR ──────────────────────────────────── */
+.orderbar{
+  position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--line);
+  padding:10px 16px calc(10px + var(--safe-b));z-index:15;box-shadow:0 -2px 12px rgba(15,23,41,.06);
+}
+.mov-track{height:3px;background:var(--line);border-radius:2px;overflow:hidden;margin-bottom:9px;}
+.mov-fill{height:100%;background:var(--brand);border-radius:2px;transition:width .3s cubic-bezier(.4,0,.2,1);}
+.mov-fill.met{background:var(--fresh);}
+
+/* ── BANNERS ───────────────────────────────────────────── */
+.banner{display:flex;gap:10px;padding:11px 12px;border-radius:var(--r-sm);font-size:var(--t-md);line-height:1.45;align-items:flex-start;}
+.banner.info{background:var(--brand-tint);color:var(--brand);}
+.banner.warn{background:var(--warn-tint);color:var(--warn);}
+.banner.ok{background:var(--fresh-tint);color:var(--fresh);}
+.banner.bad{background:var(--bad-tint);color:var(--bad);}
+
+/* ── STATUS PILL ───────────────────────────────────────── */
+.pill{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:var(--r-sm);font-size:var(--t-xs);font-weight:600;}
+.pill.b{background:var(--brand-tint);color:var(--brand);}
+.pill.g{background:var(--fresh-tint);color:var(--fresh);}
+.pill.a{background:var(--warn-tint);color:var(--warn);}
+.pill.r{background:var(--bad-tint);color:var(--bad);}
+.pill.n{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line);}
+
+/* ── EMPTY / LOADING / ERROR STATES ────────────────────── */
+.state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:56px 32px;text-align:center;flex:1;}
+.state-ic{width:52px;height:52px;border-radius:var(--r);background:var(--surface-2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink-3);margin-bottom:16px;}
+.state-t{font-size:var(--t-lg);font-weight:600;margin-bottom:6px;}
+.state-d{font-size:var(--t-md);color:var(--ink-2);line-height:1.5;max-width:280px;margin-bottom:20px;}
+.skel{background:linear-gradient(90deg,var(--line-2) 25%,var(--line) 37%,var(--line-2) 63%);background-size:400% 100%;animation:sk 1.3s ease infinite;border-radius:var(--r-sm);}
+@keyframes sk{0%{background-position:100% 50%}100%{background-position:0 50%}}
+.spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:sp .6s linear infinite;}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* ── SHEET ─────────────────────────────────────────────── */
+.sheet-bg{position:fixed;inset:0;background:rgba(15,23,41,.42);z-index:100;opacity:0;pointer-events:none;transition:opacity .2s;}
+.sheet-bg.on{opacity:1;pointer-events:auto;}
+.sheet{
+  position:fixed;left:0;right:0;bottom:0;max-width:520px;margin:0 auto;background:var(--surface);
+  border-radius:var(--r-lg) var(--r-lg) 0 0;z-index:101;transform:translateY(100%);
+  transition:transform .26s cubic-bezier(.32,.72,0,1);max-height:88dvh;display:flex;flex-direction:column;
+  padding-bottom:var(--safe-b);
+}
+.sheet.on{transform:translateY(0);}
+.sheet-grip{width:34px;height:4px;background:var(--line);border-radius:2px;margin:10px auto 4px;flex-shrink:0;}
+.sheet-head{display:flex;align-items:center;justify-content:space-between;padding:8px 16px 12px;border-bottom:1px solid var(--line-2);flex-shrink:0;}
+
+/* ── TOAST ─────────────────────────────────────────────── */
+.toast{
+  position:fixed;left:50%;bottom:calc(88px + var(--safe-b));transform:translate(-50%,10px);
+  background:var(--ink);color:#fff;padding:11px 16px;border-radius:var(--r);font-size:var(--t-md);
+  font-weight:500;z-index:200;opacity:0;pointer-events:none;transition:all .22s;max-width:88%;
+  display:flex;align-items:center;gap:9px;box-shadow:var(--e-2);
+}
+.toast.on{opacity:1;transform:translate(-50%,0);}
+
+/* ── TOTALS TABLE ──────────────────────────────────────── */
+.tot{display:flex;justify-content:space-between;padding:7px 0;font-size:var(--t-md);}
+.tot.grand{border-top:1px solid var(--line);margin-top:7px;padding-top:12px;font-size:var(--t-lg);font-weight:700;}
+
+/* ── UTIL ──────────────────────────────────────────────── */
+.row{display:flex;align-items:center;}
+.between{justify-content:space-between;}
+.gap-4{gap:4px}.gap-6{gap:6px}.gap-8{gap:8px}.gap-12{gap:12px}
+.grow{flex:1;min-width:0;}
+.mt-4{margin-top:4px}.mt-8{margin-top:8px}.mt-12{margin-top:12px}.mt-16{margin-top:16px}.mt-24{margin-top:24px}
+.mb-4{margin-bottom:4px}.mb-8{margin-bottom:8px}.mb-12{margin-bottom:12px}.mb-16{margin-bottom:16px}
+.px-16{padding-left:16px;padding-right:16px}
+.center{text-align:center}
+.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.hide{display:none !important;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="toast" id="toast"></div>
+<div class="sheet-bg" id="sheet-bg" onclick="closeSheet()"></div>
+<div class="sheet" id="sheet"></div>
+<div id="recaptcha-holder"></div>
+
+<script>
+/* Firebase loads as an ES module, which defers. This promise lets the main
+   app wait for it instead of racing it. */
+window.__fbResolve = null;
+window.__fbReady = new Promise(r => { window.__fbResolve = r; });
+</script>
+
+<script type="module">
+/* ═══════════════════════════════════════════════════════════════
+   FIREBASE BRIDGE
+   Paste the same config you used in the admin panel. Leave the
+   placeholders and the app runs in offline demo mode instead.
+   ═══════════════════════════════════════════════════════════════ */
+const firebaseConfig = {
+  apiKey:            "PASTE_API_KEY",
+  authDomain:        "PASTE_PROJECT.firebaseapp.com",
+  projectId:         "PASTE_PROJECT_ID",
+  storageBucket:     "PASTE_PROJECT.appspot.com",
+  messagingSenderId: "PASTE_SENDER_ID",
+  appId:             "PASTE_APP_ID",
+};
+
+if (firebaseConfig.apiKey === "PASTE_API_KEY") {
+  window.__fbResolve(null);                    // not configured — demo mode
+} else {
+  try {
+    const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js');
+    const { getAuth, RecaptchaVerifier, signInWithPhoneNumber, signOut, onAuthStateChanged }
+      = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js');
+    const { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc, updateDoc,
+            query, where, orderBy, limit, serverTimestamp, runTransaction }
+      = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
+
+    const app  = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db   = getFirestore(app);
+    let confirmation = null;
+
+    const asList = s => s.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    window.__fbResolve({
+      auth, db,
+
+      /* ── Phone OTP. Free tier: 10k verifications/month, no DLT. ── */
+      async sendOTP(phone) {
+        if (!window.__recaptcha) {
+          window.__recaptcha = new RecaptchaVerifier(auth, 'recaptcha-holder', { size: 'invisible' });
+        }
+        confirmation = await signInWithPhoneNumber(auth, '+91' + phone, window.__recaptcha);
+        return true;
+      },
+      async verifyOTP(code) {
+        if (!confirmation) throw new Error('Request a code first.');
+        const cred = await confirmation.confirm(code);
+        return cred.user;
+      },
+      signOut: () => signOut(auth),
+      onAuth: cb => onAuthStateChanged(auth, cb),
+      uid: () => auth.currentUser?.uid || null,
+
+      /* ── Reads ── */
+      async config() {
+        const s = await getDoc(doc(db, 'config', 'app'));
+        return s.exists() ? s.data() : {};
+      },
+      async products() {
+        return asList(await getDocs(collection(db, 'products')));
+      },
+      async customer(uid) {
+        const s = await getDoc(doc(db, 'customers', uid));
+        return s.exists() ? s.data() : null;
+      },
+      async saveCustomer(uid, data) {
+        await setDoc(doc(db, 'customers', uid), data, { merge: true });
+      },
+      async orders(uid) {
+        return asList(await getDocs(
+          query(collection(db, 'orders'), where('uid', '==', uid), orderBy('at', 'desc'), limit(50))));
+      },
+      async ledger(uid) {
+        return asList(await getDocs(
+          query(collection(db, 'ledger'), where('uid', '==', uid), orderBy('at', 'desc'), limit(50))));
+      },
+
+      /* ── Order placement. Credit orders debit the balance inside a
+           transaction so the same rupee cannot be spent twice. ── */
+      async placeOrder(order) {
+        const uid = auth.currentUser?.uid;
+        if (!uid) throw new Error('Please sign in again.');
+
+        if (order.payment !== 'credit') {
+          const ref = await addDoc(collection(db, 'orders'),
+            { ...order, uid, status: 'placed', paymentStatus: 'pending', at: serverTimestamp() });
+          return { orderNo: ref.id, total: order.total };
+        }
+
+        return await runTransaction(db, async tx => {
+          const cRef = doc(db, 'customers', uid);
+          const snap = await tx.get(cRef);
+          const prev = Number(snap.data()?.balance || 0);
+          if (prev < order.total) {
+            const e = new Error(`Insufficient business credit. You need ₹${(order.total - prev).toLocaleString('en-IN')} more.`);
+            e.code = 'INSUFFICIENT'; e.shortfall = order.total - prev; throw e;
+          }
+          const next = prev - order.total;
+          const oRef = doc(collection(db, 'orders'));
+          tx.set(oRef, { ...order, uid, status: 'placed', paymentStatus: 'paid', at: serverTimestamp() });
+          tx.update(cRef, { balance: next });
+          tx.set(doc(collection(db, 'ledger')), {
+            uid, type: 'ORDER_DEBIT', amount: order.total,
+            prevBalance: prev, newBalance: next,
+            orderId: oRef.id, note: 'Order payment', at: serverTimestamp(),
+          });
+          return { orderNo: oRef.id, total: order.total, balance: next };
+        });
+      },
+    });
+  } catch (err) {
+    console.error('Firebase failed to load:', err);
+    window.__fbResolve(null);                  // fall back to demo mode
+  }
+}
+</script>
+<script>
+const CATALOGUE={"cow-milk":{"name":"Cow Milk","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758955/Pasteurised_Milk_Front_jnazr1.jpg","unit":"pouch","desc":"Pure cow milk sourced from our certified farms. Pasteurised, no additives. FAT 6% \u00b7 SNF 9%.","storage":"Refrigerate below 4\u00b0C.","freshness":"Best within 2 days of packaging","variants":[{"id":"v1","label":"500ml","mrp":28,"b2b":25,"moq":12,"case":12,"stock":"in"},{"id":"v2","label":"1L","mrp":54,"b2b":48,"moq":12,"case":12,"stock":"in"}]},"buffalo-milk":{"name":"Buffalo Milk","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758955/Pasteurised_Full_Cream_Milk_Front_ooi7c6.png","unit":"pouch","desc":"Rich premium buffalo milk. Higher fat and protein than cow milk. Ideal for making ghee, paneer and sweets.","storage":"Refrigerate below 4\u00b0C.","freshness":"Best within 2 days","variants":[{"id":"v1","label":"1L","mrp":65,"b2b":57,"moq":12,"case":12,"stock":"in"}]},"toned-milk":{"name":"Toned Milk","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758958/Taaza_Milk_akpyor.png","unit":"pouch","desc":"Pasteurised & homogenised toned milk. FAT 3% \u00b7 SNF 8.5%. Ideal for everyday use.","storage":"Refrigerate below 4\u00b0C.","freshness":"Best within 2 days","variants":[{"id":"v1","label":"1L","mrp":46,"b2b":40,"moq":12,"case":12,"stock":"in"}]},"cream":{"name":"Fresh Cream","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758964/Fresh_Cream_Front_j0uwx1.jpg","unit":"pack","desc":"Modern Dairy Fresh Cream (250ml / 1L) \u2014 pasteurised, smooth and creamy. Made from fresh full cream milk. No artificial additives.","storage":"Shake well before use. Do not buy puffed or leaky packs.","freshness":"Best within 10 days at 4\u00b0C","variants":[{"id":"v1","label":"1L","mrp":220,"b2b":194,"moq":3,"case":6,"stock":"in"}]},"butter":{"name":"Modern Butter","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758961/Butter_qy80zw.png","unit":"pack","desc":"Modern Dairy butter \u2014 rich, creamy, unsalted. Made from fresh cream.","storage":"Refrigerate at all times.","freshness":"Use within 30 days of opening","variants":[{"id":"v1","label":"500g","mrp":280,"b2b":246,"moq":5,"case":10,"stock":"in"}]},"mawa":{"name":"Fresh Mawa (Khoya)","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758953/Mawa_Front_li9d8l.png","unit":"pack","desc":"Fresh Mawa/Khoya made from pure milk at Santosh Milk. Ideal for modak, halwa, gulab jamun and mithai.","storage":"Refrigerate. Can be frozen.","freshness":"Consume within 5 days","variants":[{"id":"v1","label":"250g","mrp":90,"b2b":79,"moq":5,"case":5,"stock":"in"},{"id":"v2","label":"1kg","mrp":340,"b2b":299,"moq":2,"case":5,"stock":"in"}]},"tofu":{"name":"Tofu","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758960/Tofu_qerh72.jpg","unit":"pack","desc":"Modern Dairy Tofu \u2014 fresh, vacuum packed, cholesterol free. High protein. No added colours or preservatives.","storage":"Refrigerate in water.","freshness":"Best within 30 days","variants":[{"id":"v1","label":"200g","mrp":60,"b2b":53,"moq":10,"case":10,"stock":"in"}]},"mayonnaise":{"name":"Eggless Mayonnaise","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758963/Eggless_Mayonnaise_Front_k46mlo.png","unit":"jar","desc":"Modern Dairy Eggless Mayonnaise \u2014 smooth and creamy. Ideal for sandwiches, burgers, coleslaw.","storage":"Refrigerate after opening.","freshness":"36 months from manufacture","variants":[{"id":"v1","label":"1kg","mrp":180,"b2b":158,"moq":3,"case":6,"stock":"in"}]},"ghee":{"name":"Cow Ghee","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758950/Ghee_Jar_200_ml_Front_xs5wmd.png","unit":"jar","desc":"Pure Cow Ghee made from A2 milk. Danedaar Shudh Ghee. Packed at 45\u00b0C. Natural, no preservatives. Exported worldwide.","storage":"Cool, dry place. Refrigerate after opening.","freshness":"Best within 12 months from packing","variants":[{"id":"v1","label":"200ml","mrp":180,"b2b":158,"moq":3,"case":6,"stock":"in"},{"id":"v2","label":"500ml","mrp":430,"b2b":378,"moq":1,"case":6,"stock":"in"},{"id":"v3","label":"1L","mrp":840,"b2b":739,"moq":1,"case":6,"stock":"in"},{"id":"v4","label":"5L Tin","mrp":4000,"b2b":3520,"moq":1,"case":6,"stock":"in"}]},"paneer":{"name":"Fresh Malai Paneer","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758965/Fresh_Paneer_200gm_Front_pwiyrh.jpg","unit":"pack","desc":"Fresh Malai Paneer from standardised milk with Citric Acid & Common Salt. Low fat. Made at MIDC Tasawade, Karad.","storage":"Refrigerate at 0\u20135\u00b0C. Do not deep freeze.","freshness":"Best within 10 days from packing","variants":[{"id":"v1","label":"200g","mrp":80,"b2b":70,"moq":5,"case":5,"stock":"in"},{"id":"v2","label":"1kg","mrp":380,"b2b":334,"moq":2,"case":5,"stock":"in"}]},"frozen-paneer":{"name":"Frozen Paneer Cubes","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758966/Frozen_Paneer_Cube_100GM_Front_kef7lk.png","unit":"pack","desc":"Frozen Paneer Cubes from Santosh Milk. No preservatives. Thaw before using. Exported to Dubai & international markets.","storage":"Keep frozen. Thaw before using.","freshness":"12 months at -18\u00b0C","variants":[{"id":"v1","label":"100g","mrp":45,"b2b":36,"moq":10,"case":10,"stock":"in"},{"id":"v2","label":"200g","mrp":85,"b2b":68,"moq":10,"case":10,"stock":"in"},{"id":"v3","label":"500g","mrp":195,"b2b":156,"moq":5,"case":10,"stock":"in"},{"id":"v4","label":"1kg","mrp":380,"b2b":304,"moq":5,"case":10,"stock":"in"}]},"curd-cup":{"name":"Special Curd Cup","cat":"curd","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758963/Curd_80gms_Front_ialper.png","unit":"cup","desc":"Modern Dairy Special Curd in cup format. Pasteurised toned milk, rich probiotic culture. No preservatives.","storage":"Keep refrigerated at all times.","freshness":"Best within 10 days, below 8\u00b0C","variants":[{"id":"v1","label":"80g","mrp":15,"b2b":13,"moq":12,"case":12,"stock":"in"},{"id":"v2","label":"200g","mrp":30,"b2b":26,"moq":12,"case":12,"stock":"in"},{"id":"v3","label":"400g","mrp":55,"b2b":47,"moq":12,"case":12,"stock":"in"},{"id":"v4","label":"1kg","mrp":130,"b2b":110,"moq":6,"case":12,"stock":"in"},{"id":"v5","label":"2kg Bucket","mrp":240,"b2b":204,"moq":6,"case":12,"stock":"in"}]},"curd-pouch-special":{"name":"Special Curd Pouch","cat":"curd","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758963/CURD_POUCH_500GMS_FRONT_mnqtdb.jpg","unit":"pouch","desc":"Modern Dairy Special Curd in easy-pour pouch. Pasteurised toned milk, lactic culture. No preservatives.","storage":"Keep refrigerated.","freshness":"Best within 10 days","variants":[{"id":"v1","label":"250g","mrp":28,"b2b":24,"moq":12,"case":12,"stock":"in"},{"id":"v2","label":"500g","mrp":52,"b2b":44,"moq":12,"case":12,"stock":"in"},{"id":"v3","label":"1kg","mrp":100,"b2b":85,"moq":6,"case":12,"stock":"in"}]},"matka-dahi":{"name":"Matka Dahi","cat":"curd","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758953/Matka_Dahi_Front_uxliyr.png","unit":"pot","desc":"Creamy dahi set in a traditional matka (clay pot). Unique earthy flavour. Net Qty: 125g.","storage":"Keep refrigerated.","freshness":"Best within 10 days","variants":[{"id":"v1","label":"125g","mrp":35,"b2b":30,"moq":12,"case":12,"stock":"in"}]},"chaas":{"name":"Chaas (Buttermilk)","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758961/CHASS_FRONT_hawyph.jpg","unit":"bottle","desc":"Modern Dairy Chaas \u2014 milk solids, common salt, water, curd. Natural, no preservatives. Serve well chilled.","storage":"Consume within 6 hrs of opening.","freshness":"Best within 10 days below 4\u00b0C","variants":[{"id":"v1","label":"200ml","mrp":18,"b2b":14,"moq":12,"case":12,"stock":"in"},{"id":"v2","label":"500ml","mrp":28,"b2b":22,"moq":12,"case":12,"stock":"in"}]},"lassi":{"name":"Sweet Lassi","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758951/Lassi_Front_pxfnkt.png","unit":"bottle","desc":"Sweet lassi made from milk solids, curd, water, sugar and natural flavouring. Thick and refreshing.","storage":"Refrigerate. Shake well before serving.","freshness":"Best within 10 days","variants":[{"id":"v1","label":"200ml","mrp":30,"b2b":24,"moq":12,"case":12,"stock":"in"}]},"shrikhand":{"name":"Shrikhand","cat":"sweets","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758957/Shrikhand_Front_qlsfcv.png","unit":"tub","desc":"Shrikhand from chakka, sugar, kesar (saffron) & jaifal (nutmeg). No preservatives.","storage":"Keep frozen until use.","freshness":"3 months from packaging at 0\u00b0C","variants":[{"id":"v1","label":"100g","mrp":32,"b2b":26,"moq":12,"case":12,"stock":"in"},{"id":"v2","label":"250g","mrp":75,"b2b":62,"moq":12,"case":12,"stock":"in"},{"id":"v3","label":"500g","mrp":140,"b2b":115,"moq":6,"case":12,"stock":"in"}]},"amrakhand":{"name":"Amrakhand","cat":"sweets","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758961/Amrakhand_Front_alqpa0.png","unit":"tub","desc":"Amrakhand \u2014 shrikhand with Alphonso mango pulp. Chakka, sugar, mango pulp. No preservatives added.","storage":"Keep frozen until use.","freshness":"3 months from packaging at 0\u00b0C","variants":[{"id":"v1","label":"100g","mrp":38,"b2b":31,"moq":12,"case":12,"stock":"in"},{"id":"v2","label":"250g","mrp":85,"b2b":70,"moq":12,"case":12,"stock":"in"},{"id":"v3","label":"500g","mrp":160,"b2b":131,"moq":6,"case":12,"stock":"in"}]},"jaggery-cube":{"name":"Jaggery Cubes","cat":"sweets","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758947/Jaggery_Cube_vlpgkg.jpg","unit":"pack","desc":"India's finest small jaggery cubes. Chemical free process. Rich in iron and minerals.","storage":"Cool, dry place.","freshness":"12 months from manufacture","variants":[{"id":"v1","label":"500g","mrp":70,"b2b":57,"moq":10,"case":10,"stock":"in"}]},"jaggery-powder":{"name":"Jaggery Powder","cat":"sweets","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758949/Jaggery_Powder_Back_lub5zk.png","unit":"pack","desc":"Fine jaggery powder \u2014 easy to dissolve. Use in tea, sweets, or as a healthy sugar substitute.","storage":"Cool, dry place. Keep sealed.","freshness":"6 months from manufacture","variants":[{"id":"v1","label":"500g","mrp":70,"b2b":57,"moq":10,"case":10,"stock":"in"}]},"mango-crush":{"name":"Alphonso Mango Crush","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758961/Alphonso_Mango_Front_omlzza.png","unit":"bottle","desc":"Alphonso Mango Crush with real mango pulp (8%), sugar, water. No artificial colours.","storage":"Cool, dry place. Refrigerate after opening.","freshness":"10 months from manufacture","variants":[{"id":"v1","label":"750ml","mrp":85,"b2b":68,"moq":6,"case":6,"stock":"in"}]},"kiwi-crush":{"name":"Kiwi Crush","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758950/Kiwi_Front_rjdzyy.png","unit":"bottle","desc":"Kiwi Crush with real kiwi fruit pulp. Sugar, water, thickener. Natural and nature-identical flavour.","storage":"Cool, dry place. Refrigerate after opening.","freshness":"12 months","variants":[{"id":"v1","label":"750ml","mrp":85,"b2b":68,"moq":6,"case":6,"stock":"in"}]},"lychee-crush":{"name":"Lychee Crush","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758952/Litchi_Front_ghpvxz.png","unit":"bottle","desc":"Litchi Crush with real litchi pulp (20%), sugar, water. No artificial colours.","storage":"Cool, dry place. Refrigerate after opening.","freshness":"12 months","variants":[{"id":"v1","label":"750ml","mrp":85,"b2b":68,"moq":6,"case":6,"stock":"in"}]},"orange-crush":{"name":"Orange Crush","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758954/Orange_Front_u0cm4t.png","unit":"bottle","desc":"Orange Crush with real orange pulp. Sugar, water, thickener. Natural colour and flavour.","storage":"Cool, dry place. Refrigerate after opening.","freshness":"12 months","variants":[{"id":"v1","label":"750ml","mrp":85,"b2b":68,"moq":6,"case":6,"stock":"in"}]},"strawberry-crush":{"name":"Strawberry Crush","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758958/Strawberry_Crush_Front_d3grum.png","unit":"bottle","desc":"Strawberry Crush with real strawberry pulp. Sugar, water. Natural and nature-identical flavour.","storage":"Refrigerate after opening.","freshness":"12 months","variants":[{"id":"v1","label":"750ml","mrp":85,"b2b":68,"moq":6,"case":6,"stock":"in"}]},"guava-crush":{"name":"Pink Guava Crush","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758956/Pink_Guava_Front_b8vdb4.png","unit":"bottle","desc":"Pink Guava Crush with real pink guava pulp. Sugar, water, thickener. No artificial colours.","storage":"Refrigerate after opening.","freshness":"12 months","variants":[{"id":"v1","label":"750ml","mrp":85,"b2b":68,"moq":6,"case":6,"stock":"in"}]},"raspberry-crush":{"name":"Raspberry Crush","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758958/Strawberry_Crush_Front_d3grum.png","unit":"bottle","desc":"Raspberry Crush \u2014 vibrant tangy flavour. Real raspberry pulp, sugar, water.","storage":"Refrigerate after opening.","freshness":"12 months","variants":[{"id":"v1","label":"750ml","mrp":85,"b2b":68,"moq":6,"case":6,"stock":"in"}]},"rose-crush":{"name":"Rose Crush (Syrup)","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758957/Rose_Syrup_Front_pa4ree.png","unit":"bottle","desc":"Rose Syrup / Rose Crush with real rose petals (2%). Sugar, water. Perfect for sherbets and mocktails.","storage":"Refrigerate after opening.","freshness":"12 months","variants":[{"id":"v1","label":"750ml","mrp":85,"b2b":68,"moq":6,"case":6,"stock":"in"}]},"samosa":{"name":"Frozen Punjabi Samosa","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758956/Punjabi_Samosa_Front_pnfbzu.jpg","unit":"pack","desc":"Frozen Punjabi Samosa \u2014 15 pieces, 500g. Potato, green chilli, spices. 100% vegetarian, no preservatives. Deep fry at 160\u00b0C.","storage":"Store at -18\u00b0C. Do not thaw.","freshness":"Best within 12 months at -18\u00b0C","variants":[{"id":"v1","label":"500g (15 pcs)","mrp":160,"b2b":128,"moq":5,"case":10,"stock":"in"}]},"spring-roll":{"name":"Frozen Spring Roll","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758957/Spring_Roll_Back_vvfngd.png","unit":"pack","desc":"Frozen Spring Roll \u2014 20 pieces, 300g. Cabbage, onion, capsicum, rice noodles. Deep fry at 180\u00b0C.","storage":"Store at -18\u00b0C. Do not thaw.","freshness":"12 months at -18\u00b0C","variants":[{"id":"v1","label":"300g (20 pcs)","mrp":140,"b2b":112,"moq":5,"case":10,"stock":"in"}]},"poppers":{"name":"Frozen Paneer Poppers","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758955/Paneer_Poppers_Front_sxcrhq.jpg","unit":"pack","desc":"Paneer Poppers \u2014 15 pieces, 400g. Paneer in crispy breadcrumb coating. 100% vegetarian, no preservatives. Ready in 3 minutes.","storage":"Store at -18\u00b0C or below.","freshness":"Best by Jul 2027","variants":[{"id":"v1","label":"400g (15 pcs)","mrp":250,"b2b":200,"moq":5,"case":10,"stock":"in"}]},"cc-rolls":{"name":"Paneer Cheese Corn Rolls","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758954/Paneer_Cheese_Corn_Roll_Front_jw0u7r.jpg","unit":"pack","desc":"Paneer, sweet corn, cheese & seasoning in crispy roll. 10 pieces, 400g. 100% vegetarian. Fry at 180\u00b0C.","storage":"Store at -16\u00b0C or below.","freshness":"Best by Aug 2027","variants":[{"id":"v1","label":"400g (10 pcs)","mrp":220,"b2b":176,"moq":5,"case":10,"stock":"in"}]},"fries":{"name":"French Fries","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758964/French_Fries_Back_bf2ja4.png","unit":"pack","desc":"Modern Dairy Frozen French Fries. No artificial colouring or flavouring. Deep fry at 175\u00b0C for 3 minutes.","storage":"Do not refreeze after thawing.","freshness":"12 months at -18\u00b0C","variants":[{"id":"v1","label":"420g","mrp":110,"b2b":88,"moq":5,"case":10,"stock":"in"},{"id":"v2","label":"1kg","mrp":240,"b2b":192,"moq":5,"case":10,"stock":"in"}]},"puff-paratha":{"name":"Puff Paratha","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758956/Puff_Paratha_Maida_Front_lwl9q5.png","unit":"pack","desc":"Layered Puff Paratha \u2014 12 pieces, 850g. Wheat flour (51%), water, salt, oil. Heat on tawa with ghee for 3-4 minutes.","storage":"Store at -18\u00b0C.","freshness":"60 days at -18\u00b0C","variants":[{"id":"v1","label":"850g (12 pcs)","mrp":125,"b2b":100,"moq":5,"case":10,"stock":"in"}]},"wheat-paratha":{"name":"Whole Wheat Puff Paratha","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758960/Whole_Wheat_Puff_paratha_front_i8z1dp.png","unit":"pack","desc":"Whole Wheat Puff Paratha \u2014 12 pieces, 850g. Whole wheat flour (51%), water, salt, oil. Heat on tawa with ghee.","storage":"Store at -18\u00b0C.","freshness":"60 days at -18\u00b0C","variants":[{"id":"v1","label":"850g (12 pcs)","mrp":125,"b2b":100,"moq":5,"case":10,"stock":"in"}]},"malabar-paratha":{"name":"Malabar Paratha","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758953/Malabar_Paratha_Front_vi20gc.png","unit":"pack","desc":"Malabar Paratha \u2014 5 pieces, 400g. Refined wheat flour, oil, salt. Heat & Eat. 100% vegetarian, no preservatives.","storage":"Store at -18\u00b0C.","freshness":"60 days at -18\u00b0C","variants":[{"id":"v1","label":"400gms (5 pcs)","mrp":75,"b2b":60,"moq":10,"case":10,"stock":"in"}]},"green-peas":{"name":"Frozen Green Peas","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758951/Green_Peas_Front_ulzpny.jpg","unit":"pack","desc":"Frozen Green Peas \u2014 fresh peas blanched and frozen. No additives. Best before 18 months.","storage":"Store at -18\u00b0C. Do not refreeze.","freshness":"18 months at -18\u00b0C","variants":[{"id":"v1","label":"200g","mrp":35,"b2b":28,"moq":10,"case":10,"stock":"in"},{"id":"v2","label":"1kg","mrp":150,"b2b":120,"moq":5,"case":10,"stock":"in"}]},"mix-veg":{"name":"Mix Vegetable","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758954/Mix_Veg_Back_l5fthl.png","unit":"pack","desc":"Modern Dairy frozen mixed vegetables. Ready to cook. Use direct from frozen.","storage":"Store at -18\u00b0C.","freshness":"12 months at -18\u00b0C","variants":[{"id":"v1","label":"500g","mrp":80,"b2b":64,"moq":10,"case":10,"stock":"in"}]},"veg-chop":{"name":"Veg Chop (Chaap)","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758960/Veg_Chaap_qvm195.jpg","unit":"pack","desc":"Frozen Veg Chaap \u2014 soya-based, marinated, ready to fry. Perfect party snack.","storage":"Store at -18\u00b0C.","freshness":"12 months at -18\u00b0C","variants":[{"id":"v1","label":"1kg","mrp":220,"b2b":176,"moq":2,"case":5,"stock":"in"}]},"sweet-corn":{"name":"Sweet Corn","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758958/Sweet_Corn_Front_d8pb9c.jpg","unit":"pack","desc":"100% natural American sweet corn kernels, steamed and frozen. No artificial colouring or flavouring.","storage":"Store at -18\u00b0C. Do not refreeze.","freshness":"18 months at -18\u00b0C","variants":[{"id":"v1","label":"200g","mrp":40,"b2b":32,"moq":10,"case":10,"stock":"in"},{"id":"v2","label":"1kg","mrp":150,"b2b":120,"moq":5,"case":10,"stock":"in"}]}};
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════
+   1. RUNTIME CONFIG
+   Everything here is overridden by the backend /config endpoint
+   so the Admin Panel can change it without an APK rebuild.
+   ═══════════════════════════════════════════════════════════ */
+let FB = null;   // Firebase bridge, resolved during boot
+const CONFIG = {
+  API_BASE: '',            // e.g. 'https://api.moderndairy.in/api'
+  DEMO: true,              // works fully offline until API_BASE is set
+  RAZORPAY_KEY: '',
+};
+
+/* Remote config — Admin Panel is the source of truth for all of this */
+let APPCFG = {
+  businessName:'Modern Dairy',
+  logo:'https://res.cloudinary.com/dovozcgxb/image/upload/v1778859272/Screenshot_2026-05-11_222239_obbfc4.png',
+  supportPhone:'+919881232966',
+  whatsapp:'919881232966',
+  email:'info@moderndairy.in',
+  instagram:'https://www.instagram.com/modern.dairy/',
+  linkedin:'https://www.linkedin.com/company/modern-dairy-pune/',
+  address:'1942, Dr. Saldhana Street, Camp, Pune 411001',
+  minOrderValue:2000,
+  freeDeliveryAbove:0,
+  deliveryFee:0,
+  gstRate:0.05,
+  orderCutoff:'6:00 PM',
+  businessHours:'Mon–Sat 8:00 AM – 9:00 PM · Sun 8:00 AM – 2:00 PM',
+  announcement:'',
+  walletEnabled:true,
+};
+
+/* ═══════════════════════════════════════════════════════════
+   2. ICON SET — one system, 1.6 stroke, currentColor, 20px base
+   ═══════════════════════════════════════════════════════════ */
+const ICONS = {
+  catalogue:'<path d="M3 6h18M3 12h18M3 18h18"/>',
+  grid:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  repeat:'<path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 014-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 01-4 4H3"/>',
+  receipt:'<path d="M4 2v20l2.5-1.5L9 22l2.5-1.5L14 22l2.5-1.5L19 22V2l-2.5 1.5L14 2l-2.5 1.5L9 2 6.5 3.5 4 2z"/><path d="M8 8h8M8 12h6"/>',
+  user:'<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 016-6h4a6 6 0 016 6v1"/>',
+  search:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.2-4.2"/>',
+  cart:'<circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.4 12.1a2 2 0 002 1.6h8.2a2 2 0 002-1.6L21 7H6"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  minus:'<path d="M5 12h14"/>',
+  right:'<path d="M9 5l7 7-7 7"/>',
+  left:'<path d="M15 5l-7 7 7 7"/>',
+  down:'<path d="M5 9l7 7 7-7"/>',
+  close:'<path d="M6 6l12 12M18 6L6 18"/>',
+  check:'<path d="M4 12.5l5 5L20 6.5"/>',
+  wallet:'<path d="M3 7a2 2 0 012-2h13a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/><path d="M16 12h3"/><path d="M3 9h18"/>',
+  truck:'<path d="M1 6h13v11H1z"/><path d="M14 9h4l3 3v5h-7z"/><circle cx="5.5" cy="18" r="2"/><circle cx="17.5" cy="18" r="2"/>',
+  box:'<path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  alert:'<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.5"/>',
+  info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/>',
+  phone:'<path d="M5 3h4l2 5-2.5 1.5a12 12 0 006 6L16 13l5 2v4a2 2 0 01-2 2A16 16 0 013 5a2 2 0 012-2z"/>',
+  mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
+  pin:'<path d="M12 21s7-6.2 7-11a7 7 0 10-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>',
+  link:'<path d="M14 11a4 4 0 00-6 0l-3 3a4 4 0 006 6l1-1"/><path d="M10 13a4 4 0 006 0l3-3a4 4 0 00-6-6l-1 1"/>',
+  trash:'<path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/>',
+  edit:'<path d="M4 20h4L20 8l-4-4L4 16v4z"/>',
+  logout:'<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
+  shield:'<path d="M12 3l8 3v6c0 5-3.4 8.4-8 9.5C7.4 20.4 4 17 4 12V6l8-3z"/>',
+  building:'<path d="M3 21h18"/><path d="M5 21V5a2 2 0 012-2h6a2 2 0 012 2v16"/><path d="M15 21V9h4a2 2 0 012 2v10"/><path d="M9 7h2M9 11h2M9 15h2"/>',
+  file:'<path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5z"/><path d="M14 3v5h5"/>',
+  refresh:'<path d="M21 12a9 9 0 01-9 9 9 9 0 01-8-4.9"/><path d="M3 12a9 9 0 019-9 9 9 0 018 4.9"/><path d="M21 3v5h-5M3 21v-5h5"/>',
+  wifi:'<path d="M5 12.5a10 10 0 0114 0"/><path d="M8.5 16a5.5 5.5 0 017 0"/><path d="M12 19.5v.5"/>',
+};
+function icon(name, size=20, stroke=1.6){
+  const p = ICONS[name] || '';
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   3. FORMATTERS
+   ═══════════════════════════════════════════════════════════ */
+const money = n => '₹' + Math.round(Number(n)||0).toLocaleString('en-IN');
+const money2 = n => '₹' + (Number(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+const dateFmt = d => new Date(d).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+const dtFmt = d => new Date(d).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'});
+function esc(s){ return String(s??'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ═══════════════════════════════════════════════════════════
+   4. AUTH + STATE
+   ═══════════════════════════════════════════════════════════ */
+const S = {
+  user: JSON.parse(localStorage.getItem('mda_user')||'null'),
+  token: localStorage.getItem('mda_token')||'',
+  refresh: localStorage.getItem('mda_refresh')||'',
+  cart: JSON.parse(localStorage.getItem('mda_cart')||'[]'),
+  wallet: { balance:0, txns:[] },
+  orders: [],
+  tab: 'catalogue',
+  cat: 'all',
+  query: '',
+  loading: false,
+  lastOrder: null,
+};
+function persist(){
+  localStorage.setItem('mda_cart', JSON.stringify(S.cart));
+  if(S.user) localStorage.setItem('mda_user', JSON.stringify(S.user));
+}
+function isB2B(){ return S.user?.customerType === 'b2b'; }
+function signOut(){
+  if(FB) FB.signOut().catch(()=>{});
+  ['mda_user','mda_token','mda_refresh','mda_cart'].forEach(k=>localStorage.removeItem(k));
+  S.user=null;S.token='';S.cart=[];S.wallet={balance:0,txns:[]};
+  go('login');
+}
+
+/* ═══════════════════════════════════════════════════════════
+   5. API LAYER
+   ═══════════════════════════════════════════════════════════ */
+const API = {
+  async call(method, path, body){
+    if(CONFIG.DEMO || !CONFIG.API_BASE) return MOCK(method, path, body);
+    const opt = { method, headers:{'Content-Type':'application/json', ...(S.token?{Authorization:'Bearer '+S.token}:{})} };
+    if(body) opt.body = JSON.stringify(body);
+    try{
+      let res = await fetch(CONFIG.API_BASE+path, opt);
+      if(res.status===401 && S.refresh){
+        const rr = await fetch(CONFIG.API_BASE+'/auth/refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({refreshToken:S.refresh})});
+        const rd = await rr.json();
+        if(rd.success){
+          S.token = rd.data.accessToken; localStorage.setItem('mda_token',S.token);
+          opt.headers.Authorization = 'Bearer '+S.token;
+          res = await fetch(CONFIG.API_BASE+path, opt);
+        } else { signOut(); return {success:false,message:'Session expired. Please sign in again.'}; }
+      }
+      return await res.json();
+    }catch(e){
+      return {success:false, offline:true, message:'No connection. Check your network and try again.'};
+    }
+  },
+  get:(p)=>API.call('GET',p),
+  post:(p,b)=>API.call('POST',p,b),
+  patch:(p,b)=>API.call('PATCH',p,b),
+};
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════
+   6. DEMO BACKEND — mirrors the real API contract exactly.
+   Keeps a genuine append-only ledger so the wallet behaves
+   correctly (no silent balance edits) even offline.
+   ═══════════════════════════════════════════════════════════ */
+const DB = {
+  get wallet(){ return JSON.parse(localStorage.getItem('mda_wallet')||'{"balance":0,"txns":[]}'); },
+  set wallet(v){ localStorage.setItem('mda_wallet', JSON.stringify(v)); },
+  get orders(){ return JSON.parse(localStorage.getItem('mda_orders')||'[]'); },
+  set orders(v){ localStorage.setItem('mda_orders', JSON.stringify(v)); },
+};
+function ledgerPost(type, amount, note, orderNo){
+  const w = DB.wallet;
+  const prev = w.balance;
+  const next = type==='DEPOSIT'||type==='REFUND'||type==='MANUAL_CREDIT' ? prev+amount : prev-amount;
+  const txn = {
+    id:'TXN'+Date.now().toString(36).toUpperCase(),
+    type, amount, prevBalance:prev, newBalance:next,
+    note, orderNo:orderNo||null, at:new Date().toISOString(),
+  };
+  w.balance = next; w.txns.unshift(txn); DB.wallet = w;
+  return txn;
+}
+function orderNo(){ return 'MD'+Date.now().toString(36).toUpperCase().slice(-6); }
+
+function MOCK(method, path, b){
+  const ok = (data,extra={}) => ({success:true,data,...extra});
+
+  if(path==='/config') return ok(APPCFG);
+
+  if(path==='/auth/b2c/send-otp'||path==='/auth/b2b/send-otp')
+    return ok(null,{message:'OTP sent. Use 123456 in demo mode.'});
+
+  if(path==='/auth/b2b/verify-gstin'){
+    const g=(b.gstin||'').toUpperCase();
+    if(!/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(g))
+      return {success:false,message:'That GSTIN format is not valid. It should look like 27AAPFM1234A1ZV.'};
+    return ok({legalName:b.companyName,tradeName:b.companyName,status:'Active',stateCode:g.slice(0,2)},{message:'GSTIN verified'});
+  }
+  if(path==='/auth/b2b/register')
+    return ok(null,{gofrugalMatched:true,requiresApproval:false,message:'Verified against our customer records. OTP sent.'});
+
+  if(path.endsWith('/verify-otp')){
+    if(b.otp!=='123456') return {success:false,message:'That OTP is incorrect. In demo mode use 123456.'};
+    const b2b = path.includes('b2b');
+    return ok({
+      user:{id:'u1',name:b.name||S.user?.name||'Purchase Manager',phone:b.phone,
+            customerType:b2b?'b2b':'b2c',company:b.company||null,gstin:b.gstin||null,
+            outlet:b2b?(b.company||'Main Outlet'):'Home'},
+      accessToken:'demo.'+Date.now(), refreshToken:'demo.r.'+Date.now(),
+    });
+  }
+
+  if(path==='/wallet'){ const w=DB.wallet; return ok({balance:w.balance,txns:w.txns}); }
+  if(path==='/wallet/topup'){
+    const t=ledgerPost('DEPOSIT', Number(b.amount)||0, b.note||'Prepaid deposit');
+    return ok({txn:t,balance:DB.wallet.balance});
+  }
+
+  if(path==='/orders'&&method==='POST'){
+    const w=DB.wallet;
+    if(b.payment==='credit'){
+      if(w.balance < b.total) return {success:false,code:'INSUFFICIENT',shortfall:b.total-w.balance,
+        message:`Insufficient business credit. You need ${money(b.total-w.balance)} more.`};
+    }
+    const no=orderNo();
+    let txn=null;
+    if(b.payment==='credit') txn=ledgerPost('ORDER_DEBIT', b.total, 'Order payment', no);
+    const o={orderNo:no,...b,status:'placed',placedAt:new Date().toISOString(),txnId:txn?.id||null,
+             deliverySlot:'Tomorrow, 7:00 AM – 11:00 AM'};
+    const list=DB.orders; list.unshift(o); DB.orders=list;
+    return ok({orderNo:no,total:b.total,balance:DB.wallet.balance,txnId:txn?.id||null,deliverySlot:o.deliverySlot});
+  }
+  if(path==='/orders'&&method==='GET') return ok(DB.orders);
+  if(path.startsWith('/orders/')){
+    const o=DB.orders.find(x=>x.orderNo===path.split('/')[2]);
+    return o?ok(o):{success:false,message:'Order not found'};
+  }
+  return ok({});
+}
+
+/* ═══════════════════════════════════════════════════════════
+   7. CATALOGUE HELPERS
+   ═══════════════════════════════════════════════════════════ */
+const CAT_COLOR = {
+  dairy:{c:'var(--c-dairy)',t:'var(--c-dairy-t)'},
+  curd:{c:'var(--c-curd)',t:'var(--c-curd-t)'},
+  beverages:{c:'var(--c-beverages)',t:'var(--c-beverages-t)'},
+  sweets:{c:'var(--c-sweets)',t:'var(--c-sweets-t)'},
+  frozen:{c:'var(--c-frozen)',t:'var(--c-frozen-t)'},
+};
+const catC = id => CAT_COLOR[id] || {c:'var(--brand-2)',t:'var(--brand-tint)'};
+
+const CATEGORIES = [
+  {id:'all',      label:'All items'},
+  {id:'dairy',    label:'Dairy'},
+  {id:'curd',     label:'Curd & Dahi'},
+  {id:'frozen',   label:'Frozen'},
+  {id:'beverages',label:'Beverages'},
+  {id:'sweets',   label:'Sweets'},
+];
+/* Price the customer actually pays — B2B rate for business accounts */
+function unitPrice(v){ return isB2B() ? v.b2b : v.mrp; }
+function showsMRP(v){ return isB2B() && v.b2b < v.mrp; }
+function savingPct(v){ return Math.round((1 - v.b2b/v.mrp)*100); }
+
+function filtered(){
+  const q = S.query.trim().toLowerCase();
+  return Object.entries(CATALOGUE).filter(([k,p])=>{
+    if(S.cat!=='all' && p.cat!==S.cat) return false;
+    if(q && !p.name.toLowerCase().includes(q) && !p.cat.includes(q)) return false;
+    return true;
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   8. CART — quantities are in units (packs/cases), MOQ enforced
+   ═══════════════════════════════════════════════════════════ */
+function cartKey(pk,vid){ return pk+'::'+vid; }
+function inCart(pk,vid){ return S.cart.find(i=>i.key===cartKey(pk,vid)); }
+function cartQty(pk,vid){ return inCart(pk,vid)?.qty || 0; }
+
+function setQty(pk, vid, qty){
+  const p = CATALOGUE[pk]; const v = p.variants.find(x=>x.id===vid);
+  const key = cartKey(pk,vid);
+  const i = S.cart.findIndex(x=>x.key===key);
+  if(qty<=0){ if(i>=0) S.cart.splice(i,1); }
+  else{
+    const line = {key,pk,vid,qty,name:p.name,label:v.label,unit:p.unit,
+                  price:unitPrice(v),mrp:v.mrp,img:p.img,moq:v.moq};
+    if(i>=0) S.cart[i]=line; else S.cart.push(line);
+  }
+  persist(); renderTabBadge(); renderOrderBar();
+  if(S.tab==='catalogue') repaintRows();
+  if(S.screen==='cart') paintCart();
+  if(S.screen==='product') paintProduct();
+}
+function addToCart(pk,vid){
+  const v = CATALOGUE[pk].variants.find(x=>x.id===vid);
+  const cur = cartQty(pk,vid);
+  setQty(pk,vid, cur>0 ? cur+1 : v.moq);
+  if(cur===0 && v.moq>1) toast(`Added ${v.moq} ${CATALOGUE[pk].unit}s — minimum order`, 'check');
+}
+function cartTotals(){
+  const sub = S.cart.reduce((s,i)=>s+i.price*i.qty,0);
+  const gst = Math.round(sub*APPCFG.gstRate*100)/100;
+  const del = (isB2B()||sub>=APPCFG.freeDeliveryAbove) ? 0 : APPCFG.deliveryFee;
+  return {sub, gst, del, total: sub+gst+del, count: S.cart.reduce((s,i)=>s+i.qty,0)};
+}
+function movMet(){ return cartTotals().sub >= (isB2B()?APPCFG.minOrderValue:0); }
+function clearCart(){ S.cart=[]; persist(); renderTabBadge(); renderOrderBar(); paintCart(); }
+
+/* ═══════════════════════════════════════════════════════════
+   9. UI PRIMITIVES
+   ═══════════════════════════════════════════════════════════ */
+let toastT;
+function toast(msg, ic='info'){
+  const t=document.getElementById('toast'); if(!t) return;
+  t.innerHTML = icon(ic,17) + '<span>'+esc(msg)+'</span>';
+  t.classList.add('on'); clearTimeout(toastT);
+  toastT=setTimeout(()=>t.classList.remove('on'), 2400);
+}
+function openSheet(html){
+  if(!document.getElementById('sheet')) return;
+  document.getElementById('sheet').innerHTML='<div class="sheet-grip"></div>'+html;
+  document.getElementById('sheet').classList.add('on');
+  document.getElementById('sheet-bg').classList.add('on');
+}
+function closeSheet(){
+  document.getElementById('sheet')?.classList.remove('on');
+  document.getElementById('sheet-bg')?.classList.remove('on');
+}
+function stateBlock(ic,title,desc,action){
+  return `<div class="state">
+    <div class="state-ic">${icon(ic,24)}</div>
+    <div class="state-t">${esc(title)}</div>
+    <div class="state-d">${esc(desc)}</div>
+    ${action||''}
+  </div>`;
+}
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════
+   10. ROUTER
+   ═══════════════════════════════════════════════════════════ */
+const APP = () => document.getElementById('app');
+const NAV = [];
+function go(screen, opt={}){
+  if(S.screen && S.screen!==screen && !opt.replace) NAV.push({s:S.screen, o:S.opt});
+  S.screen=screen; S.opt=opt; paint();
+  document.querySelector('.scroll')?.scrollTo(0,0);
+}
+function back(){
+  const p = NAV.pop();
+  if(p){ S.screen=p.s; S.opt=p.o||{}; paint(); }
+  else go('home',{replace:true});
+}
+function paint(){
+  const r = ROUTES[S.screen] || ROUTES.home;
+  if(!APP()) return;
+  APP().innerHTML = r();
+  if(S.screen==='catalogue'||S.screen==='reorder'){ renderOrderBar(); renderTabBadge(); }
+  if(S.screen==='cart') renderTabBadge();
+}
+
+/* Shared chrome ─────────────────────────────────────────── */
+function navBar(title, opts={}){
+  return `<div class="topbar">
+    ${opts.noBack?'':`<button class="iconbtn" onclick="back()" aria-label="Back">${icon('left',22)}</button>`}
+    <div class="grow"><div class="t-lg truncate">${esc(title)}</div>
+      ${opts.sub?`<div class="t-sm muted truncate">${esc(opts.sub)}</div>`:''}</div>
+    ${opts.action||''}
+  </div>`;
+}
+function tabBar(){
+  const t=(id,ic,lbl,badge)=>`<button class="tab ${S.tab===id?'on':''}" onclick="switchTab('${id}')">
+    ${icon(ic,21)}<span class="tab-lbl">${lbl}</span>
+    ${badge?`<span class="tab-badge" id="tb-${id}">${badge}</span>`:''}</button>`;
+  const c=cartTotals().count;
+  return `<nav class="tabbar">
+    ${t('home','building','Home')}
+    ${t('catalogue','grid','Catalogue')}
+    ${t('reorder','repeat','Reorder')}
+    ${t('orders','receipt','Orders')}
+    ${t('account','user','Account')}
+  </nav>`;
+}
+function switchTab(id){ S.tab=id; NAV.length=0; go(id,{replace:true}); }
+function renderTabBadge(){
+  const c=cartTotals().count;
+  const el=document.getElementById('cart-count');
+  if(el){ el.textContent=c; el.style.display=c?'flex':'none'; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   11. LOGIN
+   ═══════════════════════════════════════════════════════════ */
+let LOGIN = {mode:'b2b', step:'entry', gstin:'', company:'', gstData:null, phone:'', name:''};
+
+function scrLogin(){
+  return `<div class="screen on" style="background:var(--surface);">
+    <div style="padding:calc(var(--safe-t) + 40px) 24px 24px;">
+      <img src="${APPCFG.logo}" alt="" style="width:52px;height:52px;object-fit:contain;margin-bottom:20px;">
+      <div class="t-2xl mb-4">Order for your business</div>
+      <div class="t-md muted">Wholesale dairy, frozen and beverage supply across Pune.</div>
+    </div>
+    <div class="scroll" style="padding:0 24px 24px;">
+      <div class="seg mb-16">
+        <button class="seg-item ${LOGIN.mode==='b2b'?'on':''}" onclick="setLoginMode('b2b')">${icon('building',17)} Business</button>
+        <button class="seg-item ${LOGIN.mode==='b2c'?'on':''}" onclick="setLoginMode('b2c')">${icon('user',17)} Personal</button>
+      </div>
+      <div id="login-body">${LOGIN.mode==='b2b'?b2bForm():b2cForm()}</div>
+    </div>
+    <div style="padding:16px 24px calc(20px + var(--safe-b));border-top:1px solid var(--line-2);">
+      <div class="t-xs muted-2 center">By continuing you agree to Modern Dairy's terms of supply.<br>FSSAI licensed · Est. 1975</div>
+    </div>
+  </div>`;
+}
+function setLoginMode(m){ LOGIN.mode=m; LOGIN.step='entry'; paint(); }
+
+function b2bForm(){
+  if(LOGIN.step==='otp') return otpForm();
+  if(LOGIN.step==='contact') return `
+    <div class="banner ok mb-16">${icon('check',17)}<div><b>GSTIN verified</b><br>${esc(LOGIN.gstData?.legalName||LOGIN.company)}</div></div>
+    <div class="field"><label class="label">Contact person</label>
+      <input class="input" id="f-name" placeholder="Name of person placing orders" value="${esc(LOGIN.name)}"></div>
+    <div class="field"><label class="label">Mobile number</label>
+      <div class="phone-field"><span class="phone-cc">+91</span>
+      <input id="f-phone" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit number" value="${esc(LOGIN.phone)}"></div>
+      <div class="hint" id="h-phone">We'll send a one-time code to verify this number.</div></div>
+    <button class="btn" id="btn-reg" onclick="doB2BRegister()">Continue</button>
+    <button class="btn btn-quiet mt-8" onclick="LOGIN.step='entry';paint()">Back</button>`;
+  return `
+    <div class="field"><label class="label">GSTIN</label>
+      <input class="input" id="f-gstin" maxlength="15" placeholder="27AAPFM1234A1ZV" value="${esc(LOGIN.gstin)}"
+             style="text-transform:uppercase;letter-spacing:.04em;" oninput="this.value=this.value.toUpperCase()">
+      <div class="hint" id="h-gstin">Verified against government GST records.</div></div>
+    <div class="field"><label class="label">Registered business name</label>
+      <input class="input" id="f-company" placeholder="As printed on your GST certificate" value="${esc(LOGIN.company)}"></div>
+    <button class="btn" id="btn-gst" onclick="doVerifyGSTIN()">Verify business</button>
+    <div class="banner info mt-16">${icon('info',17)}<div>Business accounts get wholesale rates, credit terms and a ${money(APPCFG.minOrderValue)} minimum order.</div></div>`;
+}
+function b2cForm(){
+  if(LOGIN.step==='otp') return otpForm();
+  return `
+    <div class="field"><label class="label">Your name</label>
+      <input class="input" id="f-name" placeholder="Full name" value="${esc(LOGIN.name)}"></div>
+    <div class="field"><label class="label">Mobile number</label>
+      <div class="phone-field"><span class="phone-cc">+91</span>
+      <input id="f-phone" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit number" value="${esc(LOGIN.phone)}"></div>
+      <div class="hint" id="h-phone">We'll send a one-time code to verify this number.</div></div>
+    <button class="btn" id="btn-otp" onclick="doSendOTP()">Send code</button>`;
+}
+function otpForm(){
+  return `<div class="t-lg mb-4">Enter the 6-digit code</div>
+    <div class="t-md muted mb-16">Sent to +91 ${esc(LOGIN.phone)} · <button class="t-md" style="color:var(--brand);font-weight:600;" onclick="LOGIN.step='${LOGIN.mode==='b2b'?'contact':'entry'}';paint()">Change</button></div>
+    <input class="input mb-4" id="f-otp" type="tel" inputmode="numeric" maxlength="6" placeholder="••••••"
+           style="text-align:center;font-size:22px;font-weight:700;letter-spacing:.5em;height:56px;">
+    <div class="hint mb-16" id="h-otp">Demo mode — the code is <b>123456</b></div>
+    <button class="btn" id="btn-verify" onclick="doVerifyOTP()">Verify and continue</button>
+    <button class="btn btn-quiet mt-8" id="btn-resend" onclick="doResend()">Resend code</button>`;
+}
+
+function setErr(inputId, hintId, msg){
+  const i=document.getElementById(inputId), h=document.getElementById(hintId);
+  if(i) i.classList.toggle('err', !!msg);
+  if(h){ h.classList.toggle('err', !!msg); if(msg) h.textContent=msg; }
+}
+function busy(btnId, on, label){
+  const b=document.getElementById(btnId); if(!b) return;
+  b.disabled=on;
+  b.innerHTML = on ? `<span class="spin"></span> ${label||'Please wait'}` : (b.dataset.lbl||label||'Continue');
+}
+
+async function doVerifyGSTIN(){
+  const g=document.getElementById('f-gstin').value.trim().toUpperCase();
+  const c=document.getElementById('f-company').value.trim();
+  setErr('f-gstin','h-gstin',''); 
+  if(g.length!==15){ setErr('f-gstin','h-gstin','GSTIN must be exactly 15 characters.'); return; }
+  if(!c){ toast('Enter your registered business name','alert'); return; }
+  const btn=document.getElementById('btn-gst'); btn.dataset.lbl='Verify business';
+  busy('btn-gst',true,'Checking GST records');
+  const r=await API.post('/auth/b2b/verify-gstin',{gstin:g,companyName:c});
+  busy('btn-gst',false,'Verify business');
+  if(!r.success){ setErr('f-gstin','h-gstin', r.message); return; }
+  LOGIN.gstin=g; LOGIN.company=c; LOGIN.gstData=r.data; LOGIN.step='contact'; paint();
+}
+async function doB2BRegister(){
+  const n=document.getElementById('f-name').value.trim();
+  const p=document.getElementById('f-phone').value.trim();
+  if(!n){ toast('Enter the contact person name','alert'); return; }
+  if(!/^[6-9]\d{9}$/.test(p)){ setErr('f-phone','h-phone','Enter a valid 10-digit Indian mobile number.'); return; }
+  LOGIN.name=n; LOGIN.phone=p;
+  const btn=document.getElementById('btn-reg'); btn.dataset.lbl='Continue';
+  busy('btn-reg',true,'Verifying account');
+  if(FB){
+    try{ await FB.sendOTP(p); }
+    catch(e){ busy('btn-reg',false,'Continue');
+      toast('Could not send the code. '+(e.code||''),'alert'); return; }
+    busy('btn-reg',false,'Continue'); LOGIN.step='otp'; paint(); return;
+  }
+  const r=await API.post('/auth/b2b/register',{gstin:LOGIN.gstin,companyName:LOGIN.company,name:n,phone:p,gstData:LOGIN.gstData});
+  busy('btn-reg',false,'Continue');
+  if(!r.success){ toast(r.message,'alert'); return; }
+  if(r.requiresApproval){ go('pending'); return; }
+  LOGIN.step='otp'; paint();
+}
+async function doSendOTP(){
+  const n=document.getElementById('f-name').value.trim();
+  const p=document.getElementById('f-phone').value.trim();
+  if(!n){ toast('Enter your name','alert'); return; }
+  if(!/^[6-9]\d{9}$/.test(p)){ setErr('f-phone','h-phone','Enter a valid 10-digit Indian mobile number.'); return; }
+  LOGIN.name=n; LOGIN.phone=p;
+  const btn=document.getElementById('btn-otp'); btn.dataset.lbl='Send code';
+  busy('btn-otp',true,'Sending');
+  if(FB){
+    try{ await FB.sendOTP(p); }
+    catch(e){
+      busy('btn-otp',false,'Send code');
+      toast(e.code==='auth/invalid-phone-number'?'That number is not valid.'
+           :e.code==='auth/too-many-requests'?'Too many attempts. Try again later.'
+           :'Could not send the code. '+(e.code||''),'alert');
+      return;
+    }
+    busy('btn-otp',false,'Send code'); LOGIN.step='otp'; paint(); return;
+  }
+  const r=await API.post('/auth/b2c/send-otp',{phone:p,name:n});
+  busy('btn-otp',false,'Send code');
+  if(!r.success){ toast(r.message,'alert'); return; }
+  LOGIN.step='otp'; paint();
+}
+async function doResend(){
+  busy('btn-resend',true,'Sending');
+  if(FB){ try{ await FB.sendOTP(LOGIN.phone); }catch(e){ toast('Could not resend.','alert'); } }
+  else { await API.post(`/auth/${LOGIN.mode}/send-otp`,{phone:LOGIN.phone}); }
+  busy('btn-resend',false,'Resend code');
+  toast('Code sent again','check');
+}
+async function doVerifyOTP(){
+  const o=document.getElementById('f-otp').value.trim();
+  if(o.length!==6){ setErr('f-otp','h-otp','Enter all 6 digits.'); return; }
+  const btn=document.getElementById('btn-verify'); btn.dataset.lbl='Verify and continue';
+  busy('btn-verify',true,'Verifying');
+  let r;
+  if(FB){
+    try{
+      const u = await FB.verifyOTP(o);
+      const existing = await FB.customer(u.uid) || {};
+      const profile = {
+        name: LOGIN.name || existing.name || 'Customer',
+        phone: LOGIN.phone,
+        type: LOGIN.mode==='b2b' ? 'b2b' : 'b2c',
+        ...(LOGIN.mode==='b2b' ? { company:LOGIN.company, gstin:LOGIN.gstin } : {}),
+        balance: existing.balance ?? 0,
+      };
+      await FB.saveCustomer(u.uid, profile);
+      r={success:true,data:{user:{id:u.uid,name:profile.name,phone:profile.phone,
+         customerType:profile.type,company:profile.company||null,gstin:profile.gstin||null},
+         accessToken:'firebase',refreshToken:'firebase'}};
+    }catch(e){
+      busy('btn-verify',false,'Verify and continue');
+      setErr('f-otp','h-otp',
+        e.code==='auth/invalid-verification-code' ? 'That code is incorrect.'
+      : e.code==='auth/code-expired' ? 'That code expired. Request a new one.'
+      : (e.message||'Could not verify the code.'));
+      return;
+    }
+  } else {
+    r=await API.post(`/auth/${LOGIN.mode}/verify-otp`,
+      {phone:LOGIN.phone,otp:o,name:LOGIN.name,company:LOGIN.company,gstin:LOGIN.gstin});
+  }
+  busy('btn-verify',false,'Verify and continue');
+  if(!r.success){ setErr('f-otp','h-otp', r.message); return; }
+  S.user=r.data.user; S.token=r.data.accessToken; S.refresh=r.data.refreshToken;
+  localStorage.setItem('mda_user',JSON.stringify(S.user));
+  localStorage.setItem('mda_token',S.token);
+  localStorage.setItem('mda_refresh',S.refresh);
+  await Promise.all([loadWallet(), loadOrders()]);
+  S.tab='home'; NAV.length=0; go('home',{replace:true});
+}
+
+function scrPending(){
+  return `<div class="screen on">
+    ${navBar('Account under review',{noBack:true})}
+    ${stateBlock('clock','We are verifying your business',
+      'Our team checks every new business account against our customer records. This usually takes a few working hours — we will message you on +91 '+LOGIN.phone+' once it is active.',
+      `<a class="btn" style="max-width:220px;" href="tel:${APPCFG.supportPhone}">${icon('phone',18)} Call the office</a>
+       <button class="btn btn-quiet mt-8" style="max-width:220px;" onclick="LOGIN.step='entry';go('login',{replace:true})">Back to sign in</button>`)}
+  </div>`;
+}
+</script>
+<script>
+
+/* ═══════════════════════════════════════════════════════════
+   HOME — what a purchaser needs the moment they open the app:
+   1. Is an order already coming?   2. Reorder the usual
+   3. What can I spend?             4. Jump into the catalogue
+   ═══════════════════════════════════════════════════════════ */
+function scrHome(){
+  const t = cartTotals();
+  const live = S.orders.find(o => !['delivered','cancelled'].includes(o.status));
+  const hour = new Date().getHours();
+  const greet = hour<12 ? 'Good morning' : hour<17 ? 'Good afternoon' : 'Good evening';
+  const first = (S.user?.name||'there').split(' ')[0];
+
+  return `<div class="screen on">
+    <div class="scroll">
+
+      <!-- Masthead -->
+      <header style="background:linear-gradient(168deg,var(--brand) 0%,#1B3A66 100%);
+                     padding:calc(var(--safe-t) + 18px) 18px 26px;position:relative;overflow:hidden;">
+        <div style="position:absolute;right:-52px;top:-52px;width:180px;height:180px;border-radius:50%;
+                    background:rgba(255,255,255,.045);"></div>
+        <div style="position:absolute;right:14px;bottom:-72px;width:130px;height:130px;border-radius:50%;
+                    background:rgba(255,255,255,.03);"></div>
+        <div class="row between" style="position:relative;">
+          <div style="min-width:0;">
+            <div style="font-size:var(--t-sm);color:rgba(255,255,255,.66);">${greet}, ${esc(first)}</div>
+            <div class="truncate" style="font-size:var(--t-xl);font-weight:700;color:#fff;letter-spacing:-.02em;margin-top:1px;">
+              ${esc(S.user?.company || S.user?.name || 'Modern Dairy')}</div>
+            ${isB2B()?`<div class="row gap-6" style="margin-top:7px;">
+              <span style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,.14);
+                    padding:3px 9px;border-radius:99px;font-size:var(--t-xs);font-weight:600;color:#fff;">
+                ${icon('building',12)} Business account</span></div>`:''}
+          </div>
+          <button class="iconbtn on-brand" onclick="go('cart')" style="position:relative;" aria-label="Cart">
+            ${icon('cart',23)}
+            ${t.count?`<span style="position:absolute;top:2px;right:0;background:var(--crimson);color:#fff;
+              font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;
+              display:flex;align-items:center;justify-content:center;padding:0 5px;
+              box-shadow:0 0 0 2px var(--brand);">${t.count}</span>`:''}
+          </button>
+        </div>
+
+        <!-- Delivery promise: the single most useful fact -->
+        <div style="position:relative;margin-top:18px;background:rgba(255,255,255,.11);
+                    border:1px solid rgba(255,255,255,.16);border-radius:var(--r);padding:12px 14px;">
+          <div class="row gap-12">
+            <div style="width:34px;height:34px;border-radius:var(--r-sm);background:rgba(255,255,255,.15);
+                        display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;">
+              ${icon('truck',18)}</div>
+            <div class="grow">
+              <div style="font-size:var(--t-md);font-weight:600;color:#fff;">Next delivery tomorrow</div>
+              <div style="font-size:var(--t-sm);color:rgba(255,255,255,.66);">
+                Order before ${esc(APPCFG.orderCutoff)} to be included</div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      ${APPCFG.announcement?`<div style="padding:14px 16px 0;">
+        <div class="banner info">${icon('info',17)}<div>${esc(APPCFG.announcement)}</div></div></div>`:''}
+
+      <!-- Live order -->
+      ${live?`<div style="padding:16px 16px 0;">
+        <button class="card" style="width:100%;text-align:left;padding:14px;border-color:var(--brand-line);
+                background:var(--brand-tint);" onclick="openOrder('${esc(live.orderNo)}')">
+          <div class="row between mb-8">
+            <span class="eyebrow" style="color:var(--brand-2);">Order in progress</span>
+            <span class="pill b">${(STATUS[live.status]||STATUS.placed).l}</span></div>
+          <div class="row between">
+            <div><div class="t-base num" style="font-weight:700;">${esc(live.orderNo)}</div>
+              <div class="t-sm muted mt-4">${live.items.length} items · ${money(live.total)}</div></div>
+            ${icon('right',18)}</div>
+        </button></div>`:''}
+
+      <!-- Primary actions: reorder is the fastest path for a repeat buyer -->
+      <div class="section" style="padding-bottom:6px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <button class="card" style="padding:15px 13px;text-align:left;"
+                  onclick="${S.orders[0]?`reorder('${esc(S.orders[0].orderNo)}')`:`switchTab('catalogue')`}">
+            <div style="width:36px;height:36px;border-radius:var(--r-sm);background:var(--fresh-tint);
+                        color:var(--fresh);display:flex;align-items:center;justify-content:center;margin-bottom:10px;">
+              ${icon('repeat',19)}</div>
+            <div class="t-base" style="font-weight:600;">Repeat last order</div>
+            <div class="t-sm muted mt-4">${S.orders[0]
+              ? `${S.orders[0].items.length} items · ${money(S.orders[0].total)}`
+              : 'No previous order yet'}</div>
+          </button>
+          <button class="card" style="padding:15px 13px;text-align:left;" onclick="switchTab('catalogue')">
+            <div style="width:36px;height:36px;border-radius:var(--r-sm);background:var(--brand-tint);
+                        color:var(--brand-2);display:flex;align-items:center;justify-content:center;margin-bottom:10px;">
+              ${icon('grid',19)}</div>
+            <div class="t-base" style="font-weight:600;">Browse catalogue</div>
+            <div class="t-sm muted mt-4">${Object.keys(CATALOGUE).length} products</div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Credit: a B2B buyer checks this before building an order -->
+      ${APPCFG.walletEnabled && isB2B()?`
+      <div class="section" style="padding-top:10px;padding-bottom:6px;">
+        <button class="card" style="width:100%;text-align:left;padding:15px;" onclick="go('wallet')">
+          <div class="row between">
+            <div>
+              <div class="eyebrow mb-4">Business credit</div>
+              <div class="num" style="font-size:var(--t-2xl);font-weight:700;letter-spacing:-.02em;">
+                ${money(S.wallet.balance)}</div>
+              <div class="t-sm muted mt-4">Available to spend on orders</div>
+            </div>
+            <div style="width:38px;height:38px;border-radius:var(--r-sm);background:var(--gold-tint);
+                        color:var(--gold);display:flex;align-items:center;justify-content:center;">
+              ${icon('wallet',20)}</div>
+          </div>
+        </button>
+      </div>`:''}
+
+      <!-- Categories -->
+      <div class="section-head"><span class="eyebrow">Shop by category</span>
+        <button class="t-sm" style="color:var(--brand-2);font-weight:600;" onclick="switchTab('catalogue')">See all</button></div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px;padding:0 16px;">
+        ${CATEGORIES.filter(c=>c.id!=='all').map(c=>{
+          const n = Object.values(CATALOGUE).filter(p=>p.cat===c.id).length;
+          const sample = Object.values(CATALOGUE).find(p=>p.cat===c.id);
+          const k=catC(c.id);
+          return `<button class="card" style="padding:0;overflow:hidden;text-align:left;border-color:${k.t};"
+                    onclick="S.cat='${c.id}';switchTab('catalogue')">
+            <div style="height:62px;background:${k.t};display:flex;align-items:center;justify-content:center;">
+              ${sample?`<img src="${sample.img}" alt="" loading="lazy"
+                style="max-height:52px;max-width:76%;object-fit:contain;" onerror="this.style.opacity=0">`:''}
+            </div>
+            <div style="padding:8px 9px 10px;">
+              <div class="t-sm" style="font-weight:600;line-height:1.25;color:${k.c};">${esc(c.label)}</div>
+              <div class="t-xs muted-2 mt-4">${n} item${n>1?'s':''}</div>
+            </div></button>`;
+        }).join('')}
+      </div>
+
+      <!-- Their own frequent items, else a sensible starting set -->
+      ${homeQuickAdd()}
+
+      <div style="padding:26px 16px calc(28px + var(--safe-b));text-align:center;">
+        <img src="${APPCFG.logo}" alt="" style="width:34px;height:34px;object-fit:contain;opacity:.5;margin:0 auto 8px;">
+        <div class="t-xs muted-2">${esc(APPCFG.businessName)} · FSSAI licensed · Since 1975</div>
+      </div>
+    </div>
+    ${tabBar()}
+  </div>`;
+}
+
+function homeQuickAdd(){
+  const freq = {};
+  S.orders.forEach(o=>o.items.forEach(i=>{
+    const k=i.pk+'::'+i.vid; freq[k]=(freq[k]||0)+1;
+  }));
+  let list = Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,4)
+    .map(([k])=>({pk:k.split('::')[0], vid:k.split('::')[1]}))
+    .filter(x=>CATALOGUE[x.pk]);
+  const title = list.length ? 'Your regular items' : 'Popular with restaurants';
+  if(!list.length){
+    list = ['paneer','curd-cup','ghee','samosa']
+      .filter(k=>CATALOGUE[k]).map(k=>({pk:k, vid:CATALOGUE[k].variants[0].id}));
+  }
+  if(!list.length) return '';
+  return `<div class="section-head"><span class="eyebrow">${title}</span></div>
+    <div class="plist" style="border-top:1px solid var(--line-2);">
+      ${list.map(({pk,vid})=>{
+        const p=CATALOGUE[pk]; const v=p.variants.find(x=>x.id===vid)||p.variants[0];
+        return `<div class="prow">
+          <div class="pthumb" onclick="openProduct('${pk}')">
+            <img src="${p.img}" alt="" loading="lazy" onerror="this.style.opacity=0"></div>
+          <div class="pinfo" onclick="openProduct('${pk}')">
+            <div class="pname">${esc(p.name)}</div>
+            <div class="pmeta"><span>${esc(v.label)} ${esc(p.unit)}</span>
+              <span class="dot"></span><span class="stk ${v.stock}">${v.stock==='in'?'In stock':'Low'}</span></div>
+            <div class="pprice"><span class="price num">${money(unitPrice(v))}</span>
+              <span class="t-sm muted">/ ${esc(p.unit)}</span>
+              ${showsMRP(v)?`<span class="save">${savingPct(v)}% off</span>`:''}</div>
+          </div>
+          <div style="display:flex;align-items:flex-end;padding-top:26px;" id="act-${pk}-${v.id}">
+            ${qtyControl(pk,v)}</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   12. CATALOGUE — dense rows, built for fast bulk ordering
+   ═══════════════════════════════════════════════════════════ */
+function scrCatalogue(){
+  return `<div class="screen on">
+    <header class="appbar">
+      <div class="appbar-row mb-12">
+        <div class="grow" style="min-width:0;">
+          <div class="t-xs" style="color:rgba(255,255,255,.62);font-weight:600;letter-spacing:.04em;text-transform:uppercase;">
+            ${isB2B()?'Business account':'Personal account'}</div>
+          <div class="t-lg truncate" style="color:#fff;">${esc(S.user?.company || S.user?.name || 'Modern Dairy')}</div>
+        </div>
+        <button class="iconbtn on-brand" onclick="go('cart')" style="position:relative;" aria-label="Cart">
+          ${icon('cart',22)}
+          <span id="cart-count" style="position:absolute;top:4px;right:2px;background:#fff;color:var(--brand);font-size:10px;font-weight:700;min-width:17px;height:17px;border-radius:9px;display:none;align-items:center;justify-content:center;padding:0 4px;">0</span>
+        </button>
+      </div>
+      <div class="row gap-8" style="color:rgba(255,255,255,.86);font-size:var(--t-sm);">
+        ${icon('truck',15)}<span>Next delivery <b style="color:#fff;">tomorrow</b> · order before ${APPCFG.orderCutoff}</span>
+      </div>
+    </header>
+
+    <div style="padding:12px 16px 0;background:var(--surface);">
+      <div class="search">${icon('search',18)}
+        <input id="q" placeholder="Search paneer, ghee, curd…" value="${esc(S.query)}"
+               oninput="S.query=this.value;repaintList()" autocomplete="off">
+        ${S.query?`<button class="iconbtn" style="margin:0;width:26px;height:26px;" onclick="S.query='';paint()">${icon('close',17)}</button>`:''}
+      </div>
+    </div>
+    <div class="chiprow" id="chips">
+      ${CATEGORIES.map(c=>{const k=catC(c.id);
+        return `<button class="chip ${S.cat===c.id?'on':''}" onclick="S.cat='${c.id}';paint()"
+          style="${S.cat===c.id?`background:${k.c};border-color:${k.c};`:`color:${c.id==='all'?'var(--ink-2)':k.c};`}">
+          ${c.id!=='all'?`<span style="width:7px;height:7px;border-radius:2px;background:${S.cat===c.id?'rgba(255,255,255,.85)':k.c};"></span>`:''}
+          ${esc(c.label)}</button>`;}).join('')}
+    </div>
+    <div class="scroll" id="list">${listBody()}</div>
+    <div id="orderbar-slot"></div>
+    ${tabBar()}
+  </div>`;
+}
+
+function listBody(){
+  const items = filtered();
+  if(!items.length) return stateBlock('search','Nothing matches that search',
+    S.query? `No products found for “${S.query}”. Try a shorter word, or browse a category.`
+           : 'This category has no items right now.',
+    `<button class="btn btn-quiet" style="max-width:200px;" onclick="S.query='';S.cat='all';paint()">Show all items</button>`);
+  return `<div class="plist">${items.map(([k,p])=>prow(k,p)).join('')}</div>
+          <div style="padding:22px 16px calc(28px + var(--safe-b));text-align:center;">
+            <div class="t-sm muted-2">${items.length} product${items.length>1?'s':''} · prices ${isB2B()?'are wholesale, excl. GST':'incl. all taxes'}</div>
+          </div>`;
+}
+function repaintList(){ const el=document.getElementById('list'); if(el) el.innerHTML=listBody(); }
+function repaintRows(){
+  filtered().forEach(([k,p])=>{
+    p.variants.forEach(v=>{
+      const el=document.getElementById(`act-${k}-${v.id}`);
+      if(el) el.innerHTML = qtyControl(k,v);
+    });
+  });
+}
+
+/* One product row = image, name, packs, price, action. Nothing else. */
+function prow(k,p){
+  const v = p.variants[0];
+  const multi = p.variants.length>1;
+  return `<div class="prow">
+    <div class="pthumb" onclick="openProduct('${k}')" style="background:${catC(p.cat).t};border-color:transparent;">
+      <img src="${p.img}" alt="" loading="lazy" onerror="this.style.opacity=0"></div>
+    <div class="pinfo" onclick="openProduct('${k}')">
+      <div class="pname">${esc(p.name)}</div>
+      <div class="pmeta">
+        <span>${esc(v.label)} ${esc(p.unit)}</span>
+        ${multi?`<span class="dot"></span><span style="color:var(--brand);font-weight:600;">+${p.variants.length-1} more size${p.variants.length>2?'s':''}</span>`:''}
+      </div>
+      <div class="pmeta mt-4">
+        <span class="stk ${v.stock}">${v.stock==='in'?'In stock':v.stock==='low'?'Low stock':'Out of stock'}</span>
+        ${v.moq>1?`<span class="dot"></span><span class="t-xs muted">Min ${v.moq}</span>`:''}
+      </div>
+      <div class="pprice">
+        <span class="price num">${money(unitPrice(v))}</span>
+        <span class="t-sm muted">/ ${esc(p.unit)}</span>
+        ${showsMRP(v)?`<span class="mrp num">${money(v.mrp)}</span><span class="save">${savingPct(v)}% off</span>`:''}
+      </div>
+    </div>
+    <div style="display:flex;align-items:flex-end;padding-top:26px;" id="act-${k}-${v.id}">${qtyControl(k,v)}</div>
+  </div>`;
+}
+function qtyControl(pk,v){
+  if(v.stock==='out') return `<span class="addbtn out">Sold out</span>`;
+  const q = cartQty(pk,v.id);
+  if(!q) return `<button class="addbtn" onclick="event.stopPropagation();addToCart('${pk}','${v.id}')">Add</button>`;
+  return `<div class="qty" onclick="event.stopPropagation()">
+    <button onclick="stepQty('${pk}','${v.id}',-1)" aria-label="Decrease">${icon(q<=v.moq?'trash':'minus',16)}</button>
+    <input type="tel" inputmode="numeric" value="${q}" onchange="typeQty('${pk}','${v.id}',this.value)"
+           onclick="this.select()" aria-label="Quantity">
+    <button onclick="stepQty('${pk}','${v.id}',1)" aria-label="Increase">${icon('plus',16)}</button>
+  </div>`;
+}
+function stepQty(pk,vid,d){
+  const v=CATALOGUE[pk].variants.find(x=>x.id===vid);
+  const cur=cartQty(pk,vid);
+  let next=cur+d;
+  if(d<0 && cur<=v.moq) next=0;               // below MOQ = remove the line entirely
+  if(d<0 && next>0 && next<v.moq) next=v.moq;
+  setQty(pk,vid,next);
+}
+function typeQty(pk,vid,val){
+  const v=CATALOGUE[pk].variants.find(x=>x.id===vid);
+  let n=parseInt(String(val).replace(/\D/g,''))||0;
+  if(n>0 && n<v.moq){ n=v.moq; toast(`Minimum order is ${v.moq} ${CATALOGUE[pk].unit}s`,'info'); }
+  if(n>9999) n=9999;
+  setQty(pk,vid,n);
+}
+
+/* Sticky order bar — shows progress to the minimum order value */
+function renderOrderBar(){
+  const slot=document.getElementById('orderbar-slot'); if(!slot) return;
+  const t=cartTotals();
+  if(!t.count){ slot.innerHTML=''; return; }
+  const mov=isB2B()?APPCFG.minOrderValue:0;
+  const met=t.sub>=mov;
+  const pct=mov?Math.min(100,(t.sub/mov)*100):100;
+  slot.innerHTML=`<div class="orderbar">
+    ${mov?`<div class="mov-track"><div class="mov-fill ${met?'met':''}" style="width:${pct}%"></div></div>`:''}
+    <div class="row between gap-12">
+      <div style="min-width:0;">
+        <div class="t-lg num" style="font-weight:700;">${money(t.sub)}</div>
+        <div class="t-xs ${met?'muted':''}" style="${met?'':'color:var(--warn);font-weight:600;'}">
+          ${met? `${t.count} item${t.count>1?'s':''} · excl. GST`
+               : `Add ${money(mov-t.sub)} more to order`}</div>
+      </div>
+      <button class="btn btn-sm" style="height:42px;padding:0 20px;${met?'':'background:var(--line);color:var(--ink-3);pointer-events:none;'}"
+              onclick="go('cart')">Review order ${icon('right',17)}</button>
+    </div>
+  </div>`;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   13. PRODUCT DETAIL — every pack size priced and orderable
+   ═══════════════════════════════════════════════════════════ */
+function openProduct(k){ S.pk=k; go('product'); }
+function scrProduct(){
+  const k=S.pk, p=CATALOGUE[k];
+  if(!p) return `<div class="screen on">${navBar('Product')}${stateBlock('alert','Product unavailable','This item is no longer in the catalogue.','')}</div>`;
+  return `<div class="screen on">
+    ${navBar(p.name,{sub:CATEGORIES.find(c=>c.id===p.cat)?.label})}
+    <div class="scroll" id="pd-scroll">${productBody(k,p)}</div>
+    ${tabBar()}
+  </div>`;
+}
+function paintProduct(){
+  if(S.screen!=='product') return;
+  const el=document.getElementById('pd-scroll');
+  if(el) el.innerHTML=productBody(S.pk,CATALOGUE[S.pk]);
+}
+function productBody(k,p){
+  return `
+  <div style="background:linear-gradient(180deg,${catC(p.cat).t} 0%,var(--surface) 100%);padding:24px 20px;display:flex;justify-content:center;border-bottom:1px solid var(--line);">
+    <img src="${p.img}" alt="" style="max-height:180px;max-width:70%;object-fit:contain;" onerror="this.style.opacity=0">
+  </div>
+  <div class="section">
+    <div class="eyebrow mb-8">Pack sizes</div>
+    ${p.variants.map(v=>{
+      const q=cartQty(k,v.id);
+      return `<div class="card mb-8" style="padding:12px 14px;${q?'border-color:var(--brand-line);background:var(--brand-tint);':''}">
+        <div class="row between gap-12">
+          <div class="grow">
+            <div class="row gap-8 mb-4">
+              <span class="t-base" style="font-weight:600;">${esc(v.label)}</span>
+              <span class="stk ${v.stock}">${v.stock==='in'?'In stock':v.stock==='low'?'Low':'Sold out'}</span>
+            </div>
+            <div class="row gap-6">
+              <span class="t-lg num" style="font-weight:700;">${money(unitPrice(v))}</span>
+              <span class="t-sm muted">per ${esc(p.unit)}</span>
+              ${showsMRP(v)?`<span class="mrp num t-sm">${money(v.mrp)}</span>`:''}
+            </div>
+            <div class="t-xs muted mt-4">
+              Minimum ${v.moq} ${esc(p.unit)}${v.moq>1?'s':''} · case of ${v.case}
+              ${q?` · <b style="color:var(--brand);">${money(unitPrice(v)*q)} for ${q}</b>`:''}
+            </div>
+          </div>
+          <div id="act-${k}-${v.id}">${qtyControl(k,v)}</div>
+        </div>
+      </div>`;
+    }).join('')}
+  </div>
+  ${p.desc?`<div class="divider"></div><div class="section">
+    <div class="eyebrow mb-8">About this product</div>
+    <div class="t-md muted" style="line-height:1.6;">${esc(p.desc)}</div>
+  </div>`:''}
+  ${(p.storage||p.freshness)?`<div class="divider"></div><div class="section">
+    <div class="eyebrow mb-12">Handling</div>
+    ${p.freshness?`<div class="row gap-12 mb-12" style="align-items:flex-start;">
+      <div class="lrow-ic">${icon('clock',17)}</div>
+      <div><div class="t-md" style="font-weight:600;">Shelf life</div>
+      <div class="t-sm muted">${esc(p.freshness)}</div></div></div>`:''}
+    ${p.storage?`<div class="row gap-12" style="align-items:flex-start;">
+      <div class="lrow-ic">${icon('box',17)}</div>
+      <div><div class="t-md" style="font-weight:600;">Storage</div>
+      <div class="t-sm muted">${esc(p.storage)}</div></div></div>`:''}
+  </div>`:''}
+  <div style="height:24px;"></div>`;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   14. CART
+   ═══════════════════════════════════════════════════════════ */
+function scrCart(){
+  return `<div class="screen on">
+    ${navBar('Your order',{sub:S.user?.company||'',
+      action:S.cart.length?`<button class="iconbtn" onclick="confirmClear()" aria-label="Clear">${icon('trash',20)}</button>`:''})}
+    <div class="scroll" id="cart-body">${cartBody()}</div>
+    ${tabBar()}
+  </div>`;
+}
+function paintCart(){ const el=document.getElementById('cart-body'); if(el) el.innerHTML=cartBody(); }
+function cartBody(){
+  if(!S.cart.length) return stateBlock('cart','Your order is empty',
+    'Add products from the catalogue to build your order.',
+    `<button class="btn" style="max-width:220px;" onclick="switchTab('catalogue')">Browse catalogue</button>`);
+  const t=cartTotals();
+  const mov=isB2B()?APPCFG.minOrderValue:0;
+  const short=mov-t.sub;
+  return `
+    ${short>0?`<div style="padding:12px 16px 0;"><div class="banner warn">${icon('alert',17)}
+      <div>Add <b>${money(short)}</b> more to reach the ${money(mov)} minimum order for business accounts.</div></div></div>`:''}
+    <div class="plist mt-12">
+      ${S.cart.map(i=>`<div class="prow">
+        <div class="pthumb"><img src="${i.img}" alt="" onerror="this.style.opacity=0"></div>
+        <div class="pinfo">
+          <div class="pname">${esc(i.name)}</div>
+          <div class="pmeta"><span>${esc(i.label)} ${esc(i.unit)}</span><span class="dot"></span>
+            <span class="num">${money(i.price)} each</span></div>
+          <div class="t-lg num mt-4" style="font-weight:700;">${money(i.price*i.qty)}</div>
+        </div>
+        <div style="display:flex;align-items:flex-end;padding-top:26px;" id="act-${i.pk}-${i.vid}">
+          ${qtyControl(i.pk, CATALOGUE[i.pk].variants.find(v=>v.id===i.vid))}
+        </div>
+      </div>`).join('')}
+    </div>
+    <div class="divider"></div>
+    <div class="section">
+      <div class="eyebrow mb-12">Bill summary</div>
+      <div class="tot"><span class="muted">Subtotal (${t.count} items)</span><span class="num">${money2(t.sub)}</span></div>
+      <div class="tot"><span class="muted">GST @ ${Math.round(APPCFG.gstRate*100)}%</span><span class="num">${money2(t.gst)}</span></div>
+      <div class="tot"><span class="muted">Delivery</span>
+        <span class="num" style="${t.del?'':'color:var(--fresh);font-weight:600;'}">${t.del?money2(t.del):'Free'}</span></div>
+      <div class="tot grand"><span>Total payable</span><span class="num">${money2(t.total)}</span></div>
+    </div>
+    <div style="padding:0 16px calc(24px + var(--safe-b));">
+      <button class="btn" ${short>0?'disabled':''} onclick="go('checkout')">
+        ${short>0?`Minimum order ${money(mov)}`:'Proceed to checkout'}</button>
+      <button class="btn btn-quiet mt-8" onclick="switchTab('catalogue')">Add more items</button>
+    </div>`;
+}
+function confirmClear(){
+  openSheet(`<div class="sheet-head"><div class="t-lg">Clear this order?</div>
+    <button class="iconbtn" onclick="closeSheet()">${icon('close',20)}</button></div>
+    <div class="section"><div class="t-md muted mb-16">All ${cartTotals().count} items will be removed. This cannot be undone.</div>
+    <button class="btn btn-danger" onclick="clearCart();closeSheet();toast('Order cleared','check')">Yes, clear order</button>
+    <button class="btn btn-quiet mt-8" onclick="closeSheet()">Keep my order</button></div>`);
+}
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════
+   15. CHECKOUT — business credit is the primary B2B rail
+   ═══════════════════════════════════════════════════════════ */
+let PAY = 'credit';
+function scrCheckout(){
+  const t=cartTotals();
+  const bal=S.wallet.balance;
+  const enough=bal>=t.total;
+  if(!S.cart.length) return `<div class="screen on">${navBar('Checkout')}
+    ${stateBlock('cart','Nothing to check out','Your order is empty.',
+    `<button class="btn" style="max-width:200px;" onclick="switchTab('catalogue')">Browse catalogue</button>`)}</div>`;
+  return `<div class="screen on">
+    ${navBar('Checkout',{sub:`${t.count} items · ${money(t.total)}`})}
+    <div class="scroll">
+      <div class="section">
+        <div class="eyebrow mb-8">Deliver to</div>
+        <div class="card" style="padding:14px;">
+          <div class="row between gap-12">
+            <div class="grow">
+              <div class="t-base mb-4" style="font-weight:600;">${esc(S.user?.company||S.user?.name||'Outlet')}</div>
+              <div class="t-sm muted" style="line-height:1.5;">${esc(APPCFG.address)}</div>
+              <div class="t-sm muted mt-4">+91 ${esc(S.user?.phone||'')}</div>
+            </div>
+            <button class="iconbtn" onclick="toast('Address editing is managed by the office','info')">${icon('edit',18)}</button>
+          </div>
+        </div>
+        <div class="banner info mt-12">${icon('truck',17)}
+          <div>Delivery <b>tomorrow, 7:00 AM – 11:00 AM</b>. Orders after ${APPCFG.orderCutoff} move to the next slot.</div></div>
+      </div>
+
+      <div class="divider"></div>
+      <div class="section">
+        <div class="eyebrow mb-8">Payment</div>
+        ${APPCFG.walletEnabled&&isB2B()?`
+        <button class="card mb-8" style="width:100%;text-align:left;padding:14px;${PAY==='credit'?'border-color:var(--brand);background:var(--brand-tint);':''}"
+                onclick="PAY='credit';paint()">
+          <div class="row gap-12">
+            <div class="lrow-ic" style="${PAY==='credit'?'background:var(--brand);color:#fff;':''}">${icon('wallet',18)}</div>
+            <div class="grow">
+              <div class="row between"><span class="t-base" style="font-weight:600;">Business credit</span>
+                ${radio(PAY==='credit')}</div>
+              <div class="t-sm muted mt-4">Available <b class="num" style="color:${enough?'var(--fresh)':'var(--bad)'};">${money(bal)}</b></div>
+            </div>
+          </div>
+          ${PAY==='credit'?(enough?`
+            <div style="border-top:1px solid var(--brand-line);margin-top:12px;padding-top:12px;">
+              <div class="tot"><span class="muted">Balance now</span><span class="num">${money(bal)}</span></div>
+              <div class="tot"><span class="muted">This order</span><span class="num" style="color:var(--bad);">− ${money(t.total)}</span></div>
+              <div class="tot" style="border-top:1px solid var(--brand-line);margin-top:6px;padding-top:9px;font-weight:700;">
+                <span>Balance after</span><span class="num">${money(bal-t.total)}</span></div>
+            </div>`:`
+            <div class="banner bad mt-12">${icon('alert',17)}
+              <div>Short by <b>${money(t.total-bal)}</b>. Top up your credit or pay online.</div></div>
+            <button class="btn btn-sm btn-ghost mt-8" style="width:100%;" onclick="event.stopPropagation();go('wallet')">Top up credit</button>`):''}
+        </button>`:''}
+
+        <button class="card mb-8" style="width:100%;text-align:left;padding:14px;${PAY==='online'?'border-color:var(--brand);background:var(--brand-tint);':''}"
+                onclick="PAY='online';paint()">
+          <div class="row gap-12">
+            <div class="lrow-ic" style="${PAY==='online'?'background:var(--brand);color:#fff;':''}">${icon('shield',18)}</div>
+            <div class="grow"><div class="row between"><span class="t-base" style="font-weight:600;">Pay online</span>${radio(PAY==='online')}</div>
+              <div class="t-sm muted mt-4">UPI, card or net banking</div></div>
+          </div>
+        </button>
+
+        <button class="card" style="width:100%;text-align:left;padding:14px;${PAY==='cod'?'border-color:var(--brand);background:var(--brand-tint);':''}"
+                onclick="PAY='cod';paint()">
+          <div class="row gap-12">
+            <div class="lrow-ic" style="${PAY==='cod'?'background:var(--brand);color:#fff;':''}">${icon('receipt',18)}</div>
+            <div class="grow"><div class="row between"><span class="t-base" style="font-weight:600;">Pay on delivery</span>${radio(PAY==='cod')}</div>
+              <div class="t-sm muted mt-4">Cash or UPI to the delivery partner</div></div>
+          </div>
+        </button>
+      </div>
+
+      <div class="divider"></div>
+      <div class="section">
+        <div class="eyebrow mb-12">Order summary</div>
+        ${S.cart.map(i=>`<div class="tot"><span class="muted truncate" style="max-width:64%;">${esc(i.name)} ${esc(i.label)} × ${i.qty}</span>
+          <span class="num">${money(i.price*i.qty)}</span></div>`).join('')}
+        <div class="tot" style="border-top:1px solid var(--line-2);margin-top:8px;padding-top:10px;">
+          <span class="muted">GST @ ${Math.round(APPCFG.gstRate*100)}%</span><span class="num">${money2(t.gst)}</span></div>
+        <div class="tot"><span class="muted">Delivery</span><span class="num" style="color:var(--fresh);font-weight:600;">Free</span></div>
+        <div class="tot grand"><span>Total payable</span><span class="num">${money2(t.total)}</span></div>
+        ${isB2B()&&S.user?.gstin?`<div class="t-xs muted-2 mt-12">Tax invoice will be raised against GSTIN ${esc(S.user.gstin)}</div>`:''}
+      </div>
+      <div style="height:8px;"></div>
+    </div>
+    <div style="padding:12px 16px calc(12px + var(--safe-b));border-top:1px solid var(--line);background:var(--surface);">
+      <button class="btn" id="btn-place" ${PAY==='credit'&&!enough?'disabled':''} onclick="placeOrder()">
+        ${PAY==='credit'&&!enough?`Insufficient credit`:`Place order · ${money(t.total)}`}</button>
+    </div>
+  </div>`;
+}
+function radio(on){
+  return `<span style="width:19px;height:19px;border-radius:50%;border:2px solid ${on?'var(--brand)':'var(--line)'};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+    ${on?'<span style="width:9px;height:9px;border-radius:50%;background:var(--brand);"></span>':''}</span>`;
+}
+
+async function placeOrder(){
+  const t=cartTotals();
+  const btn=document.getElementById('btn-place'); btn.dataset.lbl=`Place order · ${money(t.total)}`;
+  busy('btn-place',true,'Placing order');
+  const payload={
+    items:S.cart.map(i=>({pk:i.pk,vid:i.vid,name:i.name,label:i.label,unit:i.unit,qty:i.qty,price:i.price})),
+    subtotal:t.sub, gst:t.gst, delivery:t.del, total:t.total,
+    payment:PAY, customerType:S.user?.customerType||'b2c',
+    company:S.user?.company||null, gstin:S.user?.gstin||null,
+    name:S.user?.name, phone:S.user?.phone,
+  };
+  let r;
+  if(FB){
+    try{
+      const out = await FB.placeOrder({
+        items:payload.items, subtotal:payload.subtotal, gst:payload.gst,
+        delivery:payload.delivery, total:payload.total, payment:payload.payment,
+        type:payload.customerType, company:payload.company, gstin:payload.gstin,
+        name:payload.name, phone:payload.phone,
+      });
+      r = { success:true, data:{ ...out, deliverySlot:'Tomorrow, 7:00 AM – 11:00 AM' } };
+    }catch(e){
+      r = { success:false, code:e.code, message:e.message };
+    }
+  } else {
+    r = await API.post('/orders',payload);
+  }
+  busy('btn-place',false, payload.total?`Place order · ${money(t.total)}`:'Place order');
+  if(!r.success){
+    if(r.code==='INSUFFICIENT'){ toast(r.message,'alert'); return; }
+    toast(r.message||'Could not place the order. Try again.','alert'); return;
+  }
+  S.lastOrder={...r.data, items:payload.items, total:payload.total, payment:PAY};
+  S.cart=[]; persist(); await loadWallet();
+  go('placed',{replace:true});
+}
+
+/* ═══════════════════════════════════════════════════════════
+   16. ORDER PLACED
+   ═══════════════════════════════════════════════════════════ */
+function scrPlaced(){
+  const o=S.lastOrder||{};
+  return `<div class="screen on">
+    <div class="scroll" style="padding:0;">
+      <div style="padding:calc(var(--safe-t) + 48px) 24px 28px;text-align:center;background:var(--surface);">
+        <div style="width:56px;height:56px;border-radius:50%;background:var(--fresh-tint);color:var(--fresh);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">
+          ${icon('check',28,2)}</div>
+        <div class="t-xl mb-4">Order confirmed</div>
+        <div class="t-md muted">We have your order and it is being prepared.</div>
+      </div>
+      <div class="divider"></div>
+      <div class="section">
+        <div class="card">
+          <div class="lrow"><div class="lrow-body"><div class="t-sm muted">Order number</div>
+            <div class="t-base num" style="font-weight:700;letter-spacing:.04em;">${esc(o.orderNo||'—')}</div></div></div>
+          <div class="lrow"><div class="lrow-body"><div class="t-sm muted">Delivery</div>
+            <div class="t-base" style="font-weight:600;">${esc(o.deliverySlot||'Tomorrow, 7:00 AM – 11:00 AM')}</div></div></div>
+          <div class="lrow"><div class="lrow-body"><div class="t-sm muted">Amount</div>
+            <div class="t-base num" style="font-weight:700;">${money(o.total||0)}</div></div>
+            <span class="pill ${o.payment==='credit'?'b':'n'}">${o.payment==='credit'?'Business credit':o.payment==='cod'?'Pay on delivery':'Paid online'}</span></div>
+          ${o.txnId?`<div class="lrow"><div class="lrow-body"><div class="t-sm muted">Transaction</div>
+            <div class="t-base num">${esc(o.txnId)}</div></div></div>`:''}
+        </div>
+        ${o.payment==='credit'?`<div class="banner ok mt-12">${icon('wallet',17)}
+          <div>${money(o.total)} deducted. Remaining credit <b>${money(S.wallet.balance)}</b>.</div></div>`:''}
+      </div>
+      <div style="padding:0 16px calc(24px + var(--safe-b));">
+        <button class="btn" onclick="openOrder('${esc(o.orderNo||'')}')">Track this order</button>
+        <button class="btn btn-quiet mt-8" onclick="switchTab('catalogue')">Continue ordering</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   17. ORDERS
+   ═══════════════════════════════════════════════════════════ */
+const STATUS = {
+  placed:{l:'Placed',c:'b'}, confirmed:{l:'Confirmed',c:'b'}, packed:{l:'Packed',c:'a'},
+  out_for_delivery:{l:'Out for delivery',c:'a'}, delivered:{l:'Delivered',c:'g'}, cancelled:{l:'Cancelled',c:'r'},
+};
+async function loadOrders(){
+  if(FB && S.user?.id){
+    const list = await FB.orders(S.user.id).catch(()=>[]);
+    S.orders = list.map(o=>({ ...o, orderNo:o.id,
+      placedAt: o.at?.toDate?.()?.toISOString() || new Date().toISOString() }));
+    return;
+  }
+  const r=await API.get('/orders'); S.orders=r.success?r.data:[];
+}
+function scrOrders(){
+  return `<div class="screen on">
+    ${navBar('Orders',{noBack:true,sub:S.user?.company||''})}
+    <div class="scroll" id="orders-body">${ordersBody()}</div>
+    ${tabBar()}
+  </div>`;
+}
+function ordersBody(){
+  if(!S.orders.length) return stateBlock('receipt','No orders yet',
+    'Once you place an order it will appear here, and you can reorder it with one tap.',
+    `<button class="btn" style="max-width:220px;" onclick="switchTab('catalogue')">Start an order</button>`);
+  return `<div>${S.orders.map(o=>{
+    const st=STATUS[o.status]||STATUS.placed;
+    return `<div class="lrow" onclick="openOrder('${esc(o.orderNo)}')" style="align-items:flex-start;">
+      <div class="lrow-body">
+        <div class="row between mb-4"><span class="t-base num" style="font-weight:700;">${esc(o.orderNo)}</span>
+          <span class="pill ${st.c}">${st.l}</span></div>
+        <div class="t-sm muted">${dtFmt(o.placedAt)} · ${o.items.length} item${o.items.length>1?'s':''}</div>
+        <div class="t-base num mt-4" style="font-weight:600;">${money(o.total)}</div>
+      </div>
+      ${icon('right',18)}
+    </div>`;
+  }).join('')}<div style="height:calc(24px + var(--safe-b));"></div></div>`;
+}
+async function openOrder(no){
+  if(!no) return;
+  if(FB && S.user?.id){
+    const o=S.orders.find(x=>x.orderNo===no);
+    if(o){ S.order=o; go('order'); return; }
+  }
+  const r=await API.get('/orders/'+no);
+  if(!r.success){ toast('Could not load that order','alert'); return; }
+  S.order=r.data; go('order');
+}
+function scrOrder(){
+  const o=S.order; if(!o) return `<div class="screen on">${navBar('Order')}${stateBlock('alert','Order not found','','')}</div>`;
+  const st=STATUS[o.status]||STATUS.placed;
+  const steps=['placed','confirmed','packed','out_for_delivery','delivered'];
+  const at=steps.indexOf(o.status);
+  return `<div class="screen on">
+    ${navBar(o.orderNo,{sub:dtFmt(o.placedAt)})}
+    <div class="scroll">
+      <div class="section">
+        <div class="row between mb-16"><span class="pill ${st.c}">${st.l}</span>
+          <span class="t-sm muted">${esc(o.deliverySlot||'')}</span></div>
+        ${steps.map((s,i)=>`<div class="row gap-12" style="align-items:flex-start;">
+          <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">
+            <div style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+              background:${i<=at?'var(--brand)':'var(--surface)'};border:1.5px solid ${i<=at?'var(--brand)':'var(--line)'};color:#fff;">
+              ${i<=at?icon('check',12,2.4):''}</div>
+            ${i<steps.length-1?`<div style="width:1.5px;height:26px;background:${i<at?'var(--brand)':'var(--line)'};"></div>`:''}
+          </div>
+          <div style="padding-bottom:${i<steps.length-1?'8px':'0'};">
+            <div class="t-md" style="font-weight:${i<=at?'600':'400'};color:${i<=at?'var(--ink)':'var(--ink-3)'};">${STATUS[s].l}</div>
+          </div></div>`).join('')}
+      </div>
+      <div class="divider"></div>
+      <div class="section">
+        <div class="eyebrow mb-12">Items</div>
+        ${o.items.map(i=>`<div class="tot"><span class="muted truncate" style="max-width:64%;">${esc(i.name)} ${esc(i.label)} × ${i.qty}</span>
+          <span class="num">${money(i.price*i.qty)}</span></div>`).join('')}
+        <div class="tot" style="border-top:1px solid var(--line-2);margin-top:8px;padding-top:10px;">
+          <span class="muted">GST</span><span class="num">${money2(o.gst||0)}</span></div>
+        <div class="tot grand"><span>Total</span><span class="num">${money2(o.total)}</span></div>
+      </div>
+      <div class="divider"></div>
+      <div class="section">
+        <div class="eyebrow mb-12">Payment</div>
+        <div class="row between mb-8"><span class="t-md muted">Method</span>
+          <span class="t-md" style="font-weight:600;">${o.payment==='credit'?'Business credit':o.payment==='cod'?'Pay on delivery':'Paid online'}</span></div>
+        ${o.txnId?`<div class="row between"><span class="t-md muted">Transaction</span>
+          <span class="t-md num">${esc(o.txnId)}</span></div>`:''}
+      </div>
+      <div style="padding:0 16px calc(24px + var(--safe-b));">
+        <button class="btn btn-ghost" onclick="reorder('${esc(o.orderNo)}')">${icon('repeat',18)} Reorder these items</button>
+        <a class="btn btn-quiet mt-8" href="tel:${APPCFG.supportPhone}">${icon('phone',18)} Call about this order</a>
+      </div>
+    </div>
+  </div>`;
+}
+function reorder(no){
+  const o=S.orders.find(x=>x.orderNo===no)||S.order;
+  if(!o) return;
+  let added=0, skipped=0;
+  o.items.forEach(i=>{
+    const p=CATALOGUE[i.pk]; if(!p){skipped++;return;}
+    const v=p.variants.find(x=>x.id===i.vid); if(!v||v.stock==='out'){skipped++;return;}
+    setQty(i.pk,i.vid, Math.max(i.qty, v.moq)); added++;
+  });
+  toast(added? `${added} item${added>1?'s':''} added to your order` : 'Those items are unavailable', added?'check':'alert');
+  if(added) go('cart');
+}
+
+/* ═══════════════════════════════════════════════════════════
+   18. REORDER — the fastest path for a repeat B2B customer
+   ═══════════════════════════════════════════════════════════ */
+function scrReorder(){
+  const hist={};
+  S.orders.forEach(o=>o.items.forEach(i=>{
+    const k=i.pk+'::'+i.vid;
+    if(!hist[k]) hist[k]={...i,times:0,lastQty:i.qty,last:o.placedAt};
+    hist[k].times++;
+  }));
+  const items=Object.values(hist).sort((a,b)=>b.times-a.times);
+  return `<div class="screen on">
+    ${navBar('Reorder',{noBack:true,sub:'Items you order regularly'})}
+    <div class="scroll">
+      ${!items.length ? stateBlock('repeat','Nothing to reorder yet',
+        'After your first order, the items you buy most often will appear here for one-tap reordering.',
+        `<button class="btn" style="max-width:220px;" onclick="switchTab('catalogue')">Browse catalogue</button>`)
+      : `${S.orders[0]?`<div class="section" style="padding-bottom:0;">
+          <button class="card" style="width:100%;text-align:left;padding:14px;border-color:var(--brand-line);background:var(--brand-tint);"
+                  onclick="reorder('${esc(S.orders[0].orderNo)}')">
+            <div class="row gap-12"><div class="lrow-ic" style="background:var(--brand);color:#fff;">${icon('repeat',18)}</div>
+            <div class="grow"><div class="t-base" style="font-weight:600;">Repeat last order</div>
+              <div class="t-sm muted mt-4">${S.orders[0].items.length} items · ${money(S.orders[0].total)} · ${dateFmt(S.orders[0].placedAt)}</div></div>
+            ${icon('right',18)}</div>
+          </button></div>`:''}
+        <div class="section-head"><span class="eyebrow">Ordered most often</span></div>
+        <div class="plist">${items.map(i=>{
+          const p=CATALOGUE[i.pk]; if(!p) return '';
+          const v=p.variants.find(x=>x.id===i.vid); if(!v) return '';
+          return `<div class="prow">
+            <div class="pthumb"><img src="${p.img}" alt="" onerror="this.style.opacity=0"></div>
+            <div class="pinfo">
+              <div class="pname">${esc(p.name)}</div>
+              <div class="pmeta"><span>${esc(v.label)} ${esc(p.unit)}</span><span class="dot"></span>
+                <span>Ordered ${i.times}×</span></div>
+              <div class="pprice"><span class="price num">${money(unitPrice(v))}</span>
+                <span class="t-sm muted">/ ${esc(p.unit)}</span></div>
+            </div>
+            <div style="display:flex;align-items:flex-end;padding-top:26px;" id="act-${i.pk}-${i.vid}">${qtyControl(i.pk,v)}</div>
+          </div>`;
+        }).join('')}</div>
+        <div style="height:calc(24px + var(--safe-b));"></div>`}
+    </div>
+    <div id="orderbar-slot"></div>
+    ${tabBar()}
+  </div>`;
+}
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════
+   19. ACCOUNT
+   ═══════════════════════════════════════════════════════════ */
+function scrAccount(){
+  const u=S.user||{};
+  return `<div class="screen on">
+    ${navBar('Account',{noBack:true})}
+    <div class="scroll">
+      <div class="section">
+        <div class="card" style="padding:16px;">
+          <div class="row gap-12 mb-12">
+            <div style="width:44px;height:44px;border-radius:var(--r-sm);background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:var(--t-lg);flex-shrink:0;">
+              ${esc((u.company||u.name||'M')[0].toUpperCase())}</div>
+            <div class="grow" style="min-width:0;">
+              <div class="t-base truncate" style="font-weight:600;">${esc(u.company||u.name||'Guest')}</div>
+              <div class="t-sm muted">+91 ${esc(u.phone||'')}</div>
+            </div>
+            <span class="pill ${isB2B()?'b':'n'}">${isB2B()?'Business':'Personal'}</span>
+          </div>
+          ${u.gstin?`<div style="border-top:1px solid var(--line-2);padding-top:12px;">
+            <div class="row between"><span class="t-sm muted">GSTIN</span>
+              <span class="t-sm num" style="font-weight:600;letter-spacing:.03em;">${esc(u.gstin)}</span></div></div>`:''}
+        </div>
+      </div>
+
+      ${APPCFG.walletEnabled&&isB2B()?`
+      <div class="section" style="padding-top:0;">
+        <button class="card" style="width:100%;text-align:left;padding:16px;" onclick="go('wallet')">
+          <div class="row between mb-8"><span class="eyebrow">Business credit</span>${icon('right',17)}</div>
+          <div class="t-2xl num" style="font-weight:700;">${money(S.wallet.balance)}</div>
+          <div class="t-sm muted mt-4">Available to spend on orders</div>
+        </button>
+      </div>`:''}
+
+      <div class="section-head"><span class="eyebrow">Orders</span></div>
+      <div class="card" style="margin:0 16px;">
+        ${arow('receipt','Order history', `${S.orders.length} order${S.orders.length===1?'':'s'}`, `switchTab('orders')`)}
+        ${arow('repeat','Reorder items','', `switchTab('reorder')`)}
+        ${isB2B()?arow('file','Tax invoices','GST invoices for your orders',`toast('Invoices are emailed to ${esc(APPCFG.email)}','info')`):''}
+      </div>
+
+      <div class="section-head"><span class="eyebrow">Support</span></div>
+      <div class="card" style="margin:0 16px;">
+        ${arow('phone','Call the office', APPCFG.supportPhone.replace('+91','+91 '), `location.href='tel:${APPCFG.supportPhone}'`)}
+        ${arow('mail','Email us', APPCFG.email, `location.href='mailto:${APPCFG.email}'`)}
+        ${arow('clock','Business hours', APPCFG.businessHours, `showHours()`)}
+        ${arow('pin','Our address','Camp, Pune', `showAddress()`)}
+      </div>
+
+      <div class="section-head"><span class="eyebrow">Modern Dairy</span></div>
+      <div class="card" style="margin:0 16px;">
+        ${arow('link','Instagram','@modern.dairy', `window.open('${APPCFG.instagram}','_blank')`)}
+        ${arow('link','LinkedIn','Modern Dairy Pune', `window.open('${APPCFG.linkedin}','_blank')`)}
+        ${arow('info','About us','Since 1975', `go('about')`)}
+      </div>
+
+      <div class="section-head"><span class="eyebrow">Staff</span></div>
+      <div class="card" style="margin:0 16px;">
+        ${arow('shield','Admin panel','Manage products, orders and settings', `openAdmin()`)}
+      </div>
+
+      <div class="section">
+        <button class="btn btn-danger" onclick="confirmSignOut()">${icon('logout',18)} Sign out</button>
+        <div class="t-xs muted-2 center mt-16">Modern Dairy · v1.0.0<br>${CONFIG.DEMO?'Demo mode — not connected to server':'Connected'}</div>
+      </div>
+      <div style="height:calc(16px + var(--safe-b));"></div>
+    </div>
+    ${tabBar()}
+  </div>`;
+}
+function arow(ic,title,sub,onclick){
+  return `<div class="lrow" onclick="${onclick}">
+    <div class="lrow-ic">${icon(ic,17)}</div>
+    <div class="lrow-body"><div class="t-base" style="font-weight:500;">${esc(title)}</div>
+      ${sub?`<div class="t-sm muted truncate">${esc(sub)}</div>`:''}</div>
+    ${icon('right',17)}</div>`;
+}
+
+/* Admin panel — opens the panel served by the backend at /admin.
+   Requires an admin sign-in; the customer session gives no access. */
+function openAdmin(){
+  const base = CONFIG.API_BASE
+    ? CONFIG.API_BASE.replace(/\/api\/?$/, '')
+    : (location.protocol.startsWith('http') ? location.origin : '');
+  if(!base){
+    openSheet(`<div class="sheet-head"><div class="t-lg">Admin panel unavailable</div>
+      <button class="iconbtn" onclick="closeSheet()">${icon('close',20)}</button></div>
+      <div class="section">
+        <div class="banner warn mb-16">${icon('alert',17)}
+          <div>The app is not connected to a server, so the admin panel cannot be opened.</div></div>
+        <div class="t-md muted" style="line-height:1.6;">
+          Set <b>API_BASE</b> in the CONFIG block at the top of this file to your backend URL,
+          then reopen the app. The panel lives at <b>&lt;server&gt;/admin</b>.</div>
+      </div>`);
+    return;
+  }
+  window.open(base + '/admin/', '_blank');
+}
+
+function showHours(){
+  openSheet(`<div class="sheet-head"><div class="t-lg">Business hours</div>
+    <button class="iconbtn" onclick="closeSheet()">${icon('close',20)}</button></div>
+    <div class="section">
+      <div class="row between mb-12"><span class="t-md">Monday – Saturday</span>
+        <span class="t-md" style="font-weight:600;">8:00 AM – 9:00 PM</span></div>
+      <div class="row between mb-16"><span class="t-md">Sunday</span>
+        <span class="t-md" style="font-weight:600;">8:00 AM – 2:00 PM</span></div>
+      <div class="banner info">${icon('clock',17)}<div>Order before <b>${APPCFG.orderCutoff}</b> for next-day delivery.</div></div>
+    </div>`);
+}
+function showAddress(){
+  openSheet(`<div class="sheet-head"><div class="t-lg">Modern Dairy</div>
+    <button class="iconbtn" onclick="closeSheet()">${icon('close',20)}</button></div>
+    <div class="section">
+      <div class="t-md muted mb-16" style="line-height:1.6;">${esc(APPCFG.address)}</div>
+      <a class="btn btn-ghost" href="https://maps.google.com/?q=${encodeURIComponent(APPCFG.address)}" target="_blank">${icon('pin',18)} Open in Maps</a>
+      <a class="btn btn-quiet mt-8" href="tel:${APPCFG.supportPhone}">${icon('phone',18)} Call office</a>
+    </div>`);
+}
+function confirmSignOut(){
+  openSheet(`<div class="sheet-head"><div class="t-lg">Sign out?</div>
+    <button class="iconbtn" onclick="closeSheet()">${icon('close',20)}</button></div>
+    <div class="section"><div class="t-md muted mb-16">Your saved order will be cleared from this device.</div>
+    <button class="btn btn-danger" onclick="closeSheet();signOut()">Sign out</button>
+    <button class="btn btn-quiet mt-8" onclick="closeSheet()">Stay signed in</button></div>`);
+}
+function scrAbout(){
+  return `<div class="screen on">${navBar('About Modern Dairy')}
+    <div class="scroll section">
+      <img src="${APPCFG.logo}" style="width:56px;height:56px;object-fit:contain;margin-bottom:16px;">
+      <div class="t-xl mb-8">Supplying Pune since 1975</div>
+      <div class="t-md muted mb-16" style="line-height:1.65;">
+        Modern Dairy manufactures ghee, paneer, curd and frozen foods at our facility in Karad, Maharashtra,
+        and supplies hotels, restaurants and retailers across Pune. Our products are also exported to Dubai,
+        Singapore, Africa and Panama.</div>
+      <div class="card">
+        ${arow('shield','FSSAI licensed','Food Safety and Standards Authority of India','')}
+        ${arow('building','Manufacturing','MIDC Tasawade, Karad','')}
+        ${arow('pin','Head office','Camp, Pune','')}
+      </div>
+    </div></div>`;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   20. WALLET — real ledger, no editable balance
+   ═══════════════════════════════════════════════════════════ */
+async function loadWallet(){
+  if(FB && S.user?.id){
+    const c = await FB.customer(S.user.id);
+    const txns = await FB.ledger(S.user.id).catch(()=>[]);
+    S.wallet = { balance: Number(c?.balance||0),
+      txns: txns.map(t=>({ id:t.id, type:t.type, amount:t.amount,
+        prevBalance:t.prevBalance, newBalance:t.newBalance, note:t.note,
+        orderNo:t.orderId||null, at:t.at?.toDate?.()?.toISOString()||new Date().toISOString() })) };
+    return;
+  }
+  const r=await API.get('/wallet');
+  if(r.success) S.wallet=r.data;
+}
+const TXN_LABEL={DEPOSIT:'Credit added',ORDER_DEBIT:'Order payment',REFUND:'Refund',
+  MANUAL_CREDIT:'Adjustment (credit)',MANUAL_DEBIT:'Adjustment (debit)',REVERSAL:'Reversal'};
+function scrWallet(){
+  const w=S.wallet;
+  const credit=t=>['DEPOSIT','REFUND','MANUAL_CREDIT'].includes(t);
+  return `<div class="screen on">
+    ${navBar('Business credit',{sub:S.user?.company||''})}
+    <div class="scroll">
+      <div class="section">
+        <div class="card" style="padding:20px;background:var(--brand);border-color:var(--brand);">
+          <div class="t-xs" style="color:rgba(255,255,255,.66);font-weight:600;letter-spacing:.05em;text-transform:uppercase;">Available balance</div>
+          <div class="num" style="font-size:32px;font-weight:700;color:#fff;letter-spacing:-.02em;margin:6px 0 2px;">${money(w.balance)}</div>
+          <div class="t-sm" style="color:rgba(255,255,255,.7);">Deducted automatically when you place an order</div>
+        </div>
+        <button class="btn mt-12" onclick="topUpSheet()">${icon('plus',18)} Add credit</button>
+      </div>
+      <div class="divider"></div>
+      <div class="section-head"><span class="eyebrow">Transactions</span>
+        ${w.txns.length?`<span class="t-sm muted">${w.txns.length}</span>`:''}</div>
+      ${!w.txns.length
+        ? stateBlock('wallet','No transactions yet','Deposits and order payments will be listed here with a running balance.','')
+        : `<div>${w.txns.map(t=>`<div class="lrow" style="align-items:flex-start;">
+            <div class="lrow-ic" style="color:${credit(t.type)?'var(--fresh)':'var(--ink-2)'};">
+              ${icon(credit(t.type)?'plus':'receipt',17)}</div>
+            <div class="lrow-body">
+              <div class="row between mb-4">
+                <span class="t-base" style="font-weight:500;">${TXN_LABEL[t.type]||t.type}</span>
+                <span class="t-base num" style="font-weight:700;color:${credit(t.type)?'var(--fresh)':'var(--ink)'};">
+                  ${credit(t.type)?'+':'−'} ${money(t.amount)}</span></div>
+              <div class="row between">
+                <span class="t-sm muted">${dtFmt(t.at)}${t.orderNo?' · '+esc(t.orderNo):''}</span>
+                <span class="t-sm muted num">Bal ${money(t.newBalance)}</span></div>
+              <div class="t-xs muted-2 mt-4 num">${esc(t.id)}</div>
+            </div></div>`).join('')}
+          <div style="height:calc(24px + var(--safe-b));"></div></div>`}
+    </div>
+  </div>`;
+}
+function topUpSheet(){
+  openSheet(`<div class="sheet-head"><div class="t-lg">Add business credit</div>
+    <button class="iconbtn" onclick="closeSheet()">${icon('close',20)}</button></div>
+    <div class="section">
+      <div class="banner info mb-16">${icon('info',17)}
+        <div>Credit is added by our accounts team once your transfer is received. Call the office to arrange a deposit.</div></div>
+      <div class="field"><label class="label">Amount to deposit</label>
+        <input class="input num" id="f-amt" type="tel" inputmode="numeric" placeholder="50000"></div>
+      <div class="row gap-8 mb-16">
+        ${[10000,25000,50000,100000].map(a=>`<button class="chip" onclick="document.getElementById('f-amt').value=${a}">${money(a)}</button>`).join('')}
+      </div>
+      <button class="btn" id="btn-top" onclick="doTopUp()">Request deposit</button>
+      <a class="btn btn-quiet mt-8" href="tel:${APPCFG.supportPhone}">${icon('phone',18)} Call accounts</a>
+    </div>`);
+}
+async function doTopUp(){
+  const amt=parseInt(String(document.getElementById('f-amt').value).replace(/\D/g,''))||0;
+  if(amt<1000){ toast('Minimum deposit is ₹1,000','alert'); return; }
+  busy('btn-top',true,'Requesting');
+  const r=await API.post('/wallet/topup',{amount:amt,note:'Prepaid deposit'});
+  busy('btn-top',false,'Request deposit');
+  if(!r.success){ toast(r.message||'Could not process','alert'); return; }
+  await loadWallet(); closeSheet(); paint();
+  toast(`${money(amt)} added to your credit`,'check');
+}
+
+/* ═══════════════════════════════════════════════════════════
+   21. ROUTES + BOOT
+   ═══════════════════════════════════════════════════════════ */
+const ROUTES = {
+  login:scrLogin, pending:scrPending, home:scrHome,
+  catalogue:scrCatalogue, product:scrProduct,
+  cart:scrCart, checkout:scrCheckout, placed:scrPlaced,
+  orders:scrOrders, order:scrOrder, reorder:scrReorder,
+  account:scrAccount, wallet:scrWallet, about:scrAbout,
+};
+window.addEventListener('popstate',()=>{ if(NAV.length) back(); });
+
+async function boot(){
+  FB = await (window.__fbReady || Promise.resolve(null));
+
+  if(FB){
+    try{
+      const [cfg, prods] = await Promise.all([FB.config(), FB.products()]);
+      if(cfg && Object.keys(cfg).length) APPCFG = {...APPCFG, ...cfg};
+      if(prods && prods.length){
+        Object.keys(CATALOGUE).forEach(k=>delete CATALOGUE[k]);
+        prods.filter(p=>p.active!==false).forEach(p=>{
+          CATALOGUE[p.id] = { name:p.name, cat:p.cat, img:p.img, unit:p.unit,
+            desc:p.desc||'', storage:p.storage||'', freshness:p.freshness||'',
+            variants:(p.variants||[]).map(v=>({ id:v.id, label:v.label, mrp:v.mrp, b2b:v.b2b,
+              moq:v.moq||1, case:v.case||1, stock:(v.stock??0)>0 ? ((v.stock??0)<=(v.lowStock??10)?'low':'in') : 'out' })) };
+        });
+      }
+    }catch(e){ console.warn('Firestore read failed, using bundled catalogue:', e); }
+  } else {
+    const cfg=await API.get('/config'); if(cfg.success) APPCFG={...APPCFG,...cfg.data};
+  }
+  if(!S.user){ S.screen='login'; paint(); return; }
+  S.screen='home'; S.tab='home'; paint();
+  await Promise.all([loadWallet(), loadOrders()]);
+  paint();
+}
+boot();
+
+/* ── Native offline banner (Capacitor Network plugin, no-op on plain web) ── */
+(function(){
+  function showOfflineBanner(offline){
+    let el = document.getElementById('native-offline-banner');
+    if (offline && !el) {
+      el = document.createElement('div');
+      el.id = 'native-offline-banner';
+      el.textContent = 'No internet connection — some features are unavailable';
+      el.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:9999;'
+        + 'background:#A82820;color:#fff;font:600 12px/1.4 sans-serif;'
+        + 'text-align:center;padding:calc(6px + env(safe-area-inset-top,0px)) 12px 6px;';
+      document.body.appendChild(el);
+    } else if (!offline && el) {
+      el.remove();
+    }
+  }
+  if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Network) {
+    const Network = window.Capacitor.Plugins.Network;
+    Network.getStatus().then(s => showOfflineBanner(!s.connected));
+    Network.addListener('networkStatusChange', s => showOfflineBanner(!s.connected));
+  } else {
+    window.addEventListener('offline', () => showOfflineBanner(true));
+    window.addEventListener('online', () => showOfflineBanner(false));
+    if (!navigator.onLine) showOfflineBanner(true);
+  }
+})();
+</script>
+</body>
+</html>
