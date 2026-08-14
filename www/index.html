@@ -1968,7 +1968,8 @@ function scrAdmin(){
   if(!ADMIN.authed){ return scrAdminLogin(); }
   const products = Object.entries(CATALOGUE);
   return `<div class="screen on">
-    ${navBar('Admin panel', {action:`<button class="iconbtn" onclick="adminSignOut()">${icon('logout',20)}</button>`})}
+    ${navBar('Admin panel', {action:`<button class="iconbtn" onclick="go('adminGuide')">${icon('info',20)}</button>
+      <button class="iconbtn" onclick="adminSignOut()">${icon('logout',20)}</button>`})}
     <div class="scroll">
       <div class="section">
         <div class="banner info mb-16">${icon('info',17)}
@@ -2045,7 +2046,8 @@ function scrAdmin(){
           </div>`).join('')}
       </div>
 
-      <div class="section-head"><span class="eyebrow">API &amp; integration keys</span></div>
+      <div class="section-head row between"><span class="eyebrow">API &amp; integration keys</span>
+        <button class="t-sm" style="color:var(--brand-3);font-weight:600;" onclick="go('adminGuide')">How to get these →</button></div>
       <div class="section" style="padding-top:0;">
         <div class="banner warn mb-12">${icon('alert',17)}
           <div><b>Local demo storage only.</b> Keys typed here are saved in this browser/app's
@@ -2076,6 +2078,87 @@ function scrAdmin(){
       <div style="height:calc(24px + var(--safe-b));"></div>
     </div>
   </div>`;
+}
+const SETUP_GUIDE = [
+  { id:'gcp', title:'Google Cloud / Firebase project', why:
+    'The foundation everything else sits on: your database, backend server, secret storage, and admin/customer login. Do this one first.',
+    steps:[
+      'Go to console.firebase.google.com and sign in with the Google account that should own the business (not a personal throwaway).',
+      'Click "Add project" → name it (e.g. "modern-dairy") → you can skip Google Analytics.',
+      'Inside the project: Build → Authentication → Get started → enable "Email/Password" (and phone sign-in if you want OTP login).',
+      'Build → Firestore Database → Create database → Production mode → region "asia-south1 (Mumbai)".',
+      'Click the gear icon (Project settings) → General → scroll to "Your apps" → click the </> Web icon → register an app → copy the firebaseConfig block it shows you.',
+      'This project is also your Google Cloud project — the same project ID works for Cloud Run, Secret Manager, and Cloud Storage later.',
+    ] },
+  { id:'gst', title:'GST verification API', why:
+    'Verifies a customer’s GSTIN and pulls their registered business name automatically during signup, instead of trusting manual entry.',
+    steps:[
+      'Pick a GST Suvidha Provider (GSP) — common choices in India: Cleartax, Masters India, Surepass, or Signzy. Any of these work; pricing/free-tier varies, compare on their sites.',
+      'Sign up for a business account on their developer/API portal.',
+      'Complete their KYC (they will ask for your own business PAN/GST details since you’re the account holder).',
+      'Once approved, go to their API/Developer dashboard and generate an API key (sometimes called a "client ID + client secret" pair).',
+      'Note the exact endpoint for "GSTIN verification" or "GSTIN search" — providers differ slightly in URL/response format.',
+      'Paste the key into this app’s Admin Panel → API keys → GST verification (once a backend exists, this must move server-side).',
+    ] },
+  { id:'gofrugal', title:'GoFrugal API', why:
+    'Syncs orders and invoices from this app into your GoFrugal billing/inventory system automatically.',
+    steps:[
+      'You need an active GoFrugal license first (contact GoFrugal sales if you don’t have one yet — this app doesn’t provide GoFrugal itself).',
+      'Log into your GoFrugal back-office admin console.',
+      'Go to Settings → API / Integration access (exact menu name varies by GoFrugal product edition — RPOS/RetailEasy/RestroEasy).',
+      'Enable "API access" and generate an API key. Note your Outlet ID and Company ID shown in the same screen — you’ll need all three.',
+      'If you don’t see this option, contact GoFrugal support and ask them to enable API access for your account — it’s sometimes gated behind a support request.',
+      'Paste the key + outlet/company IDs into Admin Panel → API keys → GoFrugal.',
+    ] },
+  { id:'razorpay', title:'Razorpay (payments)', why:
+    'Lets customers pay online for orders instead of only cash/credit.',
+    steps:[
+      'Go to dashboard.razorpay.com and sign up with your business details (PAN, GST, bank account for settlement).',
+      'Complete KYC — Razorpay needs this before enabling live payments (you can test without it first).',
+      'Once logged in: Settings → API Keys → Generate Test Key first (safe to experiment with, no real money moves).',
+      'Copy the Key ID and Key Secret.',
+      'When ready to accept real payments: complete full KYC, then Settings → API Keys → Generate Live Key, and swap the test key for the live one.',
+      'Paste keys into Admin Panel → API keys → Razorpay. Only the Key ID is ever safe to appear in an app; the Key Secret must stay server-side once a backend exists.',
+    ] },
+  { id:'whatsapp', title:'WhatsApp Business API', why:
+    'Sends order confirmations, delivery updates, and support messages to customers on WhatsApp automatically.',
+    steps:[
+      'Go to developers.facebook.com (Meta for Developers) and create a Business account if you don’t have one.',
+      'Create a new App → choose "Business" type → add the "WhatsApp" product to it.',
+      'In the WhatsApp → API Setup screen, you’ll get a temporary access token, a Phone Number ID, and a test phone number to try it with.',
+      'For production: verify your real business phone number (Meta Business Manager → WhatsApp Manager) and generate a permanent access token (System User token, not the 24-hour temporary one).',
+      'Meta requires Business Verification for full-scale sending — this can take a few days, so start it early.',
+      'Paste the access token + Phone Number ID into Admin Panel → API keys → WhatsApp.',
+    ] },
+  { id:'uber', title:'Uber Direct (delivery)', why:
+    'Books on-demand courier delivery to customers instead of running your own delivery fleet.',
+    steps:[
+      'Go to developer.uber.com and sign up / log in.',
+      'Apply for Uber Direct access — this is a business product, not the regular rider API, so there’s an approval step where Uber reviews your business.',
+      'Once approved, create an app in the Uber Direct dashboard to get a Customer ID, Client ID, and Client Secret.',
+      'Uber Direct also requires you to configure pickup location(s) — your dairy’s dispatch address(es) — in their dashboard.',
+      'Paste the Customer ID / Client ID / Client Secret into Admin Panel → API keys → Uber Direct.',
+    ] },
+];
+function scrAdminGuide(){
+  return `<div class="screen on">${navBar('How to get these keys')}
+    <div class="scroll section">
+      <div class="banner info mb-16">${icon('info',17)}
+        <div>Do these in order — the Google Cloud/Firebase project comes first since the backend,
+        database, and secure key storage all live inside it.</div></div>
+      ${SETUP_GUIDE.map((g,i)=>`
+        <div class="card mb-12" style="padding:16px;">
+          <div class="row gap-8 mb-4" style="align-items:center;">
+            <div style="width:24px;height:24px;border-radius:50%;background:var(--brand);color:#fff;
+              display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">${i+1}</div>
+            <div class="t-base" style="font-weight:700;">${esc(g.title)}</div>
+          </div>
+          <div class="t-sm muted mb-12" style="line-height:1.5;">${esc(g.why)}</div>
+          <ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px;">
+            ${g.steps.map(s=>`<li class="t-sm" style="line-height:1.5;">${esc(s)}</li>`).join('')}
+          </ol>
+        </div>`).join('')}
+    </div></div>`;
 }
 function adminApiKeyField(key, label, howTo){
   const keys = loadAdminOverrides().apiKeys || {};
@@ -2299,7 +2382,7 @@ const ROUTES = {
   cart:scrCart, checkout:scrCheckout, placed:scrPlaced,
   orders:scrOrders, order:scrOrder, reorder:scrReorder,
   account:scrAccount, wallet:scrWallet, about:scrAbout,
-  adminLogin:scrAdminLogin, admin:scrAdmin,
+  adminLogin:scrAdminLogin, admin:scrAdmin, adminGuide:scrAdminGuide,
 };
 window.addEventListener('popstate',()=>{ if(NAV.length) back(); });
 
