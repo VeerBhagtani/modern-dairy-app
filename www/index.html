@@ -2171,12 +2171,22 @@ function adminApiKeyField(key, label, howTo){
     <button class="btn btn-quiet" onclick="saveAdminApiKey('${key}')">Save ${esc(label)} key</button>
   </div>`;
 }
-function saveAdminApiKey(key){
+async function saveAdminApiKey(key){
   const val = document.getElementById(`adm-key-${key}`).value.trim();
-  const cur = loadAdminOverrides();
-  const apiKeys = {...(cur.apiKeys||{}), [key]: val};
-  saveAdminOverrides({apiKeys});
-  toast('Key saved locally','check');
+  if(CONFIG.API_BASE){
+    // Real backend: the raw key is sent once over HTTPS and stored server-side
+    // (Secret Manager) — the app never keeps or displays the raw value again.
+    try{
+      const r = await API.post('/admin/secrets', {key, value: val});
+      if(!r.success){ toast(r.message||'Could not save key to server','alert'); return; }
+      toast('Key saved to server — integration is live','check');
+    }catch(e){ toast('Could not reach the server to save this key','alert'); return; }
+  } else {
+    const cur = loadAdminOverrides();
+    const apiKeys = {...(cur.apiKeys||{}), [key]: val};
+    saveAdminOverrides({apiKeys});
+    toast('Key saved locally (demo mode — no backend connected yet)','check');
+  }
   paint();
 }
 function changeAdminPassword(){
