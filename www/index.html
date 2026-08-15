@@ -863,7 +863,8 @@ function scrLogin(){
       <div id="login-body">${LOGIN.mode==='b2b'?b2bForm():b2cForm()}</div>
     </div>
     <div style="padding:16px 24px calc(20px + var(--safe-b));border-top:1px solid var(--line-2);">
-      <div class="t-xs muted-2 center">By continuing you agree to Modern Dairy's terms of supply.<br>FSSAI licensed · Est. 1975</div>
+      <div class="t-xs muted-2 center mb-12">By continuing you agree to Modern Dairy's terms of supply.<br>FSSAI licensed · Est. 1975</div>
+      <button class="btn btn-quiet" onclick="go('adminLogin')">${icon('shield',16)} Sign in as admin</button>
     </div>
   </div>`;
 }
@@ -879,6 +880,7 @@ function b2bForm(){
       <div class="phone-field"><span class="phone-cc">+91</span>
       <input id="f-phone" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit number" value="${esc(LOGIN.phone)}"></div>
       <div class="hint" id="h-phone">We'll send a one-time code to verify this number.</div></div>
+    ${passwordField()}
     <button class="btn" id="btn-reg" onclick="doB2BRegister()">Continue</button>
     <button class="btn btn-quiet mt-8" onclick="LOGIN.step='entry';paint()">Back</button>`;
   return `
@@ -900,7 +902,13 @@ function b2cForm(){
       <div class="phone-field"><span class="phone-cc">+91</span>
       <input id="f-phone" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit number" value="${esc(LOGIN.phone)}"></div>
       <div class="hint" id="h-phone">We'll send a one-time code to verify this number.</div></div>
+    ${passwordField()}
     <button class="btn" id="btn-otp" onclick="doSendOTP()">Send code</button>`;
+}
+function passwordField(){
+  return `<div class="field"><label class="label">Password</label>
+      <input class="input" id="f-password" type="password" placeholder="Create or enter your password" autocomplete="off">
+      <div class="hint" id="h-password">New number? This sets your password. Ordered before? Enter your existing one.</div></div>`;
 }
 function otpForm(){
   return `<div class="t-lg mb-4">Enter the 6-digit code</div>
@@ -936,12 +944,34 @@ async function doVerifyGSTIN(){
   if(!r.success){ setErr('f-gstin','h-gstin', r.message); return; }
   LOGIN.gstin=g; LOGIN.company=c; LOGIN.gstData=r.data; LOGIN.step='contact'; paint();
 }
+function getCustomerAccounts(){
+  try{ return JSON.parse(localStorage.getItem('mda_customer_accounts')||'{}'); }
+  catch(e){ return {}; }
+}
+function saveCustomerAccount(phone, patch){
+  const cur = getCustomerAccounts();
+  cur[phone] = {...cur[phone], ...patch};
+  localStorage.setItem('mda_customer_accounts', JSON.stringify(cur));
+}
+function checkLoginPassword(phone){
+  const pw = document.getElementById('f-password').value;
+  setErr('f-password','h-password','');
+  const existing = getCustomerAccounts()[phone];
+  if(existing){
+    if(pw !== existing.password){ setErr('f-password','h-password','Incorrect password for this number.'); return null; }
+  } else if(pw.length < 6){
+    setErr('f-password','h-password','Set a password of at least 6 characters.'); return null;
+  }
+  return pw;
+}
 async function doB2BRegister(){
   const n=document.getElementById('f-name').value.trim();
   const p=document.getElementById('f-phone').value.trim();
   if(!n){ toast('Enter the contact person name','alert'); return; }
   if(!/^[6-9]\d{9}$/.test(p)){ setErr('f-phone','h-phone','Enter a valid 10-digit Indian mobile number.'); return; }
-  LOGIN.name=n; LOGIN.phone=p;
+  const pw = checkLoginPassword(p);
+  if(pw===null) return;
+  LOGIN.name=n; LOGIN.phone=p; LOGIN.password=pw;
   const btn=document.getElementById('btn-reg'); btn.dataset.lbl='Continue';
   busy('btn-reg',true,'Verifying account');
   if(FB){
@@ -961,7 +991,9 @@ async function doSendOTP(){
   const p=document.getElementById('f-phone').value.trim();
   if(!n){ toast('Enter your name','alert'); return; }
   if(!/^[6-9]\d{9}$/.test(p)){ setErr('f-phone','h-phone','Enter a valid 10-digit Indian mobile number.'); return; }
-  LOGIN.name=n; LOGIN.phone=p;
+  const pw = checkLoginPassword(p);
+  if(pw===null) return;
+  LOGIN.name=n; LOGIN.phone=p; LOGIN.password=pw;
   const btn=document.getElementById('btn-otp'); btn.dataset.lbl='Send code';
   busy('btn-otp',true,'Sending');
   if(FB){
@@ -1022,6 +1054,7 @@ async function doVerifyOTP(){
   }
   busy('btn-verify',false,'Verify and continue');
   if(!r.success){ setErr('f-otp','h-otp', r.message); return; }
+  if(LOGIN.phone && LOGIN.password) saveCustomerAccount(LOGIN.phone, {password:LOGIN.password, name:LOGIN.name});
   S.user=r.data.user; S.token=r.data.accessToken; S.refresh=r.data.refreshToken;
   localStorage.setItem('mda_user',JSON.stringify(S.user));
   localStorage.setItem('mda_token',S.token);
@@ -1135,13 +1168,13 @@ function scrHome(){
         </div>
       </div>
 
-      <!-- Credit: a B2B buyer checks this before building an order -->
-      ${APPCFG.walletEnabled && isB2B()?`
+      <!-- Wallet: available to every buyer, business or personal -->
+      ${APPCFG.walletEnabled?`
       <div class="section" style="padding-top:10px;padding-bottom:6px;">
         <button class="card" style="width:100%;text-align:left;padding:15px;" onclick="go('wallet')">
           <div class="row between">
             <div>
-              <div class="eyebrow mb-4">Business credit</div>
+              <div class="eyebrow mb-4">${isB2B()?'Business credit':'Wallet'}</div>
               <div class="num" style="font-size:var(--t-2xl);font-weight:700;letter-spacing:-.02em;">
                 ${money(S.wallet.balance)}</div>
               <div class="t-sm muted mt-4">Available to spend on orders</div>
@@ -1527,13 +1560,13 @@ function scrCheckout(){
       <div class="divider"></div>
       <div class="section">
         <div class="eyebrow mb-8">Payment</div>
-        ${APPCFG.walletEnabled&&isB2B()?`
+        ${APPCFG.walletEnabled?`
         <button class="card mb-8" style="width:100%;text-align:left;padding:14px;${PAY==='credit'?'border-color:var(--brand);background:var(--brand-tint);':''}"
                 onclick="PAY='credit';paint()">
           <div class="row gap-12">
             <div class="lrow-ic" style="${PAY==='credit'?'background:var(--brand);color:#fff;':''}">${icon('wallet',18)}</div>
             <div class="grow">
-              <div class="row between"><span class="t-base" style="font-weight:600;">Business credit</span>
+              <div class="row between"><span class="t-base" style="font-weight:600;">${isB2B()?'Business credit':'Wallet'}</span>
                 ${radio(PAY==='credit')}</div>
               <div class="t-sm muted mt-4">Available <b class="num" style="color:${enough?'var(--fresh)':'var(--bad)'};">${money(bal)}</b></div>
             </div>
@@ -1546,8 +1579,8 @@ function scrCheckout(){
                 <span>Balance after</span><span class="num">${money(bal-t.total)}</span></div>
             </div>`:`
             <div class="banner bad mt-12">${icon('alert',17)}
-              <div>Short by <b>${money(t.total-bal)}</b>. Top up your credit or pay online.</div></div>
-            <button class="btn btn-sm btn-ghost mt-8" style="width:100%;" onclick="event.stopPropagation();go('wallet')">Top up credit</button>`):''}
+              <div>Short by <b>${money(t.total-bal)}</b>. Top up your wallet or pay online.</div></div>
+            <button class="btn btn-sm btn-ghost mt-8" style="width:100%;" onclick="event.stopPropagation();go('wallet')">Top up wallet</button>`):''}
         </button>`:''}
 
         <button class="card mb-8" style="width:100%;text-align:left;padding:14px;${PAY==='online'?'border-color:var(--brand);background:var(--brand-tint);':''}"
@@ -1851,10 +1884,10 @@ function scrAccount(){
         </div>
       </div>
 
-      ${APPCFG.walletEnabled&&isB2B()?`
+      ${APPCFG.walletEnabled?`
       <div class="section" style="padding-top:0;">
         <button class="card" style="width:100%;text-align:left;padding:16px;" onclick="go('wallet')">
-          <div class="row between mb-8"><span class="eyebrow">Business credit</span>${icon('right',17)}</div>
+          <div class="row between mb-8"><span class="eyebrow">${isB2B()?'Business credit':'Wallet'}</span>${icon('right',17)}</div>
           <div class="t-2xl num" style="font-weight:700;">${money(S.wallet.balance)}</div>
           <div class="t-sm muted mt-4">Available to spend on orders</div>
         </button>
@@ -2381,7 +2414,7 @@ function scrWallet(){
   const w=S.wallet;
   const credit=t=>['DEPOSIT','REFUND','MANUAL_CREDIT'].includes(t);
   return `<div class="screen on">
-    ${navBar('Business credit',{sub:S.user?.company||''})}
+    ${navBar(isB2B()?'Business credit':'Wallet',{sub:S.user?.company||''})}
     <div class="scroll">
       <div class="section">
         <div class="card" style="padding:20px;background:var(--brand);border-color:var(--brand);">
@@ -2414,29 +2447,68 @@ function scrWallet(){
   </div>`;
 }
 function topUpSheet(){
-  openSheet(`<div class="sheet-head"><div class="t-lg">Add business credit</div>
+  const presets = isB2B() ? [10000,25000,50000,100000] : [500,1000,2000,5000];
+  openSheet(`<div class="sheet-head"><div class="t-lg">Add money to your ${isB2B()?'business credit':'wallet'}</div>
     <button class="iconbtn" onclick="closeSheet()">${icon('close',20)}</button></div>
     <div class="section">
-      <div class="banner info mb-16">${icon('info',17)}
-        <div>Credit is added by our accounts team once your transfer is received. Call the office to arrange a deposit.</div></div>
-      <div class="field"><label class="label">Amount to deposit</label>
-        <input class="input num" id="f-amt" type="tel" inputmode="numeric" placeholder="50000"></div>
+      <div class="field"><label class="label">Amount to add</label>
+        <input class="input num" id="f-amt" type="tel" inputmode="numeric" placeholder="${presets[1]}"></div>
       <div class="row gap-8 mb-16">
-        ${[10000,25000,50000,100000].map(a=>`<button class="chip" onclick="document.getElementById('f-amt').value=${a}">${money(a)}</button>`).join('')}
+        ${presets.map(a=>`<button class="chip" onclick="document.getElementById('f-amt').value=${a}">${money(a)}</button>`).join('')}
       </div>
-      <button class="btn" id="btn-top" onclick="doTopUp()">Request deposit</button>
-      <a class="btn btn-quiet mt-8" href="tel:${APPCFG.supportPhone}">${icon('phone',18)} Call accounts</a>
+      <button class="btn" id="btn-top" onclick="startRazorpayTopUp()">${icon('wallet',18)} Pay with Razorpay</button>
+      <div class="t-xs muted-2 center mt-12">Secured by Razorpay</div>
     </div>`);
 }
-async function doTopUp(){
+function startRazorpayTopUp(){
   const amt=parseInt(String(document.getElementById('f-amt').value).replace(/\D/g,''))||0;
-  if(amt<1000){ toast('Minimum deposit is ₹1,000','alert'); return; }
-  busy('btn-top',true,'Requesting');
-  const r=await API.post('/wallet/topup',{amount:amt,note:'Prepaid deposit'});
-  busy('btn-top',false,'Request deposit');
-  if(!r.success){ toast(r.message||'Could not process','alert'); return; }
-  await loadWallet(); closeSheet(); paint();
-  toast(`${money(amt)} added to your credit`,'check');
+  if(amt<100){ toast('Minimum top-up is ₹100','alert'); return; }
+  closeSheet();
+  openRazorpayCheckout(amt, async ()=>{
+    const r=await API.post('/wallet/topup',{amount:amt,note:'Wallet top-up via Razorpay'});
+    if(!r.success){ toast(r.message||'Could not add money','alert'); return; }
+    await loadWallet(); paint();
+    toast(`${money(amt)} added to your ${isB2B()?'credit':'wallet'}`,'check');
+  });
+}
+// Opens the real Razorpay checkout if a live key is configured in Admin Panel;
+// otherwise simulates a successful payment locally so the wallet flow is fully
+// testable before real payment keys exist.
+function openRazorpayCheckout(amount, onSuccess){
+  const keys = loadAdminOverrides().apiKeys || {};
+  const keyId = keys.razorpay_key_id || keys.razorpay;
+  if(window.Razorpay && keyId){
+    try{
+      const rzp = new Razorpay({
+        key: keyId, amount: amount*100, currency:'INR',
+        name: APPCFG.businessName, description:`${isB2B()?'Business credit':'Wallet'} top-up`,
+        prefill:{ name:S.user?.name||'', contact:S.user?.phone||'' },
+        handler: function(){ onSuccess(); },
+        modal:{ ondismiss:function(){ toast('Payment cancelled','info'); } },
+      });
+      rzp.open();
+      return;
+    }catch(e){ console.warn('Razorpay widget failed, falling back to simulated checkout:', e); }
+  }
+  window.__rzpFakeSuccess = onSuccess;
+  openSheet(`<div class="sheet-head"><div class="t-lg">Razorpay Checkout</div>
+      <button class="iconbtn" onclick="closeSheet()">${icon('close',20)}</button></div>
+    <div class="section" style="text-align:center;">
+      <div class="banner info mb-16">${icon('info',17)}
+        <div>No live Razorpay key is configured yet — this simulates a successful payment so
+        you can test the wallet end-to-end. Add a real Key ID in Admin Panel → API keys →
+        Razorpay to switch to the live checkout.</div></div>
+      <div class="t-sm muted mb-4">Amount</div>
+      <div class="t-2xl num mb-20" style="font-weight:700;">${money(amount)}</div>
+      <button class="btn" id="btn-fake-pay" onclick="fakeRazorpayPay()">Pay ${money(amount)}</button>
+    </div>`);
+}
+async function fakeRazorpayPay(){
+  busy('btn-fake-pay',true,'Processing payment');
+  await new Promise(r=>setTimeout(r,1200));
+  closeSheet();
+  const cb = window.__rzpFakeSuccess; window.__rzpFakeSuccess = null;
+  if(cb) await cb();
 }
 
 /* ═══════════════════════════════════════════════════════════
