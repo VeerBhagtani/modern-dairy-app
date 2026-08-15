@@ -672,7 +672,12 @@ function MOCK(method, path, b){
     const no=orderNo();
     let txn=null;
     if(b.payment==='credit') txn=ledgerPost('ORDER_DEBIT', b.total, 'Order payment', no);
-    const o={orderNo:no,...b,status:'placed',placedAt:new Date().toISOString(),txnId:txn?.id||null,
+    // Auto-confirm when every line item is fully in stock. If any item is on
+    // low stock it needs a human to check before it's confirmed — send it to
+    // the super admin's Pending confirmation queue instead.
+    const anyLow = (b.items||[]).some(i=>CATALOGUE[i.pk]?.variants.find(v=>v.id===i.vid)?.stock==='low');
+    const status = anyLow ? 'pending_confirmation' : 'confirmed';
+    const o={orderNo:no,...b,status,placedAt:new Date().toISOString(),txnId:txn?.id||null,
              deliverySlot:'Tomorrow, 7:00 AM – 11:00 AM'};
     const list=DB.orders; list.unshift(o); DB.orders=list;
     return ok({orderNo:no,total:b.total,balance:DB.wallet.balance,txnId:txn?.id||null,deliverySlot:o.deliverySlot});
@@ -1666,7 +1671,8 @@ function scrPlaced(){
    17. ORDERS
    ═══════════════════════════════════════════════════════════ */
 const STATUS = {
-  placed:{l:'Placed',c:'b'}, confirmed:{l:'Confirmed',c:'b'}, packed:{l:'Packed',c:'a'},
+  placed:{l:'Placed',c:'b'}, pending_confirmation:{l:'Pending confirmation',c:'a'},
+  confirmed:{l:'Confirmed',c:'b'}, packed:{l:'Packed',c:'a'},
   out_for_delivery:{l:'Out for delivery',c:'a'}, delivered:{l:'Delivered',c:'g'}, cancelled:{l:'Cancelled',c:'r'},
 };
 async function loadOrders(){
@@ -1916,7 +1922,17 @@ function openAdmin(){
    device. Once a real backend exists, openAdmin() above should be pointed at
    CONFIG.API_BASE and this local panel becomes a fallback only.
    ═══════════════════════════════════════════════════════════ */
-const ADMIN_PASSWORD = 'moderndairy2026'; // local-only gate; replace with real backend auth once available
+// Super admin: a single named account (not a shared password gate) that owns
+// this device's admin panel, including confirming low-stock orders. Local-only
+// until a real backend/Firebase Auth exists.
+const SUPER_ADMIN_DEFAULT = { username: 'moderndairy', password: 'Moderndairy@2026' };
+function getSuperAdmin(){
+  try{ return {...SUPER_ADMIN_DEFAULT, ...JSON.parse(localStorage.getItem('mda_super_admin')||'{}')}; }
+  catch(e){ return SUPER_ADMIN_DEFAULT; }
+}
+function setSuperAdmin(patch){
+  localStorage.setItem('mda_super_admin', JSON.stringify({...getSuperAdmin(), ...patch}));
+}
 const ADMIN = { authed: sessionStorage.getItem('mda_admin_authed')==='1' };
 
 function loadAdminOverrides(){
@@ -1945,20 +1961,23 @@ function applyAdminOverrides(){
 }
 
 function scrAdminLogin(){
-  return `<div class="screen on">${navBar('Admin sign in')}
+  return `<div class="screen on">${navBar('Super admin sign in')}
     <div class="scroll"><div class="section">
       <div class="banner warn mb-16">${icon('alert',17)}
         <div>Local demo mode — no backend is connected yet. This panel edits app content on
         this device only. It is not the secure production admin system.</div></div>
-      <div class="field"><label class="label">Admin password</label>
+      <div class="field"><label class="label">Username</label>
+        <input id="f-admin-user" placeholder="Username" autocomplete="off"></div>
+      <div class="field"><label class="label">Password</label>
         <input id="f-admin-pw" type="password" placeholder="Enter password" autocomplete="off"></div>
       <button class="btn mt-8" onclick="doAdminLogin()">Sign in</button>
     </div></div>`;
 }
 function doAdminLogin(){
+  const user = document.getElementById('f-admin-user').value.trim();
   const pw = document.getElementById('f-admin-pw').value;
-  const stored = localStorage.getItem('mda_admin_password') || ADMIN_PASSWORD;
-  if(pw !== stored){ toast('Incorrect password','alert'); return; }
+  const sa = getSuperAdmin();
+  if(user !== sa.username || pw !== sa.password){ toast('Incorrect username or password','alert'); return; }
   ADMIN.authed = true;
   sessionStorage.setItem('mda_admin_authed','1');
   go('admin',{replace:true});
@@ -2029,6 +2048,25 @@ function scrAdmin(){
           </div>`).join('')}
       </div>
 
+      ${(()=>{ const pending = S.orders.filter(o=>o.status==='pending_confirmation'); return `
+      <div class="section-head"><span class="eyebrow">Pending confirmation (${pending.length})</span></div>
+      <div class="section" style="padding-top:0;">
+        <div class="banner warn mb-12">${icon('alert',17)}
+          <div>Orders with at least one <b>low-stock</b> item stop here instead of auto-confirming.
+          Only the super admin (${esc(getSuperAdmin().username)}) can confirm these.</div></div>
+        ${!pending.length ? `<div class="card" style="padding:16px;text-align:center;" class="t-sm muted">Nothing waiting on you right now.</div>` :
+          pending.map(o=>`
+          <div class="card mb-8" style="padding:14px;">
+            <div class="row between mb-4">
+              <span class="t-base" style="font-weight:600;">${esc(o.orderNo||o.id||'—')}</span>
+              <span class="t-sm" style="font-weight:600;">${money(o.total||0)}</span></div>
+            <div class="row between mb-8">
+              <span class="t-sm muted">${o.placedAt?dtFmt(o.placedAt):''}</span>
+              <span class="pill a">${STATUS.pending_confirmation.l}</span></div>
+            <button class="btn btn-quiet" onclick="adminConfirmOrder('${esc(o.orderNo)}')">Confirm order</button>
+          </div>`).join('')}
+      </div>`;})()}
+
       <div class="section-head"><span class="eyebrow">Orders (${S.orders.length})</span></div>
       <div class="section" style="padding-top:0;">
         <div class="banner warn mb-12">${icon('alert',17)}
@@ -2042,7 +2080,7 @@ function scrAdmin(){
               <span class="t-sm" style="font-weight:600;">${money(o.total||0)}</span></div>
             <div class="row between">
               <span class="t-sm muted">${o.placedAt?dtFmt(o.placedAt):''}</span>
-              <span class="t-sm muted">${esc(o.status||'placed')}</span></div>
+              <span class="pill ${(STATUS[o.status]||STATUS.placed).c}">${(STATUS[o.status]||STATUS.placed).l}</span></div>
           </div>`).join('')}
       </div>
 
@@ -2056,22 +2094,28 @@ function scrAdmin(){
           backend is connected, these values must move to secure server-side storage and this
           screen should only show a Configured/Missing status, never the raw key.</div></div>
         ${adminApiKeyField('gofrugal', 'GoFrugal', 'API key + outlet/company ID from GoFrugal support or your GoFrugal admin console (Settings → API access). Used to sync orders/invoices to your billing system.')}
-        ${adminApiKeyField('gst', 'GST verification', 'API key from your GST-verification provider (e.g. Cleartax, Masters India, or a GSP of your choice) — sign up on their developer portal and generate a key. Used to verify customer GSTIN during signup.')}
+        ${adminApiKeyField('gst_api_key', 'GST verification — API key', 'API key from sandbox.co.in → Dashboard → API Keys. Used with the API secret below to verify customer GSTIN during signup.')}
+        ${adminApiKeyField('gst_api_secret', 'GST verification — API secret', 'API secret from the same sandbox.co.in API key (shown once at creation — keep it safe).')}
         ${adminApiKeyField('razorpay', 'Razorpay', 'Key ID + Key Secret from the Razorpay Dashboard → Settings → API Keys (use Test mode keys first). Used for online payments.')}
         ${adminApiKeyField('whatsapp', 'WhatsApp Business API', 'Access token + Phone Number ID from Meta for Developers → your WhatsApp Business app → API Setup. Used for order notifications.')}
         ${adminApiKeyField('uber', 'Uber Direct (delivery)', 'Customer ID + Client ID + Client Secret from the Uber Direct dashboard (developer.uber.com → Uber Direct). Used to book courier deliveries to customers.')}
       </div>
 
-      <div class="section-head"><span class="eyebrow">Admin password</span></div>
+      <div class="section-head"><span class="eyebrow">Super admin account</span></div>
       <div class="section" style="padding-top:0;">
         <div class="card" style="padding:16px;">
+          <div class="t-sm muted mb-12" style="line-height:1.5;">This is the one personal account that owns this
+            device's admin panel — not a shared staff password. It's the only account that can confirm
+            low-stock orders in the Pending confirmation queue above.</div>
           <div class="field"><label class="label">Current password</label>
             <input id="adm-pw-cur" type="password" autocomplete="off"></div>
+          <div class="field"><label class="label">New username</label>
+            <input id="adm-user-new" placeholder="${esc(getSuperAdmin().username)}" autocomplete="off"></div>
           <div class="field"><label class="label">New password</label>
             <input id="adm-pw-new" type="password" autocomplete="off"></div>
           <div class="field"><label class="label">Confirm new password</label>
             <input id="adm-pw-confirm" type="password" autocomplete="off"></div>
-          <button class="btn mt-8" onclick="changeAdminPassword()">Change password</button>
+          <button class="btn mt-8" onclick="changeAdminPassword()">Save changes</button>
         </div>
       </div>
 
@@ -2093,12 +2137,10 @@ const SETUP_GUIDE = [
   { id:'gst', title:'GST verification API', why:
     'Verifies a customer’s GSTIN and pulls their registered business name automatically during signup, instead of trusting manual entry.',
     steps:[
-      'Pick a GST Suvidha Provider (GSP) — common choices in India: Cleartax, Masters India, Surepass, or Signzy. Any of these work; pricing/free-tier varies, compare on their sites.',
-      'Sign up for a business account on their developer/API portal.',
-      'Complete their KYC (they will ask for your own business PAN/GST details since you’re the account holder).',
-      'Once approved, go to their API/Developer dashboard and generate an API key (sometimes called a "client ID + client secret" pair).',
-      'Note the exact endpoint for "GSTIN verification" or "GSTIN search" — providers differ slightly in URL/response format.',
-      'Paste the key into this app’s Admin Panel → API keys → GST verification (once a backend exists, this must move server-side).',
+      'Sign up at console.sandbox.co.in (instant self-serve, no sales gate) and verify your email/OTP.',
+      'In the console, go to API Keys and generate a new key — this gives you an API Key and an API Secret (secret is shown once, save it immediately).',
+      'Paste both into this app’s Admin Panel → API keys → GST verification (API key + API secret fields).',
+      'Once the backend is deployed, these two values move to Google Secret Manager (`gst-api-key` / `gst-api-secret`) and the backend exchanges them for a short-lived access token automatically on each verification call.',
     ] },
   { id:'gofrugal', title:'GoFrugal API', why:
     'Syncs orders and invoices from this app into your GoFrugal billing/inventory system automatically.',
@@ -2191,17 +2233,31 @@ async function saveAdminApiKey(key){
 }
 function changeAdminPassword(){
   const cur = document.getElementById('adm-pw-cur').value;
+  const newUser = document.getElementById('adm-user-new').value.trim();
   const next = document.getElementById('adm-pw-new').value;
   const confirm = document.getElementById('adm-pw-confirm').value;
-  const stored = localStorage.getItem('mda_admin_password') || ADMIN_PASSWORD;
-  if(cur !== stored){ toast('Current password is incorrect','alert'); return; }
-  if(next.length < 6){ toast('New password must be at least 6 characters','alert'); return; }
-  if(next !== confirm){ toast('New passwords do not match','alert'); return; }
-  localStorage.setItem('mda_admin_password', next);
-  toast('Password changed','check');
+  const sa = getSuperAdmin();
+  if(cur !== sa.password){ toast('Current password is incorrect','alert'); return; }
+  if(!next && !newUser){ toast('Enter a new username and/or password to change','alert'); return; }
+  if(next && next.length < 6){ toast('New password must be at least 6 characters','alert'); return; }
+  if(next && next !== confirm){ toast('New passwords do not match','alert'); return; }
+  setSuperAdmin({ username: newUser || sa.username, password: next || sa.password });
+  toast('Super admin account updated','check');
   document.getElementById('adm-pw-cur').value='';
+  document.getElementById('adm-user-new').value='';
   document.getElementById('adm-pw-new').value='';
   document.getElementById('adm-pw-confirm').value='';
+  paint();
+}
+function adminConfirmOrder(orderNo){
+  const list = DB.orders;
+  const idx = list.findIndex(o=>o.orderNo===orderNo);
+  if(idx===-1) return;
+  list[idx] = {...list[idx], status:'confirmed', confirmedBy: getSuperAdmin().username, confirmedAt:new Date().toISOString()};
+  DB.orders = list;
+  S.orders = list;
+  toast(`${orderNo} confirmed`,'check');
+  paint();
 }
 function saveAdminBusiness(){
   const val = id=>document.getElementById(id).value;

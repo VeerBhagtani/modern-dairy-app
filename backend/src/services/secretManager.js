@@ -7,7 +7,8 @@ const PROJECT_ID = process.env.GCP_PROJECT_ID;
 // Secret Manager secret ID — must be [a-zA-Z0-9-_]+.
 const KNOWN_SECRETS = {
   gofrugal: 'gofrugal-api-key',
-  gst: 'gst-verification-api-key',
+  gst_api_key: 'gst-api-key',
+  gst_api_secret: 'gst-api-secret',
   razorpay: 'razorpay-key-secret',
   razorpay_key_id: 'razorpay-key-id',
   whatsapp: 'whatsapp-access-token',
