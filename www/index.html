@@ -493,51 +493,59 @@ let FB = null;   // Firebase bridge, resolved during boot
 const FIRESTORE_LIVE = false;
 const CONFIG = window.APP_CONFIG;   // build/environment config — see config.js
 
-/* ── Real OTP via MSG91's plain REST API — sends and verifies an actual SMS
-   with no backend and no Firebase/GCP billing involved. Switched away from
-   MSG91's client-side Widget (otp-provider.js) after it consistently timed
-   out with zero response inside the Capacitor WebView, even with native
-   HTTP bridging enabled — their mobile integration docs only cover native
-   SDKs (React Native/Flutter/Kotlin), not a raw script tag in a generic
-   WebView. This calls their documented HTTP API directly instead, using
-   MSG91's default OTP template (no DLT/Sender ID registration required —
-   billed through the OTP Widget's Free Plan). Takes priority over Firebase/
-   demo-mode OTP everywhere below. Profile/wallet/orders still live in local
-   demo storage until the backend is deployed. ── */
-const MSG91_AUTHKEY = '519972A2pIK9RJES8l6a804d1cP1';
-const MSG91_READY = true;
+/* ── Real OTP via Message Central's VerifyNow REST API — sends and verifies
+   an actual SMS with no backend and no Firebase/GCP billing involved.
+   Switched from MSG91 after confirming (via their own delivery logs) that
+   their plain API requires a DLT-registered template — a real TRAI/India
+   regulatory requirement, not something fixable in code. Message Central's
+   OTP route runs on their own pre-approved compliant routes, so no DLT/
+   Sender ID registration is needed on our side. Takes priority over
+   Firebase/demo-mode OTP everywhere below. Profile/wallet/orders still live
+   in local demo storage until the backend is deployed. ── */
+const OTP_CUSTOMER_ID = 'C-C3C1E22CCB0C493';
+// Long-lived bearer token (expires ~2031), generated once from the account
+// password via /auth/v1/authentication/token — stored here instead of the
+// raw password so the account credential itself never ships in the app.
+const OTP_AUTH_TOKEN = 'eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJDLUMzQzFFMjJDQ0IwQzQ5MyIsImlhdCI6MTc4NjgwNjk1MiwiZXhwIjoxOTQ0NDg2OTUyfQ.-0UoS7rT_XnB8-4W7B5kMGt7H0Y4p8AQrJx1eMR02SR3wyK2xuAUXVfDMSbPm8Bo_ve12eMeIT3dfOvu59nCaQ';
+const OTP_READY = true;
+let OTP_VERIFICATION_ID = null; // set by otpSend(), consumed by otpVerify()
 
 function withTimeout(promise, ms, timeoutMessage) {
   let timer;
   const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(timeoutMessage)), ms); });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
-async function msg91Api(path, opts = {}) {
-  const url = `https://control.msg91.com/api/v5/otp${path}`;
+async function otpApi(path, params, opts = {}) {
+  const url = `https://cpaas.messagecentral.com${path}?${new URLSearchParams(params).toString()}`;
   let res;
   try {
     res = await withTimeout(fetch(url, {
       method: opts.method || 'GET',
-      headers: { authkey: MSG91_AUTHKEY, 'Content-Type': 'application/json' },
+      headers: { authToken: OTP_AUTH_TOKEN },
     }), 20000, 'The OTP provider did not respond in time. Check your internet connection and try again.');
   } catch (e) {
     throw new Error(e.message || 'Could not reach the OTP provider.');
   }
   let data = {};
   try { data = await res.json(); } catch (e) { /* non-JSON error body — fall through with res.status only */ }
-  if (!res.ok || data.type === 'error') {
-    throw new Error(data.message || `MSG91 error (HTTP ${res.status})`);
+  if (!res.ok || data.responseCode !== 200) {
+    throw new Error(data.message || `OTP provider error (HTTP ${res.status})`);
   }
   return data;
 }
-function msg91SendOtp(identifier) {
-  return msg91Api(`?mobile=${encodeURIComponent(identifier)}`, { method: 'POST' });
+async function otpSend(identifier) {
+  const mobileNumber = identifier.replace(/^91/, '');
+  const data = await otpApi('/verification/v3/send',
+    { countryCode: '91', customerId: OTP_CUSTOMER_ID, flowType: 'SMS', mobileNumber }, { method: 'POST' });
+  OTP_VERIFICATION_ID = data.data?.verificationId || null;
+  return data;
 }
-function msg91VerifyOtp(otp, identifier) {
-  return msg91Api(`/verify?mobile=${encodeURIComponent(identifier)}&otp=${encodeURIComponent(otp)}`);
+function otpVerify(otp) {
+  if (!OTP_VERIFICATION_ID) return Promise.reject(new Error('No OTP was requested for this session — tap Resend and try again.'));
+  return otpApi('/verification/v3/validateOtp', { verificationId: OTP_VERIFICATION_ID, code: otp });
 }
-function msg91RetryOtp(identifier) {
-  return msg91Api(`/retry?mobile=${encodeURIComponent(identifier)}&retrytype=text`, { method: 'POST' });
+function otpRetry(identifier) {
+  return otpSend(identifier); // Message Central: a fresh send is the resend
 }
 
 /* Remote config — Admin Panel is the source of truth for all of this */
@@ -995,7 +1003,7 @@ function otpForm(){
     <div class="t-md muted mb-16">Sent to +91 ${esc(LOGIN.phone)} · <button class="t-md" style="color:var(--brand);font-weight:600;" onclick="LOGIN.step='${LOGIN.mode==='b2b'?'contact':'entry'}';paint()">Change</button></div>
     <input class="input mb-4" id="f-otp" type="tel" inputmode="numeric" maxlength="6" placeholder="••••••"
            style="text-align:center;font-size:22px;font-weight:700;letter-spacing:.5em;height:56px;">
-    <div class="hint mb-16" id="h-otp">${(MSG91_READY||FB) ? 'Enter the code sent by SMS.' : 'Demo mode — the code is <b>123456</b>.'}</div>
+    <div class="hint mb-16" id="h-otp">${(OTP_READY||FB) ? 'Enter the code sent by SMS.' : 'Demo mode — the code is <b>123456</b>.'}</div>
     <button class="btn" id="btn-verify" onclick="doVerifyOTP()">Verify and continue</button>
     <button class="btn btn-quiet mt-8" id="btn-resend" onclick="doResend()">Resend code</button>`;
 }
@@ -1074,8 +1082,8 @@ async function doB2BRegister(){
   LOGIN.name=n; LOGIN.phone=p; LOGIN.password=pw;
   const btn=document.getElementById('btn-reg'); btn.dataset.lbl='Continue';
   busy('btn-reg',true,'Verifying account');
-  if(MSG91_READY){
-    try{ await msg91SendOtp('91'+p); }
+  if(OTP_READY){
+    try{ await otpSend('91'+p); }
     catch(e){ busy('btn-reg',false,'Continue'); showDebugError('Could not send the code', e); return; }
     busy('btn-reg',false,'Continue'); LOGIN.step='otp'; paint(); return;
   }
@@ -1101,8 +1109,8 @@ async function doSendOTP(){
   LOGIN.name=n; LOGIN.phone=p; LOGIN.password=pw;
   const btn=document.getElementById('btn-otp'); btn.dataset.lbl='Send code';
   busy('btn-otp',true,'Sending');
-  if(MSG91_READY){
-    try{ await msg91SendOtp('91'+p); }
+  if(OTP_READY){
+    try{ await otpSend('91'+p); }
     catch(e){ busy('btn-otp',false,'Send code'); showDebugError('Could not send the code', e); return; }
     busy('btn-otp',false,'Send code'); LOGIN.step='otp'; paint(); return;
   }
@@ -1124,7 +1132,7 @@ async function doSendOTP(){
 }
 async function doResend(){
   busy('btn-resend',true,'Sending');
-  if(MSG91_READY){ try{ await msg91RetryOtp('91'+LOGIN.phone); }catch(e){ busy('btn-resend',false,'Resend code'); showDebugError('Could not resend', e); return; } }
+  if(OTP_READY){ try{ await otpRetry('91'+LOGIN.phone); }catch(e){ busy('btn-resend',false,'Resend code'); showDebugError('Could not resend', e); return; } }
   else if(FB){ try{ await FB.sendOTP(LOGIN.phone); }catch(e){ toast('Could not resend.','alert'); } }
   else { await API.post(`/auth/${LOGIN.mode}/send-otp`,{phone:LOGIN.phone}); }
   busy('btn-resend',false,'Resend code');
@@ -1136,12 +1144,12 @@ async function doVerifyOTP(){
   const btn=document.getElementById('btn-verify'); btn.dataset.lbl='Verify and continue';
   busy('btn-verify',true,'Verifying');
   let r;
-  if(MSG91_READY){
+  if(OTP_READY){
     try{
-      // MSG91 verifies the phone number itself (actual SMS, actual code).
+      // Message Central verifies the phone number itself (actual SMS, actual code).
       // Profile/wallet/orders still live in local demo storage — see the
       // saveCustomerAccount call below — since no backend is deployed yet.
-      await msg91VerifyOtp(o, '91'+LOGIN.phone);
+      await otpVerify(o);
       const existing = getCustomerAccounts()[LOGIN.phone] || {};
       const profile = {
         name: LOGIN.name || existing.name || 'Customer',
