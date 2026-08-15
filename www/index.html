@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<script src="https://verify.msg91.com/otp-provider.js"></script>
 <script src="config.js"></script>
 <style>
 /* ═══════════════════════════════════════════════════════════
@@ -493,6 +494,46 @@ let FB = null;   // Firebase bridge, resolved during boot
 const FIRESTORE_LIVE = false;
 const CONFIG = window.APP_CONFIG;   // build/environment config — see config.js
 
+/* ── Real OTP via MSG91's client-side Widget — sends and verifies an actual
+   SMS with no backend and no Firebase/GCP billing involved. Takes priority
+   over Firebase/demo-mode OTP everywhere below. Profile/wallet/orders still
+   live in local demo storage until the backend is deployed, same as the
+   Firebase path — MSG91 only replaces how the phone number itself gets
+   verified. ── */
+const MSG91_CONFIG = { widgetId: '36686f696562393337393135', tokenAuth: '519972T8sAtSBxCI1M6a1864b3P1' };
+let MSG91_READY = false;
+try {
+  if (typeof window.initSendOTP === 'function') {
+    window.initSendOTP({
+      widgetId: MSG91_CONFIG.widgetId,
+      tokenAuth: MSG91_CONFIG.tokenAuth,
+      exposeMethods: true, // we render our own OTP screen — no MSG91 popup UI
+      success: () => {},   // per-call callbacks (below) are used instead of these
+      failure: () => {},
+    });
+    MSG91_READY = true;
+  }
+} catch (e) { console.warn('MSG91 widget failed to initialise, falling back to demo OTP:', e); }
+
+function msg91SendOtp(identifier) {
+  return new Promise((resolve, reject) => {
+    if (typeof window.sendOtp !== 'function') return reject(new Error('OTP provider is not available right now.'));
+    window.sendOtp(identifier, (data) => resolve(data), (err) => reject(new Error(err?.message || 'Could not send the code.')));
+  });
+}
+function msg91VerifyOtp(otp) {
+  return new Promise((resolve, reject) => {
+    if (typeof window.verifyOtp !== 'function') return reject(new Error('OTP provider is not available right now.'));
+    window.verifyOtp(otp, (data) => resolve(data), (err) => reject(new Error(err?.message || 'Incorrect or expired code.')));
+  });
+}
+function msg91RetryOtp() {
+  return new Promise((resolve, reject) => {
+    if (typeof window.retryOtp !== 'function') return reject(new Error('OTP provider is not available right now.'));
+    window.retryOtp(undefined, (data) => resolve(data), (err) => reject(new Error(err?.message || 'Could not resend.')));
+  });
+}
+
 /* Remote config — Admin Panel is the source of truth for all of this */
 let APPCFG = {
   businessName:'Modern Dairy',
@@ -936,7 +977,7 @@ function otpForm(){
     <div class="t-md muted mb-16">Sent to +91 ${esc(LOGIN.phone)} · <button class="t-md" style="color:var(--brand);font-weight:600;" onclick="LOGIN.step='${LOGIN.mode==='b2b'?'contact':'entry'}';paint()">Change</button></div>
     <input class="input mb-4" id="f-otp" type="tel" inputmode="numeric" maxlength="6" placeholder="••••••"
            style="text-align:center;font-size:22px;font-weight:700;letter-spacing:.5em;height:56px;">
-    <div class="hint mb-16" id="h-otp">${FB ? 'Enter the code sent by SMS.' : 'Demo mode — the code is <b>123456</b>.'}</div>
+    <div class="hint mb-16" id="h-otp">${(MSG91_READY||FB) ? 'Enter the code sent by SMS.' : 'Demo mode — the code is <b>123456</b>.'}</div>
     <button class="btn" id="btn-verify" onclick="doVerifyOTP()">Verify and continue</button>
     <button class="btn btn-quiet mt-8" id="btn-resend" onclick="doResend()">Resend code</button>`;
 }
@@ -997,6 +1038,11 @@ async function doB2BRegister(){
   LOGIN.name=n; LOGIN.phone=p; LOGIN.password=pw;
   const btn=document.getElementById('btn-reg'); btn.dataset.lbl='Continue';
   busy('btn-reg',true,'Verifying account');
+  if(MSG91_READY){
+    try{ await msg91SendOtp('91'+p); }
+    catch(e){ busy('btn-reg',false,'Continue'); toast(e.message||'Could not send the code.','alert'); return; }
+    busy('btn-reg',false,'Continue'); LOGIN.step='otp'; paint(); return;
+  }
   if(FB){
     try{ await FB.sendOTP(p); }
     catch(e){ busy('btn-reg',false,'Continue');
@@ -1019,6 +1065,11 @@ async function doSendOTP(){
   LOGIN.name=n; LOGIN.phone=p; LOGIN.password=pw;
   const btn=document.getElementById('btn-otp'); btn.dataset.lbl='Send code';
   busy('btn-otp',true,'Sending');
+  if(MSG91_READY){
+    try{ await msg91SendOtp('91'+p); }
+    catch(e){ busy('btn-otp',false,'Send code'); toast(e.message||'Could not send the code.','alert'); return; }
+    busy('btn-otp',false,'Send code'); LOGIN.step='otp'; paint(); return;
+  }
   if(FB){
     try{ await FB.sendOTP(p); }
     catch(e){
@@ -1037,7 +1088,8 @@ async function doSendOTP(){
 }
 async function doResend(){
   busy('btn-resend',true,'Sending');
-  if(FB){ try{ await FB.sendOTP(LOGIN.phone); }catch(e){ toast('Could not resend.','alert'); } }
+  if(MSG91_READY){ try{ await msg91RetryOtp(); }catch(e){ toast(e.message||'Could not resend.','alert'); } }
+  else if(FB){ try{ await FB.sendOTP(LOGIN.phone); }catch(e){ toast('Could not resend.','alert'); } }
   else { await API.post(`/auth/${LOGIN.mode}/send-otp`,{phone:LOGIN.phone}); }
   busy('btn-resend',false,'Resend code');
   toast('Code sent again','check');
@@ -1048,7 +1100,28 @@ async function doVerifyOTP(){
   const btn=document.getElementById('btn-verify'); btn.dataset.lbl='Verify and continue';
   busy('btn-verify',true,'Verifying');
   let r;
-  if(FB){
+  if(MSG91_READY){
+    try{
+      // MSG91 verifies the phone number itself (actual SMS, actual code).
+      // Profile/wallet/orders still live in local demo storage — see the
+      // saveCustomerAccount call below — since no backend is deployed yet.
+      await msg91VerifyOtp(o);
+      const existing = getCustomerAccounts()[LOGIN.phone] || {};
+      const profile = {
+        name: LOGIN.name || existing.name || 'Customer',
+        phone: LOGIN.phone,
+        type: LOGIN.mode==='b2b' ? 'b2b' : 'b2c',
+        ...(LOGIN.mode==='b2b' ? { company:LOGIN.company, gstin:LOGIN.gstin } : {}),
+      };
+      r={success:true,data:{user:{id:'local.'+LOGIN.phone,name:profile.name,phone:profile.phone,
+         customerType:profile.type,company:profile.company||null,gstin:profile.gstin||null},
+         accessToken:'demo.'+Date.now(),refreshToken:'demo.r.'+Date.now()}};
+    }catch(e){
+      busy('btn-verify',false,'Verify and continue');
+      setErr('f-otp','h-otp', e.message || 'Incorrect or expired code.');
+      return;
+    }
+  } else if(FB){
     try{
       // Real Firebase Auth verifies the phone number itself (actual SMS, actual
       // code). Profile/wallet/orders still live in local demo storage below —
