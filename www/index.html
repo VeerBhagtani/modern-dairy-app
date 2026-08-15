@@ -925,7 +925,7 @@ function otpForm(){
     <div class="t-md muted mb-16">Sent to +91 ${esc(LOGIN.phone)} · <button class="t-md" style="color:var(--brand);font-weight:600;" onclick="LOGIN.step='${LOGIN.mode==='b2b'?'contact':'entry'}';paint()">Change</button></div>
     <input class="input mb-4" id="f-otp" type="tel" inputmode="numeric" maxlength="6" placeholder="••••••"
            style="text-align:center;font-size:22px;font-weight:700;letter-spacing:.5em;height:56px;">
-    <div class="hint mb-16" id="h-otp">Demo mode — the code is <b>123456</b></div>
+    <div class="hint mb-16" id="h-otp">${FB ? 'Enter the code sent by SMS.' : 'Demo mode — the code is <b>123456</b>.'}</div>
     <button class="btn" id="btn-verify" onclick="doVerifyOTP()">Verify and continue</button>
     <button class="btn btn-quiet mt-8" id="btn-resend" onclick="doResend()">Resend code</button>`;
 }
