@@ -53,40 +53,36 @@ async function getAccessToken(forceRefresh = false) {
   return authenticate();
 }
 
-async function verifyGSTIN(gstin) {
-  const apiKey = await getSecret('gst_api_key');
-  let token = await getAccessToken();
-
-  let res = await fetch(`${BASE_URL}/gst/compliance/public/gstin/${encodeURIComponent(gstin)}`, {
+// POST with the GSTIN in a JSON body — confirmed against the real API
+// (an earlier GET-with-path-param version here was never actually live-
+// tested and turned out to be wrong; fixed after verifying live via curl).
+async function callVerify(gstin, token, apiKey) {
+  return fetch(`${BASE_URL}/gst/compliance/public/gstin/verify`, {
+    method: 'POST',
     headers: {
       authorization: token,
       'x-api-key': apiKey,
       'x-api-version': API_VERSION,
+      'Content-Type': 'application/json',
     },
+    body: JSON.stringify({ gstin }),
   });
+}
+
+async function verifyGSTIN(gstin) {
+  const apiKey = await getSecret('gst_api_key');
+  let token = await getAccessToken();
+  let res = await callVerify(gstin, token, apiKey);
 
   if (res.status === 401) {
     // Token expired/invalid — re-authenticate once and retry.
     token = await getAccessToken(true);
-    res = await fetch(`${BASE_URL}/gst/compliance/public/gstin/${encodeURIComponent(gstin)}`, {
-      headers: {
-        authorization: token,
-        'x-api-key': apiKey,
-        'x-api-version': API_VERSION,
-      },
-    });
+    res = await callVerify(gstin, token, apiKey);
   }
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    const err = new Error(`GST provider returned ${res.status}: ${body.slice(0, 300)}`);
-    err.code = 'PROVIDER_ERROR';
-    throw err;
-  }
-
-  const body = await res.json();
-  const data = body.data;
-  if (!data || !data.gstin) {
+  const body = await res.json().catch(() => ({}));
+  const data = body?.data?.data;
+  if (!res.ok || !data || data.validGstin === false) {
     const err = new Error(body?.message || 'GSTIN not found or invalid');
     err.code = 'INVALID_GSTIN';
     throw err;
@@ -94,11 +90,11 @@ async function verifyGSTIN(gstin) {
 
   return {
     gstin: data.gstin,
-    legalName: data.legal_name || data.lgnm || '',
-    tradeName: data.trade_name || data.tradeNam || '',
-    status: data.gstin_status || data.sts || 'Unknown',
-    registrationDate: data.date_of_registration || data.rgdt || null,
-    address: data.principal_place_address || data.pradr?.addr || null,
+    legalName: data.legalName || '',
+    tradeName: data.tradeName || data.legalName || '',
+    status: data.status || 'Unknown',
+    registrationDate: data.regStartDate || null,
+    pan: data.pan || null,
   };
 }
 

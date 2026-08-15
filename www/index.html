@@ -517,6 +517,51 @@ let OTP_VERIFICATION_ID = null; // set by otpSend(), consumed by otpVerify()
 const TEST_PHONE = '9000000000';
 const TEST_OTP = '0000';
 
+/* ── Real GST verification via sandbox.co.in — called directly from the app,
+   same reasoning as OTP: the backend that would normally own this isn't
+   deployed yet. Unlike the OTP setup, this genuinely ships the real API
+   secret in the app — sandbox.co.in's access tokens expire, so there's no
+   long-lived-token trick available here. Anyone decompiling the public APK
+   could extract it and spend your sandbox.co.in quota. Move this server-side
+   (backend/src/services/gstClient.js already has the real implementation)
+   the moment the backend is deployed. ── */
+const GST_API_KEY = 'key_live_3d7c6e6d540b49029f037eb5c010ed9a';
+const GST_API_SECRET = 'secret_live_7028d035ca5c4e1fbb86d229c97ce71e';
+let GST_ACCESS_TOKEN = null;
+const TEST_GSTIN = '27AAPFM1234A1ZV'; // free — bypasses the real (paid) GST provider entirely
+
+async function gstAuthenticate() {
+  const res = await withTimeout(fetch('https://api.sandbox.co.in/authenticate', {
+    method: 'POST',
+    headers: { 'x-api-key': GST_API_KEY, 'x-api-secret': GST_API_SECRET, 'x-api-version': '1.0' },
+  }), 20000, 'Could not reach the GST verification provider. Check your connection and try again.');
+  const data = await res.json().catch(() => ({}));
+  const token = data.access_token || data.data?.access_token;
+  if (!res.ok || !token) throw new Error(data.message || `GST provider auth failed (HTTP ${res.status})`);
+  GST_ACCESS_TOKEN = token;
+  return token;
+}
+function gstFetchVerify(gstin, token) {
+  return withTimeout(fetch('https://api.sandbox.co.in/gst/compliance/public/gstin/verify', {
+    method: 'POST',
+    headers: { authorization: token, 'x-api-key': GST_API_KEY, 'x-api-version': '1.0', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gstin }),
+  }), 20000, 'Could not reach the GST verification provider. Check your connection and try again.');
+}
+async function verifyGSTIN(gstin) {
+  if (gstin === TEST_GSTIN) return { legalName: 'Test Business Pvt Ltd', tradeName: 'Test Business', status: 'Active', stateCode: gstin.slice(0, 2) };
+  let token = GST_ACCESS_TOKEN || await gstAuthenticate();
+  let res = await gstFetchVerify(gstin, token);
+  if (res.status === 401) { token = await gstAuthenticate(); res = await gstFetchVerify(gstin, token); }
+  let body = {};
+  try { body = await res.json(); } catch (e) { /* non-JSON error body — fall through with res.status only */ }
+  const data = body.data?.data;
+  if (!res.ok || !data || data.validGstin === false) {
+    throw new Error(body.message || 'GSTIN not found or invalid.');
+  }
+  return { legalName: data.legalName, tradeName: data.tradeName || data.legalName, status: data.status, stateCode: data.stateCode };
+}
+
 function withTimeout(promise, ms, timeoutMessage) {
   let timer;
   const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(timeoutMessage)), ms); });
@@ -983,7 +1028,7 @@ function b2bForm(){
     <div class="field"><label class="label">GSTIN</label>
       <input class="input" id="f-gstin" maxlength="15" placeholder="27AAPFM1234A1ZV" value="${esc(LOGIN.gstin)}"
              style="text-transform:uppercase;letter-spacing:.04em;" oninput="this.value=this.value.toUpperCase()">
-      <div class="hint" id="h-gstin">Verified against government GST records.</div></div>
+      <div class="hint" id="h-gstin">Verified against government GST records. Testing? Use <b>${TEST_GSTIN}</b> — it's free, no real lookup.</div></div>
     <div class="field"><label class="label">Registered business name</label>
       <input class="input" id="f-company" placeholder="As printed on your GST certificate" value="${esc(LOGIN.company)}"></div>
     <button class="btn" id="btn-gst" onclick="doVerifyGSTIN()">Verify business</button>
@@ -1039,10 +1084,11 @@ async function doVerifyGSTIN(){
   if(!c){ toast('Enter your registered business name','alert'); return; }
   const btn=document.getElementById('btn-gst'); btn.dataset.lbl='Verify business';
   busy('btn-gst',true,'Checking GST records');
-  const r=await API.post('/auth/b2b/verify-gstin',{gstin:g,companyName:c});
+  let data;
+  try{ data = await verifyGSTIN(g); }
+  catch(e){ busy('btn-gst',false,'Verify business'); setErr('f-gstin','h-gstin', e.message||'GSTIN not found or invalid.'); return; }
   busy('btn-gst',false,'Verify business');
-  if(!r.success){ setErr('f-gstin','h-gstin', r.message); return; }
-  LOGIN.gstin=g; LOGIN.company=c; LOGIN.gstData=r.data; LOGIN.step='contact'; paint();
+  LOGIN.gstin=g; LOGIN.company=c; LOGIN.gstData=data; LOGIN.step='contact'; paint();
 }
 function getCustomerAccounts(){
   try{ return JSON.parse(localStorage.getItem('mda_customer_accounts')||'{}'); }
