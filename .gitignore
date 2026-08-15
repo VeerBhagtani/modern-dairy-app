@@ -7,3 +7,16 @@ android/captures/
 *.apk
 *.aab
 .idea/
+
+# Secrets — real credentials belong in Secret Manager / Cloud Run env config,
+# never in a committed file. These patterns exist as a backstop in case a
+# local .env is ever created for backend dev.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.jks
+*.keystore
+serviceAccountKey*.json
+firebase-adminsdk*.json

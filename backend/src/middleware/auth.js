@@ -12,14 +12,16 @@ async function signingKey() {
 
 async function issueTokens(user) {
   const key = await signingKey();
-  const accessToken = jwt.sign({ sub: user.id, type: 'access' }, key, { expiresIn: ACCESS_TTL });
-  const refreshToken = jwt.sign({ sub: user.id, type: 'refresh' }, key, { expiresIn: REFRESH_TTL });
+  const accessToken = jwt.sign({ sub: user.id, type: 'access' }, key, { expiresIn: ACCESS_TTL, algorithm: 'HS256' });
+  const refreshToken = jwt.sign({ sub: user.id, type: 'refresh' }, key, { expiresIn: REFRESH_TTL, algorithm: 'HS256' });
   return { accessToken, refreshToken };
 }
 
 async function verifyToken(token, expectedType) {
   const key = await signingKey();
-  const payload = jwt.verify(token, key);
+  // Pin the accepted algorithm explicitly — never trust the algorithm named
+  // in the token's own header (classic JWT "alg confusion" mitigation).
+  const payload = jwt.verify(token, key, { algorithms: ['HS256'] });
   if (payload.type !== expectedType) throw new Error('wrong token type');
   return payload;
 }

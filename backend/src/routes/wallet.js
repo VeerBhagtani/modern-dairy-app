@@ -1,6 +1,8 @@
 const router = require('express').Router();
 const { col, db, FieldValue } = require('../services/firestore');
 const { requireAuth } = require('../middleware/auth');
+const { writeLimiter } = require('../middleware/rateLimit');
+const { isOptionalBoundedString } = require('../middleware/validate');
 
 router.use(requireAuth());
 
@@ -23,9 +25,14 @@ router.get('/', async (req, res) => {
 // must confirm the transfer was actually received (see routes/admin.js) before
 // the ledger entry is marked settled and the balance updated. Never trust a
 // client-submitted top-up as proof of payment.
-router.post('/topup', async (req, res) => {
+router.post('/topup', writeLimiter, async (req, res) => {
   const amount = Number(req.body?.amount) || 0;
-  if (amount < 1000) return res.status(400).json({ success: false, message: 'Minimum deposit is ₹1,000' });
+  if (!Number.isFinite(amount) || amount < 1000 || amount > 1000000) {
+    return res.status(400).json({ success: false, message: 'Deposit amount must be between ₹1,000 and ₹10,00,000' });
+  }
+  if (!isOptionalBoundedString(req.body?.note, { max: 300 })) {
+    return res.status(400).json({ success: false, message: 'note is too long' });
+  }
 
   const entry = await col.walletLedger(req.userId).add({
     type: 'topup_requested',

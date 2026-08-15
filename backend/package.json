@@ -5,20 +5,23 @@
   "description": "Modern Dairy B2B ordering API — Cloud Run + Firestore + Secret Manager",
   "type": "commonjs",
   "main": "src/index.js",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "check": "node --check src/index.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "cors": "^2.8.5",
-    "helmet": "^7.1.0",
-    "firebase-admin": "^12.3.1",
     "@google-cloud/secret-manager": "^5.6.0",
-    "jsonwebtoken": "^9.0.2",
     "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.5.1",
+    "firebase-admin": "^12.3.1",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
     "uuid": "^9.0.1"
   }
 }

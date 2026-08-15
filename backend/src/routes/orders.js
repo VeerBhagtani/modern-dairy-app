@@ -2,6 +2,8 @@ const router = require('express').Router();
 const { v4: uuid } = require('uuid');
 const { col, db, FieldValue } = require('../services/firestore');
 const { requireAuth } = require('../middleware/auth');
+const { writeLimiter } = require('../middleware/rateLimit');
+const { isValidId, isPositiveInt, isOptionalBoundedString } = require('../middleware/validate');
 
 router.use(requireAuth());
 
@@ -17,6 +19,7 @@ router.get('/', async (req, res) => {
 
 // GET /orders/:id
 router.get('/:id', async (req, res) => {
+  if (!isValidId(req.params.id)) return res.status(404).json({ success: false, message: 'Order not found' });
   const doc = await col.orders().doc(req.params.id).get();
   if (!doc.exists || doc.data().customerId !== req.userId) {
     return res.status(404).json({ success: false, message: 'Order not found' });
@@ -24,14 +27,25 @@ router.get('/:id', async (req, res) => {
   res.json({ success: true, data: { id: doc.id, ...doc.data() } });
 });
 
+const MAX_ITEMS = 50;
+const MAX_QTY = 100000;
+
 // POST /orders { items:[{productId, variantId, qty}], idempotencyKey }
 // Prices, MOQ, and totals are ALWAYS recomputed server-side from Firestore product
 // data — client-submitted prices/totals are ignored. This is intentional: the
 // frontend must never be the source of truth for money.
-router.post('/', async (req, res) => {
+router.post('/', writeLimiter, async (req, res) => {
   const { items, idempotencyKey } = req.body || {};
-  if (!Array.isArray(items) || !items.length) {
-    return res.status(400).json({ success: false, message: 'items is required' });
+  if (!Array.isArray(items) || !items.length || items.length > MAX_ITEMS) {
+    return res.status(400).json({ success: false, message: `items must be an array of 1 to ${MAX_ITEMS} entries` });
+  }
+  if (!isOptionalBoundedString(idempotencyKey, { max: 200 })) {
+    return res.status(400).json({ success: false, message: 'idempotencyKey is too long' });
+  }
+  for (const i of items) {
+    if (!i || !isValidId(i.productId) || !isValidId(i.variantId) || !isPositiveInt(Number(i.qty), { max: MAX_QTY })) {
+      return res.status(400).json({ success: false, message: 'Each item needs a valid productId, variantId, and qty' });
+    }
   }
   const key = idempotencyKey || null;
 

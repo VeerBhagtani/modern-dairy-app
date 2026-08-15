@@ -40,7 +40,13 @@ async function verifyWebhookSignature(rawBody, signature) {
   const crypto = require('crypto');
   const secret = await getSecret('razorpay'); // webhook secret is typically the key secret or a dedicated webhook secret set in Razorpay dashboard
   const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
-  return expected === signature;
+  // Constant-time comparison — a plain === leaks how many leading bytes
+  // matched via response-timing, letting an attacker forge a valid signature
+  // byte-by-byte. Both buffers must be equal length or timingSafeEqual throws.
+  const a = Buffer.from(expected, 'hex');
+  const b = Buffer.from(String(signature || ''), 'hex');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
 }
 
 module.exports = { createOrder, verifyWebhookSignature };

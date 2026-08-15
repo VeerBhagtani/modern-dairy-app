@@ -13,7 +13,7 @@ async function signingKey() {
 
 async function issueAdminToken(adminId) {
   const key = await signingKey();
-  return jwt.sign({ sub: adminId, type: 'admin' }, key, { expiresIn: ADMIN_TOKEN_TTL });
+  return jwt.sign({ sub: adminId, type: 'admin' }, key, { expiresIn: ADMIN_TOKEN_TTL, algorithm: 'HS256' });
 }
 
 async function verifyAdminLogin(username, password) {
@@ -31,7 +31,7 @@ function requireAdmin() {
       const token = header.startsWith('Bearer ') ? header.slice(7) : null;
       if (!token) return res.status(401).json({ success: false, message: 'Missing admin token' });
       const key = await signingKey();
-      const payload = jwt.verify(token, key);
+      const payload = jwt.verify(token, key, { algorithms: ['HS256'] });
       if (payload.type !== 'admin') return res.status(403).json({ success: false, message: 'Not an admin token' });
       req.adminId = payload.sub;
       next();

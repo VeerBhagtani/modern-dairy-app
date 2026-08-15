@@ -2,20 +2,29 @@ const router = require('express').Router();
 const { v4: uuid } = require('uuid');
 const { col, FieldValue } = require('../services/firestore');
 const { issueTokens, verifyToken } = require('../middleware/auth');
+const { authLimiter, otpPhoneLimiter } = require('../middleware/rateLimit');
+const { isValidPhone, isValidOtp, isValidGstin, isBoundedString, isOptionalBoundedString } = require('../middleware/validate');
 const gst = require('../services/gstClient');
 const sms = require('../services/smsClient');
 
 function toE164(phone) {
-  const digits = String(phone).replace(/\D/g, '');
-  return digits.startsWith('91') ? `+${digits}` : `+91${digits}`;
+  const digits = String(phone).replace(/\D/g, '').slice(-10);
+  return `+91${digits}`;
 }
+
+// Every auth-sensitive route gets both limiters: 5/15min per IP, and (where
+// the body carries a phone number) an additional 5/15min per phone number so
+// an attacker can't spread an SMS-bombing attack against one victim across
+// many source IPs.
+router.use(authLimiter, otpPhoneLimiter);
 
 // POST /auth/b2b/verify-gstin { gstin, companyName }
 router.post('/b2b/verify-gstin', async (req, res) => {
-  const { gstin } = req.body || {};
-  if (!gstin) return res.status(400).json({ success: false, message: 'gstin is required' });
+  const { gstin, companyName } = req.body || {};
+  if (!isValidGstin(gstin)) return res.status(400).json({ success: false, message: 'A valid GSTIN is required' });
+  if (!isOptionalBoundedString(companyName, { max: 200 })) return res.status(400).json({ success: false, message: 'companyName is too long' });
   try {
-    const data = await gst.verifyGSTIN(gstin);
+    const data = await gst.verifyGSTIN(gstin.toUpperCase());
     res.json({ success: true, data });
   } catch (e) {
     const status = e.code === 'NOT_CONFIGURED' ? 503 : 400;
@@ -26,8 +35,10 @@ router.post('/b2b/verify-gstin', async (req, res) => {
 // POST /auth/b2b/register { gstin, companyName, name, phone, gstData }
 // Registration only stages the profile; the account is created on OTP verify.
 router.post('/b2b/register', async (req, res) => {
-  const { gstin, companyName, name, phone, gstData } = req.body || {};
-  if (!gstin || !phone) return res.status(400).json({ success: false, message: 'gstin and phone are required' });
+  const { gstin, name, phone } = req.body || {};
+  if (!isValidGstin(gstin)) return res.status(400).json({ success: false, message: 'A valid GSTIN is required' });
+  if (!isValidPhone(phone)) return res.status(400).json({ success: false, message: 'A valid 10-digit mobile number is required' });
+  if (!isBoundedString(name, { min: 1, max: 100 })) return res.status(400).json({ success: false, message: 'A valid name is required' });
   try {
     await sms.sendOTP(toE164(phone));
     res.json({ success: true });
@@ -39,8 +50,9 @@ router.post('/b2b/register', async (req, res) => {
 
 // POST /auth/b2b/send-otp { phone }  and  POST /auth/b2c/send-otp { phone, name }
 router.post('/:mode(b2b|b2c)/send-otp', async (req, res) => {
-  const { phone } = req.body || {};
-  if (!phone) return res.status(400).json({ success: false, message: 'phone is required' });
+  const { phone, name } = req.body || {};
+  if (!isValidPhone(phone)) return res.status(400).json({ success: false, message: 'A valid 10-digit mobile number is required' });
+  if (!isOptionalBoundedString(name, { max: 100 })) return res.status(400).json({ success: false, message: 'name is too long' });
   try {
     await sms.sendOTP(toE164(phone));
     res.json({ success: true });
@@ -54,7 +66,13 @@ router.post('/:mode(b2b|b2c)/send-otp', async (req, res) => {
 router.post('/:mode(b2b|b2c)/verify-otp', async (req, res) => {
   const { mode } = req.params;
   const { phone, otp, name, company, gstin } = req.body || {};
-  if (!phone || !otp) return res.status(400).json({ success: false, message: 'phone and otp are required' });
+  if (!isValidPhone(phone)) return res.status(400).json({ success: false, message: 'A valid 10-digit mobile number is required' });
+  if (!isValidOtp(otp)) return res.status(400).json({ success: false, message: 'Incorrect or expired code.' }); // same message as a wrong code — no format oracle
+  if (!isOptionalBoundedString(name, { max: 100 })) return res.status(400).json({ success: false, message: 'name is too long' });
+  if (mode === 'b2b') {
+    if (company !== undefined && !isBoundedString(company, { max: 200 })) return res.status(400).json({ success: false, message: 'company is too long' });
+    if (gstin !== undefined && gstin !== null && !isValidGstin(gstin)) return res.status(400).json({ success: false, message: 'gstin is not valid' });
+  }
 
   let ok;
   try {
@@ -100,7 +118,7 @@ router.post('/:mode(b2b|b2c)/verify-otp', async (req, res) => {
 // POST /auth/refresh { refreshToken }
 router.post('/refresh', async (req, res) => {
   const { refreshToken } = req.body || {};
-  if (!refreshToken) return res.status(400).json({ success: false, message: 'refreshToken is required' });
+  if (!isBoundedString(refreshToken, { min: 1, max: 2000 })) return res.status(400).json({ success: false, message: 'refreshToken is required' });
   try {
     const payload = await verifyToken(refreshToken, 'refresh');
     const doc = await col.customers().doc(payload.sub).get();

@@ -7,11 +7,32 @@ const authRoutes = require('./routes/auth');
 const ordersRoutes = require('./routes/orders');
 const walletRoutes = require('./routes/wallet');
 const adminRoutes = require('./routes/admin');
+const { generalLimiter } = require('./middleware/rateLimit');
 
 const app = express();
+
+// Cloud Run sits behind a proxy/load balancer — without this, req.ip is the
+// proxy's address for every request, which would make every IP-keyed rate
+// limit collapse onto a single shared counter.
+app.set('trust proxy', 1);
+
 app.use(helmet());
-app.use(cors()); // tighten to the app's actual origin(s) once known
+
+// Allowlist-based CORS. ALLOWED_ORIGINS is a comma-separated list (set in
+// Cloud Run env config); requests with no Origin header (native app clients,
+// curl, server-to-server) are always allowed since CORS is a browser-only
+// concept. Falls back to "no browser origin allowed" if unset, which is the
+// safe default until the app's real origin(s) are known.
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error('Not allowed by CORS'));
+  },
+}));
+
 app.use(express.json({ limit: '1mb' }));
+app.use(generalLimiter);
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
@@ -24,8 +45,20 @@ app.use('/admin', adminRoutes);
 app.use((req, res) => res.status(404).json({ success: false, message: 'Not found' }));
 
 // Keep error responses generic to the client; log full detail server-side.
+// Malformed JSON bodies (express.json parse failures) get a proper 400
+// instead of a misleading 500; everything else stays a generic 500 with no
+// stack trace, internal path, or DB error text ever reaching the client.
 app.use((err, req, res, next) => {
   console.error(err);
+  if (err.type === 'entity.parse.failed' || err instanceof SyntaxError) {
+    return res.status(400).json({ success: false, message: 'Malformed request body' });
+  }
+  if (err.type === 'entity.too.large' || err.status === 413) {
+    return res.status(413).json({ success: false, message: 'Request body is too large' });
+  }
+  if (err.message === 'Not allowed by CORS') {
+    return res.status(403).json({ success: false, message: 'Origin not allowed' });
+  }
   res.status(500).json({ success: false, message: 'Internal server error' });
 });
 
