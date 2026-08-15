@@ -536,7 +536,7 @@ async function otpApi(path, params, opts = {}) {
 async function otpSend(identifier) {
   const mobileNumber = identifier.replace(/^91/, '');
   const data = await otpApi('/verification/v3/send',
-    { countryCode: '91', customerId: OTP_CUSTOMER_ID, flowType: 'SMS', mobileNumber }, { method: 'POST' });
+    { countryCode: '91', customerId: OTP_CUSTOMER_ID, flowType: 'SMS', otpLength: '4', mobileNumber }, { method: 'POST' });
   OTP_VERIFICATION_ID = data.data?.verificationId || null;
   return data;
 }
@@ -998,10 +998,11 @@ function passwordField(){
       <input class="input" id="f-password2" type="password" placeholder="Re-enter your password" autocomplete="off">
       <div class="hint" id="h-password2">Only needed the first time — skip this if you already have a password.</div></div>`;
 }
+const OTP_LENGTH = (OTP_READY||FB) ? 4 : 6; // Message Central sends 4-digit codes; demo/Firebase fallback stays 6
 function otpForm(){
-  return `<div class="t-lg mb-4">Enter the 6-digit code</div>
+  return `<div class="t-lg mb-4">Enter the ${OTP_LENGTH}-digit code</div>
     <div class="t-md muted mb-16">Sent to +91 ${esc(LOGIN.phone)} · <button class="t-md" style="color:var(--brand);font-weight:600;" onclick="LOGIN.step='${LOGIN.mode==='b2b'?'contact':'entry'}';paint()">Change</button></div>
-    <input class="input mb-4" id="f-otp" type="tel" inputmode="numeric" maxlength="6" placeholder="••••••"
+    <input class="input mb-4" id="f-otp" type="tel" inputmode="numeric" maxlength="${OTP_LENGTH}" placeholder="${'•'.repeat(OTP_LENGTH)}"
            style="text-align:center;font-size:22px;font-weight:700;letter-spacing:.5em;height:56px;">
     <div class="hint mb-16" id="h-otp">${(OTP_READY||FB) ? 'Enter the code sent by SMS.' : 'Demo mode — the code is <b>123456</b>.'}</div>
     <button class="btn" id="btn-verify" onclick="doVerifyOTP()">Verify and continue</button>
@@ -1140,7 +1141,7 @@ async function doResend(){
 }
 async function doVerifyOTP(){
   const o=document.getElementById('f-otp').value.trim();
-  if(o.length!==6){ setErr('f-otp','h-otp','Enter all 6 digits.'); return; }
+  if(o.length!==OTP_LENGTH){ setErr('f-otp','h-otp',`Enter all ${OTP_LENGTH} digits.`); return; }
   const btn=document.getElementById('btn-verify'); btn.dataset.lbl='Verify and continue';
   busy('btn-verify',true,'Verifying');
   let r;
