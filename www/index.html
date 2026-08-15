@@ -1056,6 +1056,24 @@ function saveCustomerAccount(phone, patch){
   cur[phone] = {...cur[phone], ...patch};
   localStorage.setItem('mda_customer_accounts', JSON.stringify(cur));
 }
+// No reliable way to get remote devtools working on every device — this
+// shows the exact technical error directly in the app instead, so it can
+// just be screenshotted. Bypasses needing chrome://inspect entirely.
+let DEBUG_TEXT = '';
+function showDebugError(title, err){
+  DEBUG_TEXT = (err && err.message) ? err.message : String(err);
+  openSheet(`<div class="sheet-head"><div class="t-lg">${esc(title)}</div>
+      <button class="iconbtn" onclick="closeSheet()">${icon('close',20)}</button></div>
+    <div class="section">
+      <div class="banner bad mb-12">${icon('alert',17)}<div>Screenshot this screen and send it over — it's the exact technical error, not a guess.</div></div>
+      <div class="card" style="padding:14px;"><div class="t-sm" style="white-space:pre-wrap;word-break:break-word;user-select:text;-webkit-user-select:text;">${esc(DEBUG_TEXT)}</div></div>
+      <button class="btn btn-quiet mt-12" onclick="copyDebugText()">Copy to clipboard</button>
+    </div>`);
+}
+async function copyDebugText(){
+  try{ await navigator.clipboard.writeText(DEBUG_TEXT); toast('Copied','check'); }
+  catch(e){ toast('Could not copy — screenshot instead','alert'); }
+}
 function checkLoginPassword(phone){
   const pw = document.getElementById('f-password').value;
   const pw2 = document.getElementById('f-password2').value;
@@ -1081,7 +1099,7 @@ async function doB2BRegister(){
   busy('btn-reg',true,'Verifying account');
   if(MSG91_READY){
     try{ await msg91SendOtp('91'+p); }
-    catch(e){ busy('btn-reg',false,'Continue'); toast(e.message||'Could not send the code.','alert'); return; }
+    catch(e){ busy('btn-reg',false,'Continue'); showDebugError('Could not send the code', e); return; }
     busy('btn-reg',false,'Continue'); LOGIN.step='otp'; paint(); return;
   }
   if(FB){
@@ -1108,7 +1126,7 @@ async function doSendOTP(){
   busy('btn-otp',true,'Sending');
   if(MSG91_READY){
     try{ await msg91SendOtp('91'+p); }
-    catch(e){ busy('btn-otp',false,'Send code'); toast(e.message||'Could not send the code.','alert'); return; }
+    catch(e){ busy('btn-otp',false,'Send code'); showDebugError('Could not send the code', e); return; }
     busy('btn-otp',false,'Send code'); LOGIN.step='otp'; paint(); return;
   }
   if(FB){
@@ -1129,7 +1147,7 @@ async function doSendOTP(){
 }
 async function doResend(){
   busy('btn-resend',true,'Sending');
-  if(MSG91_READY){ try{ await msg91RetryOtp(); }catch(e){ toast(e.message||'Could not resend.','alert'); } }
+  if(MSG91_READY){ try{ await msg91RetryOtp(); }catch(e){ busy('btn-resend',false,'Resend code'); showDebugError('Could not resend', e); return; } }
   else if(FB){ try{ await FB.sendOTP(LOGIN.phone); }catch(e){ toast('Could not resend.','alert'); } }
   else { await API.post(`/auth/${LOGIN.mode}/send-otp`,{phone:LOGIN.phone}); }
   busy('btn-resend',false,'Resend code');
