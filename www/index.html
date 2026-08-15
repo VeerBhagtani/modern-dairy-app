@@ -908,7 +908,10 @@ function b2cForm(){
 function passwordField(){
   return `<div class="field"><label class="label">Password</label>
       <input class="input" id="f-password" type="password" placeholder="Create or enter your password" autocomplete="off">
-      <div class="hint" id="h-password">New number? This sets your password. Ordered before? Enter your existing one.</div></div>`;
+      <div class="hint" id="h-password">New number? This sets your password. Ordered before? Enter your existing one.</div></div>
+    <div class="field"><label class="label">Confirm password</label>
+      <input class="input" id="f-password2" type="password" placeholder="Re-enter your password" autocomplete="off">
+      <div class="hint" id="h-password2">Only needed the first time — skip this if you already have a password.</div></div>`;
 }
 function otpForm(){
   return `<div class="t-lg mb-4">Enter the 6-digit code</div>
@@ -955,12 +958,14 @@ function saveCustomerAccount(phone, patch){
 }
 function checkLoginPassword(phone){
   const pw = document.getElementById('f-password').value;
-  setErr('f-password','h-password','');
+  const pw2 = document.getElementById('f-password2').value;
+  setErr('f-password','h-password',''); setErr('f-password2','h-password2','');
   const existing = getCustomerAccounts()[phone];
   if(existing){
     if(pw !== existing.password){ setErr('f-password','h-password','Incorrect password for this number.'); return null; }
-  } else if(pw.length < 6){
-    setErr('f-password','h-password','Set a password of at least 6 characters.'); return null;
+  } else {
+    if(pw.length < 6){ setErr('f-password','h-password','Set a password of at least 6 characters.'); return null; }
+    if(pw !== pw2){ setErr('f-password2','h-password2','Passwords do not match.'); return null; }
   }
   return pw;
 }
@@ -1942,9 +1947,10 @@ function arow(ic,title,sub,onclick){
    Without one (current DEMO mode), falls back to a local in-app admin panel that edits
    APPCFG/CATALOGUE and persists overrides to localStorage on this device only — a working
    preview, not a substitute for the real multi-device backend admin panel. */
-function openAdmin(){
+async function openAdmin(){
   const base = CONFIG.API_BASE ? CONFIG.API_BASE.replace(/\/api\/?$/, '') : '';
   if(base){ window.open(base + '/admin/', '_blank'); return; }
+  if(ADMIN.authed) await loadOrders();
   go(ADMIN.authed ? 'admin' : 'adminLogin');
 }
 
@@ -1994,25 +2000,39 @@ function applyAdminOverrides(){
 }
 
 function scrAdminLogin(){
-  return `<div class="screen on">${navBar('Super admin sign in')}
-    <div class="scroll"><div class="section">
-      <div class="banner warn mb-16">${icon('alert',17)}
-        <div>Local demo mode — no backend is connected yet. This panel edits app content on
-        this device only. It is not the secure production admin system.</div></div>
-      <div class="field"><label class="label">Username</label>
-        <input id="f-admin-user" placeholder="Username" autocomplete="off"></div>
-      <div class="field"><label class="label">Password</label>
-        <input id="f-admin-pw" type="password" placeholder="Enter password" autocomplete="off"></div>
-      <button class="btn mt-8" onclick="doAdminLogin()">Sign in</button>
+  return `<div class="screen on" style="background:var(--brand);">
+    <div style="padding:calc(var(--safe-t) + 8px) 20px 0;">
+      <button class="iconbtn" style="color:#fff;" onclick="back()" aria-label="Back">${icon('left',22)}</button>
+    </div>
+    <div style="padding:8px 24px 32px;">
+      <div style="width:52px;height:52px;border-radius:var(--r-sm);background:rgba(255,255,255,.12);
+                  display:flex;align-items:center;justify-content:center;color:#fff;margin-bottom:20px;">
+        ${icon('shield',26)}</div>
+      <div class="eyebrow" style="color:rgba(255,255,255,.6);letter-spacing:.08em;margin-bottom:6px;">SUPER ADMIN</div>
+      <div class="t-2xl" style="color:#fff;">${esc(APPCFG.businessName)} control panel</div>
+    </div>
+    <div class="scroll" style="background:var(--surface);border-radius:20px 20px 0 0;padding-top:4px;">
+      <div class="section">
+        <div class="banner warn mb-16">${icon('alert',17)}
+          <div>Local demo mode — no backend is connected yet. This panel edits app content on
+          this device only. It is not the secure production admin system.</div></div>
+        <div class="field"><label class="label">Username</label>
+          <input id="f-admin-user" placeholder="Username" autocomplete="off"></div>
+        <div class="field"><label class="label">Password</label>
+          <input id="f-admin-pw" type="password" placeholder="Enter password" autocomplete="off"></div>
+        <button class="btn mt-8" onclick="doAdminLogin()">Sign in</button>
+        <button class="btn btn-quiet mt-8" onclick="back()">${icon('user',18)} Not an admin? Customer sign in</button>
+      </div>
     </div></div>`;
 }
-function doAdminLogin(){
+async function doAdminLogin(){
   const user = document.getElementById('f-admin-user').value.trim();
   const pw = document.getElementById('f-admin-pw').value;
   const sa = getSuperAdmin();
   if(user !== sa.username || pw !== sa.password){ toast('Incorrect username or password','alert'); return; }
   ADMIN.authed = true;
   sessionStorage.setItem('mda_admin_authed','1');
+  await loadOrders(); // pick up every order placed on this device, not just this session's
   go('admin',{replace:true});
 }
 
