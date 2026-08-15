@@ -1,4 +1,5 @@
 node_modules/
+.firebase/
 android/app/build/
 android/build/
 android/.gradle/

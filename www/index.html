@@ -2158,14 +2158,15 @@ function scrAccount(){
         ${arow('info','About us','Since 1975', `go('about')`)}
       </div>
 
-      <div class="section-head"><span class="eyebrow">Staff</span></div>
+      <div class="section-head"><span class="eyebrow">Legal</span></div>
       <div class="card" style="margin:0 16px;">
-        ${arow('shield','Admin panel','Manage products, orders and settings', `openAdmin()`)}
+        ${arow('file','Terms & Conditions','', `window.open('https://modern-dairy-pune.web.app/terms.html','_blank')`)}
+        ${arow('file','Privacy Policy','', `window.open('https://modern-dairy-pune.web.app/privacy-policy.html','_blank')`)}
       </div>
 
       <div class="section">
         <button class="btn btn-danger" onclick="confirmSignOut()">${icon('logout',18)} Sign out</button>
-        <div class="t-xs muted-2 center mt-16">Modern Dairy · v1.0.0<br>${CONFIG.DEMO?'Demo mode — not connected to server':'Connected'}</div>
+        <div class="t-xs muted-2 center mt-16" onclick="tapLogo()" style="-webkit-tap-highlight-color:transparent;">Modern Dairy · v1.0.0<br>${CONFIG.DEMO?'Demo mode — not connected to server':'Connected'}</div>
       </div>
       <div style="height:calc(16px + var(--safe-b));"></div>
     </div>
