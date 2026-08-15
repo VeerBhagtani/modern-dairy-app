@@ -9,7 +9,6 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-<script src="https://verify.msg91.com/otp-provider.js"></script>
 <script src="config.js"></script>
 <style>
 /* ═══════════════════════════════════════════════════════════
@@ -494,73 +493,51 @@ let FB = null;   // Firebase bridge, resolved during boot
 const FIRESTORE_LIVE = false;
 const CONFIG = window.APP_CONFIG;   // build/environment config — see config.js
 
-/* ── Real OTP via MSG91's client-side Widget — sends and verifies an actual
-   SMS with no backend and no Firebase/GCP billing involved. Takes priority
-   over Firebase/demo-mode OTP everywhere below. Profile/wallet/orders still
-   live in local demo storage until the backend is deployed, same as the
-   Firebase path — MSG91 only replaces how the phone number itself gets
-   verified. ── */
-const MSG91_CONFIG = { widgetId: '36686f696562393337393135', tokenAuth: '519972T8sAtSBxCI1M6a1864b3P1' };
-let MSG91_READY = false;
-try {
-  if (typeof window.initSendOTP === 'function') {
-    window.initSendOTP({
-      widgetId: MSG91_CONFIG.widgetId,
-      tokenAuth: MSG91_CONFIG.tokenAuth,
-      exposeMethods: true, // we render our own OTP screen — no MSG91 popup UI
-      success: () => {},   // per-call callbacks (below) are used instead of these
-      failure: () => {},
-    });
-    MSG91_READY = true;
-  }
-} catch (e) { console.warn('MSG91 widget failed to initialise, falling back to demo OTP:', e); }
+/* ── Real OTP via MSG91's plain REST API — sends and verifies an actual SMS
+   with no backend and no Firebase/GCP billing involved. Switched away from
+   MSG91's client-side Widget (otp-provider.js) after it consistently timed
+   out with zero response inside the Capacitor WebView, even with native
+   HTTP bridging enabled — their mobile integration docs only cover native
+   SDKs (React Native/Flutter/Kotlin), not a raw script tag in a generic
+   WebView. This calls their documented HTTP API directly instead, using
+   MSG91's default OTP template (no DLT/Sender ID registration required —
+   billed through the OTP Widget's Free Plan). Takes priority over Firebase/
+   demo-mode OTP everywhere below. Profile/wallet/orders still live in local
+   demo storage until the backend is deployed. ── */
+const MSG91_AUTHKEY = '519972A2pIK9RJES8l6a804d1cP1';
+const MSG91_READY = true;
 
-// If MSG91's network call stalls (widget misconfiguration, domain not
-// allowlisted, DLT/template issue on their side) neither callback fires and
-// the caller would hang forever with the button stuck on "Sending" — wrap
-// every call with a hard timeout so the UI always recovers. The timeout
-// itself is NOT a connectivity problem — it almost always means MSG91's
-// server silently rejected the request (most commonly: the app's origin
-// isn't in the widget's Allowed Domains list in the MSG91 dashboard) — so
-// the message says that plainly instead of blaming the user's connection.
 function withTimeout(promise, ms, timeoutMessage) {
   let timer;
   const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(timeoutMessage)), ms); });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
-// MSG91's failure callback can hand back a string, an Error, a plain object,
-// or nothing at all depending on what went wrong — normalize all of that
-// into one readable string instead of silently showing a generic message.
-function msg91ErrorText(err) {
-  if (!err) return 'Unknown error';
-  if (typeof err === 'string') return err;
-  if (err.message) return err.message;
-  try { return JSON.stringify(err); } catch (e) { return String(err); }
+async function msg91Api(path, opts = {}) {
+  const url = `https://control.msg91.com/api/v5/otp${path}`;
+  let res;
+  try {
+    res = await withTimeout(fetch(url, {
+      method: opts.method || 'GET',
+      headers: { authkey: MSG91_AUTHKEY, 'Content-Type': 'application/json' },
+    }), 20000, 'The OTP provider did not respond in time. Check your internet connection and try again.');
+  } catch (e) {
+    throw new Error(e.message || 'Could not reach the OTP provider.');
+  }
+  let data = {};
+  try { data = await res.json(); } catch (e) { /* non-JSON error body — fall through with res.status only */ }
+  if (!res.ok || data.type === 'error') {
+    throw new Error(data.message || `MSG91 error (HTTP ${res.status})`);
+  }
+  return data;
 }
-const OTP_TIMEOUT_MSG = 'The OTP provider did not respond in time. This is almost never a connectivity issue — check that this app\'s domain is added to Allowed Domains for the widget in the MSG91 dashboard.';
 function msg91SendOtp(identifier) {
-  return withTimeout(new Promise((resolve, reject) => {
-    if (typeof window.sendOtp !== 'function') return reject(new Error('OTP provider is not available right now.'));
-    window.sendOtp(identifier,
-      (data) => resolve(data),
-      (err) => { const msg = msg91ErrorText(err); console.warn('MSG91 sendOtp failed:', err); reject(new Error(`Could not send the code (${msg})`)); });
-  }), 20000, OTP_TIMEOUT_MSG);
+  return msg91Api(`?mobile=${encodeURIComponent(identifier)}`, { method: 'POST' });
 }
-function msg91VerifyOtp(otp) {
-  return withTimeout(new Promise((resolve, reject) => {
-    if (typeof window.verifyOtp !== 'function') return reject(new Error('OTP provider is not available right now.'));
-    window.verifyOtp(otp,
-      (data) => resolve(data),
-      (err) => { const msg = msg91ErrorText(err); console.warn('MSG91 verifyOtp failed:', err); reject(new Error(msg.toLowerCase().includes('otp') ? msg : `Incorrect or expired code (${msg})`)); });
-  }), 20000, OTP_TIMEOUT_MSG);
+function msg91VerifyOtp(otp, identifier) {
+  return msg91Api(`/verify?mobile=${encodeURIComponent(identifier)}&otp=${encodeURIComponent(otp)}`);
 }
-function msg91RetryOtp() {
-  return withTimeout(new Promise((resolve, reject) => {
-    if (typeof window.retryOtp !== 'function') return reject(new Error('OTP provider is not available right now.'));
-    window.retryOtp(undefined,
-      (data) => resolve(data),
-      (err) => { const msg = msg91ErrorText(err); console.warn('MSG91 retryOtp failed:', err); reject(new Error(`Could not resend (${msg})`)); });
-  }), 20000, OTP_TIMEOUT_MSG);
+function msg91RetryOtp(identifier) {
+  return msg91Api(`/retry?mobile=${encodeURIComponent(identifier)}&retrytype=text`, { method: 'POST' });
 }
 
 /* Remote config — Admin Panel is the source of truth for all of this */
@@ -1147,7 +1124,7 @@ async function doSendOTP(){
 }
 async function doResend(){
   busy('btn-resend',true,'Sending');
-  if(MSG91_READY){ try{ await msg91RetryOtp(); }catch(e){ busy('btn-resend',false,'Resend code'); showDebugError('Could not resend', e); return; } }
+  if(MSG91_READY){ try{ await msg91RetryOtp('91'+LOGIN.phone); }catch(e){ busy('btn-resend',false,'Resend code'); showDebugError('Could not resend', e); return; } }
   else if(FB){ try{ await FB.sendOTP(LOGIN.phone); }catch(e){ toast('Could not resend.','alert'); } }
   else { await API.post(`/auth/${LOGIN.mode}/send-otp`,{phone:LOGIN.phone}); }
   busy('btn-resend',false,'Resend code');
@@ -1164,7 +1141,7 @@ async function doVerifyOTP(){
       // MSG91 verifies the phone number itself (actual SMS, actual code).
       // Profile/wallet/orders still live in local demo storage — see the
       // saveCustomerAccount call below — since no backend is deployed yet.
-      await msg91VerifyOtp(o);
+      await msg91VerifyOtp(o, '91'+LOGIN.phone);
       const existing = getCustomerAccounts()[LOGIN.phone] || {};
       const profile = {
         name: LOGIN.name || existing.name || 'Customer',
