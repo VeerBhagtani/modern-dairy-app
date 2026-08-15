@@ -906,6 +906,7 @@ function paint(){
 function navBar(title, opts={}){
   return `<div class="topbar">
     ${opts.noBack?'':`<button class="iconbtn" onclick="back()" aria-label="Back">${icon('left',22)}</button>`}
+    <img src="${APPCFG.logo}" alt="" style="width:26px;height:26px;object-fit:contain;flex-shrink:0;">
     <div class="grow"><div class="t-lg truncate">${esc(title)}</div>
       ${opts.sub?`<div class="t-sm muted truncate">${esc(opts.sub)}</div>`:''}</div>
     ${opts.action||''}
@@ -1233,10 +1234,13 @@ function scrHome(){
       <!-- Masthead: flat, functional — no decorative gradient/blobs -->
       <header style="background:var(--brand);padding:calc(var(--safe-t) + 16px) 16px 14px;">
         <div class="row between">
-          <div style="min-width:0;">
-            <div class="t-caption" style="color:rgba(255,255,255,.6);">${greet}, ${esc(first)}</div>
-            <div class="truncate t-h3" style="color:#fff;margin-top:1px;">
-              ${esc(S.user?.company || S.user?.name || 'Modern Dairy')}</div>
+          <div class="row gap-10" style="min-width:0;">
+            <img src="${APPCFG.logo}" alt="" style="width:34px;height:34px;object-fit:contain;flex-shrink:0;">
+            <div style="min-width:0;">
+              <div class="t-caption" style="color:rgba(255,255,255,.6);">${greet}, ${esc(first)}</div>
+              <div class="truncate t-h3" style="color:#fff;margin-top:1px;">
+                ${esc(S.user?.company || S.user?.name || 'Modern Dairy')}</div>
+            </div>
           </div>
           <div class="row gap-8">
             ${isB2B()?`<span class="t-caption" style="color:#fff;background:rgba(255,255,255,.14);
@@ -1402,10 +1406,13 @@ function scrCatalogue(){
   return `<div class="screen on">
     <header class="appbar">
       <div class="appbar-row mb-12">
-        <div class="grow" style="min-width:0;">
-          <div class="t-xs" style="color:rgba(255,255,255,.62);font-weight:600;letter-spacing:.04em;text-transform:uppercase;">
-            ${isB2B()?'Business account':'Personal account'}</div>
-          <div class="t-lg truncate" style="color:#fff;">${esc(S.user?.company || S.user?.name || 'Modern Dairy')}</div>
+        <div class="row gap-10 grow" style="min-width:0;">
+          <img src="${APPCFG.logo}" alt="" style="width:28px;height:28px;object-fit:contain;flex-shrink:0;">
+          <div class="grow" style="min-width:0;">
+            <div class="t-xs" style="color:rgba(255,255,255,.62);font-weight:600;letter-spacing:.04em;text-transform:uppercase;">
+              ${isB2B()?'Business account':'Personal account'}</div>
+            <div class="t-lg truncate" style="color:#fff;">${esc(S.user?.company || S.user?.name || 'Modern Dairy')}</div>
+          </div>
         </div>
         <button class="iconbtn on-brand" onclick="go('cart')" style="position:relative;" aria-label="Cart">
           ${icon('cart',22)}
