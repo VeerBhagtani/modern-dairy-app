@@ -15,13 +15,6 @@
         { "fieldPath": "customerId", "order": "ASCENDING" },
         { "fieldPath": "idempotencyKey", "order": "ASCENDING" }
       ]
-    },
-    {
-      "collectionGroup": "customers",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "phone", "order": "ASCENDING" }
-      ]
     }
   ],
   "fieldOverrides": []
