@@ -515,23 +515,38 @@ try {
   }
 } catch (e) { console.warn('MSG91 widget failed to initialise, falling back to demo OTP:', e); }
 
+// If MSG91's network call stalls (bad connection, blocked request, widget
+// misconfiguration) neither callback ever fires and the caller would hang
+// forever with the button stuck on "Sending" — wrap every call with a hard
+// timeout so the UI always recovers with a clear, actionable error instead.
+function withTimeout(promise, ms, timeoutMessage) {
+  let timer;
+  const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(timeoutMessage)), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 function msg91SendOtp(identifier) {
-  return new Promise((resolve, reject) => {
+  return withTimeout(new Promise((resolve, reject) => {
     if (typeof window.sendOtp !== 'function') return reject(new Error('OTP provider is not available right now.'));
-    window.sendOtp(identifier, (data) => resolve(data), (err) => reject(new Error(err?.message || 'Could not send the code.')));
-  });
+    window.sendOtp(identifier,
+      (data) => resolve(data),
+      (err) => { console.warn('MSG91 sendOtp failed:', err); reject(new Error(err?.message || 'Could not send the code. Check your connection and try again.')); });
+  }), 20000, 'Could not reach the OTP provider — check your connection and try again.');
 }
 function msg91VerifyOtp(otp) {
-  return new Promise((resolve, reject) => {
+  return withTimeout(new Promise((resolve, reject) => {
     if (typeof window.verifyOtp !== 'function') return reject(new Error('OTP provider is not available right now.'));
-    window.verifyOtp(otp, (data) => resolve(data), (err) => reject(new Error(err?.message || 'Incorrect or expired code.')));
-  });
+    window.verifyOtp(otp,
+      (data) => resolve(data),
+      (err) => { console.warn('MSG91 verifyOtp failed:', err); reject(new Error(err?.message || 'Incorrect or expired code.')); });
+  }), 20000, 'Could not reach the OTP provider — check your connection and try again.');
 }
 function msg91RetryOtp() {
-  return new Promise((resolve, reject) => {
+  return withTimeout(new Promise((resolve, reject) => {
     if (typeof window.retryOtp !== 'function') return reject(new Error('OTP provider is not available right now.'));
-    window.retryOtp(undefined, (data) => resolve(data), (err) => reject(new Error(err?.message || 'Could not resend.')));
-  });
+    window.retryOtp(undefined,
+      (data) => resolve(data),
+      (err) => { console.warn('MSG91 retryOtp failed:', err); reject(new Error(err?.message || 'Could not resend.')); });
+  }), 20000, 'Could not reach the OTP provider — check your connection and try again.');
 }
 
 /* Remote config — Admin Panel is the source of truth for all of this */
@@ -910,7 +925,7 @@ let LOGIN = {mode:'b2b', step:'entry', gstin:'', company:'', gstData:null, phone
 function scrLogin(){
   return `<div class="screen on" style="background:var(--surface);">
     <div style="padding:calc(var(--safe-t) + 40px) 24px 24px;">
-      <img src="${APPCFG.logo}" alt="" style="width:52px;height:52px;object-fit:contain;margin-bottom:20px;">
+      <img src="${APPCFG.logo}" alt="" onclick="tapLogo()" style="width:52px;height:52px;object-fit:contain;margin-bottom:20px;-webkit-tap-highlight-color:transparent;">
       <div class="t-2xl mb-4">Order for your business</div>
       <div class="t-md muted">Wholesale dairy, frozen and beverage supply across Pune.</div>
     </div>
@@ -922,12 +937,23 @@ function scrLogin(){
       <div id="login-body">${LOGIN.mode==='b2b'?b2bForm():b2cForm()}</div>
     </div>
     <div style="padding:16px 24px calc(20px + var(--safe-b));border-top:1px solid var(--line-2);">
-      <div class="t-xs muted-2 center mb-12">By continuing you agree to Modern Dairy's terms of supply.<br>FSSAI licensed · Est. 1975</div>
-      <button class="btn btn-quiet" onclick="go('adminLogin')">${icon('shield',16)} Sign in as admin</button>
+      <div class="t-xs muted-2 center">By continuing you agree to Modern Dairy's terms of supply.<br>FSSAI licensed · Est. 1975</div>
     </div>
   </div>`;
 }
 function setLoginMode(m){ LOGIN.mode=m; LOGIN.step='entry'; paint(); }
+
+// No visible "admin" entry point anywhere in the UI — tapping the logo 5
+// times within 2 seconds opens the super admin sign-in instead. Deliberately
+// undiscoverable: an attacker scanning the app has no button, no label, no
+// hint that an admin path exists at all.
+let LOGO_TAPS = { count: 0, at: 0 };
+function tapLogo(){
+  const now = Date.now();
+  LOGO_TAPS.count = (now - LOGO_TAPS.at < 2000) ? LOGO_TAPS.count + 1 : 1;
+  LOGO_TAPS.at = now;
+  if(LOGO_TAPS.count >= 5){ LOGO_TAPS.count = 0; go('adminLogin'); }
+}
 
 function b2bForm(){
   if(LOGIN.step==='otp') return otpForm();
