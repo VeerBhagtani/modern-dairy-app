@@ -353,13 +353,24 @@ window.__fbReady = new Promise(r => { window.__fbResolve = r; });
    Paste the same config you used in the admin panel. Leave the
    placeholders and the app runs in offline demo mode instead.
    ═══════════════════════════════════════════════════════════════ */
+// Real values for the modern-dairy-pune Firebase Web app (registered 2026-08-15) —
+// commented out because Phone Auth on this project currently requires reCAPTCHA
+// Enterprise, which requires the Blaze billing plan (confirmed via the Identity
+// Toolkit + Cloud Billing APIs: billingEnabled=false, recaptchaenterprise.googleapis.com
+// not enabled). Uncomment once Blaze is on, and OTP goes live with no other changes.
+//   apiKey:            "AIzaSyD-3RNHrI9ZPmdTioLiuCi2gjwdNXZH8HI",
+//   authDomain:        "modern-dairy-pune.firebaseapp.com",
+//   projectId:         "modern-dairy-pune",
+//   storageBucket:     "modern-dairy-pune.firebasestorage.app",
+//   messagingSenderId: "711745048614",
+//   appId:             "1:711745048614:web:29e8641911c62c1bb856e7",
 const firebaseConfig = {
-  apiKey:            "AIzaSyD-3RNHrI9ZPmdTioLiuCi2gjwdNXZH8HI",
-  authDomain:        "modern-dairy-pune.firebaseapp.com",
-  projectId:         "modern-dairy-pune",
-  storageBucket:     "modern-dairy-pune.firebasestorage.app",
-  messagingSenderId: "711745048614",
-  appId:             "1:711745048614:web:29e8641911c62c1bb856e7",
+  apiKey:            "PASTE_API_KEY",
+  authDomain:        "PASTE_PROJECT.firebaseapp.com",
+  projectId:         "PASTE_PROJECT_ID",
+  storageBucket:     "PASTE_PROJECT.appspot.com",
+  messagingSenderId: "PASTE_SENDER_ID",
+  appId:             "PASTE_APP_ID",
 };
 
 if (firebaseConfig.apiKey === "PASTE_API_KEY") {
