@@ -1,0 +1,46 @@
+name: Build iOS App (Simulator)
+
+# Unsigned build for the iOS Simulator only — installable on a real iPhone
+# requires an Apple Developer Program account ($99/yr) for code signing,
+# which this workflow deliberately does not assume. This exists to prove the
+# app builds and runs on iOS before spending on that.
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Add iOS platform
+        run: |
+          npx cap add ios
+          npx cap sync ios
+
+      - name: Build for iOS Simulator (unsigned)
+        working-directory: ios/App
+        run: |
+          xcodebuild -workspace App.xcworkspace -scheme App \
+            -sdk iphonesimulator -configuration Debug \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO
+
+      - name: Zip the .app bundle
+        working-directory: ios/App/build/Build/Products/Debug-iphonesimulator
+        run: zip -r ModernDairy-Simulator.zip App.app
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: modern-dairy-ios-simulator
+          path: ios/App/build/Build/Products/Debug-iphonesimulator/ModernDairy-Simulator.zip
