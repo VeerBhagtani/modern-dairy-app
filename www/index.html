@@ -354,12 +354,12 @@ window.__fbReady = new Promise(r => { window.__fbResolve = r; });
    placeholders and the app runs in offline demo mode instead.
    ═══════════════════════════════════════════════════════════════ */
 const firebaseConfig = {
-  apiKey:            "PASTE_API_KEY",
-  authDomain:        "PASTE_PROJECT.firebaseapp.com",
-  projectId:         "PASTE_PROJECT_ID",
-  storageBucket:     "PASTE_PROJECT.appspot.com",
-  messagingSenderId: "PASTE_SENDER_ID",
-  appId:             "PASTE_APP_ID",
+  apiKey:            "AIzaSyD-3RNHrI9ZPmdTioLiuCi2gjwdNXZH8HI",
+  authDomain:        "modern-dairy-pune.firebaseapp.com",
+  projectId:         "modern-dairy-pune",
+  storageBucket:     "modern-dairy-pune.firebasestorage.app",
+  messagingSenderId: "711745048614",
+  appId:             "1:711745048614:web:29e8641911c62c1bb856e7",
 };
 
 if (firebaseConfig.apiKey === "PASTE_API_KEY") {
@@ -473,6 +473,13 @@ const CATALOGUE={"cow-milk":{"name":"Cow Milk","cat":"dairy","img":"https://res.
    so the Admin Panel can change it without an APK rebuild.
    ═══════════════════════════════════════════════════════════ */
 let FB = null;   // Firebase bridge, resolved during boot
+// Firestore rules currently deny ALL direct client access (by design — only the
+// backend, via the Admin SDK, is meant to touch it, and the backend isn't deployed
+// yet). So even though FB/Firebase Auth is live for real phone-number verification,
+// every FB.* call that reads/writes Firestore must stay off until the backend ships.
+// Flip this to true once the backend is deployed and this app talks to it, or once
+// Firestore rules are updated to allow authenticated client access directly.
+const FIRESTORE_LIVE = false;
 const CONFIG = window.APP_CONFIG;   // build/environment config — see config.js
 
 /* Remote config — Admin Panel is the source of truth for all of this */
@@ -1032,8 +1039,12 @@ async function doVerifyOTP(){
   let r;
   if(FB){
     try{
+      // Real Firebase Auth verifies the phone number itself (actual SMS, actual
+      // code). Profile/wallet/orders still live in local demo storage below —
+      // see FIRESTORE_LIVE — since the backend that would own those in Firestore
+      // isn't deployed yet.
       const u = await FB.verifyOTP(o);
-      const existing = await FB.customer(u.uid) || {};
+      const existing = FIRESTORE_LIVE ? (await FB.customer(u.uid) || {}) : {};
       const profile = {
         name: LOGIN.name || existing.name || 'Customer',
         phone: LOGIN.phone,
@@ -1041,7 +1052,7 @@ async function doVerifyOTP(){
         ...(LOGIN.mode==='b2b' ? { company:LOGIN.company, gstin:LOGIN.gstin } : {}),
         balance: existing.balance ?? 0,
       };
-      await FB.saveCustomer(u.uid, profile);
+      if(FIRESTORE_LIVE) await FB.saveCustomer(u.uid, profile);
       r={success:true,data:{user:{id:u.uid,name:profile.name,phone:profile.phone,
          customerType:profile.type,company:profile.company||null,gstin:profile.gstin||null},
          accessToken:'firebase',refreshToken:'firebase'}};
@@ -1643,7 +1654,7 @@ async function placeOrder(){
     name:S.user?.name, phone:S.user?.phone,
   };
   let r;
-  if(FB){
+  if(FIRESTORE_LIVE && FB){
     try{
       const out = await FB.placeOrder({
         items:payload.items, subtotal:payload.subtotal, gst:payload.gst,
@@ -1714,7 +1725,7 @@ const STATUS = {
   out_for_delivery:{l:'Out for delivery',c:'a'}, delivered:{l:'Delivered',c:'g'}, cancelled:{l:'Cancelled',c:'r'},
 };
 async function loadOrders(){
-  if(FB && S.user?.id){
+  if(FIRESTORE_LIVE && FB && S.user?.id){
     const list = await FB.orders(S.user.id).catch(()=>[]);
     S.orders = list.map(o=>({ ...o, orderNo:o.id,
       placedAt: o.at?.toDate?.()?.toISOString() || new Date().toISOString() }));
@@ -1748,7 +1759,7 @@ function ordersBody(){
 }
 async function openOrder(no){
   if(!no) return;
-  if(FB && S.user?.id){
+  if(FIRESTORE_LIVE && FB && S.user?.id){
     const o=S.orders.find(x=>x.orderNo===no);
     if(o){ S.order=o; go('order'); return; }
   }
@@ -2416,7 +2427,7 @@ Today, the leadership team continues to expand the vision — focusing on innova
    20. WALLET — real ledger, no editable balance
    ═══════════════════════════════════════════════════════════ */
 async function loadWallet(){
-  if(FB && S.user?.id){
+  if(FIRESTORE_LIVE && FB && S.user?.id){
     const c = await FB.customer(S.user.id);
     const txns = await FB.ledger(S.user.id).catch(()=>[]);
     S.wallet = { balance: Number(c?.balance||0),
@@ -2547,7 +2558,7 @@ window.addEventListener('popstate',()=>{ if(NAV.length) back(); });
 async function boot(){
   FB = await (window.__fbReady || Promise.resolve(null));
 
-  if(FB){
+  if(FIRESTORE_LIVE && FB){
     try{
       const [cfg, prods] = await Promise.all([FB.config(), FB.products()]);
       if(cfg && Object.keys(cfg).length) APPCFG = {...APPCFG, ...cfg};
