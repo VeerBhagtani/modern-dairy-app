@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#12294B">
+<meta name="theme-color" content="#047857">
 <title>Modern Dairy — Business Ordering</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:opsz,wght@8..144,400;8..144,500;8..144,600;8..144,700;8..144,800&display=swap" rel="stylesheet">
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <script src="config.js"></script>
 <style>
@@ -16,20 +16,20 @@
    One scale for type, space, radius, elevation. No exceptions.
    ═══════════════════════════════════════════════════════════ */
 :root{
-  /* ── INK · slate-cool, AA verified on porcelain base ─────── */
-  --ink:#161B22; --ink-2:#4B5768; --ink-3:#7C8798; --ink-4:#B4BCC8;
-  /* ── SURFACE · porcelain, not cream, not sterile white ───── */
-  --bg:#F1F2EE; --surface:#FFFFFF; --surface-2:#F7F8F5;
-  --line:#DEE1DB; --line-2:#ECEEE9;
-  /* ── BRAND · deep ink-navy + Modern Dairy crimson accent ── */
-  --brand:#0E2036; --brand-2:#153A63; --brand-3:#2A5B93;
-  --brand-tint:#E8EFF6; --brand-line:#C7D6E6;
-  --crimson:#9E2B22; --crimson-tint:#FBEBE8;
-  /* ── SEMANTIC · milk-fresh green, ghee-gold ──────────────── */
-  --fresh:#116B3A; --fresh-tint:#E4F3EA;
-  --gold:#8A5F14;  --gold-tint:#FAF1DE;
-  --warn:#93520A;  --warn-tint:#FBF0DF;
-  --bad:#9C2B22;   --bad-tint:#FBEAE8;
+  /* ── INK · slate, AA verified on porcelain base ──────────── */
+  --ink:#0F172A; --ink-2:#475569; --ink-3:#7C8798; --ink-4:#B4BCC8;
+  /* ── SURFACE · soft mint-porcelain, not sterile white ────── */
+  --bg:#F3F8F6; --surface:#FFFFFF; --surface-2:#EEF9F3;
+  --line:#DCE7E1; --line-2:#E7F2EC;
+  /* ── BRAND · fresh dairy emerald + food amber accent ─────── */
+  --brand:#047857; --brand-2:#065F46; --brand-3:#10B981;
+  --brand-tint:#ECFDF5; --brand-line:#A7D8C4;
+  --crimson:#DC2626; --crimson-tint:#FEE2E2;
+  /* ── SEMANTIC · dairy-fresh green, ghee-amber ────────────── */
+  --fresh:#047857; --fresh-tint:#DCFCE7;
+  --gold:#92400E;  --gold-tint:#FEF3E2;
+  --warn:#92400E;  --warn-tint:#FEF3E2;
+  --bad:#DC2626;   --bad-tint:#FEE2E2;
   /* ── TYPE SCALE · display → caption, distinct roles ──────── */
   --t-caption:10px; --t-xs:11px; --t-sm:12px; --t-md:13px; --t-base:14.5px;
   --t-lg:16.5px; --t-xl:19px; --t-h3:21px; --t-h2:25px; --t-h1:30px; --t-display:34px;
@@ -37,20 +37,20 @@
   /* ── RADIUS · restrained, product-not-toy ────────────────── */
   --r-sm:6px; --r:10px; --r-lg:14px;
   /* ── ELEVATION · low-contrast, functional not decorative ── */
-  --e-1:0 1px 2px rgba(14,18,25,.06);
-  --e-2:0 1px 2px rgba(14,18,25,.05), 0 4px 10px rgba(14,18,25,.06);
-  --e-3:0 8px 24px rgba(14,32,54,.14);
+  --e-1:0 1px 2px rgba(5,20,15,.06);
+  --e-2:0 1px 2px rgba(5,20,15,.05), 0 4px 10px rgba(5,20,15,.06);
+  --e-3:0 8px 24px rgba(4,60,40,.14);
   /* ── MOTION · quick, workmanlike ─────────────────────────── */
   --ease:cubic-bezier(.4,0,.2,1);
   --fast:110ms; --mid:170ms; --slow:240ms;
-  /* ── CATEGORY ACCENTS · muted, functional tags not decor ── */
-  --c-dairy:#153A63;     --c-dairy-t:#E8EFF6;
-  --c-curd:#0F5C56;      --c-curd-t:#E3F1EE;
-  --c-beverages:#8A4A16; --c-beverages-t:#F7EDE1;
-  --c-sweets:#7C2955;    --c-sweets-t:#F5E9EF;
-  --c-frozen:#175577;    --c-frozen-t:#E6EFF4;
-  --font:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  --font-display:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  /* ── CATEGORY ACCENTS · appetizing, functional tags not decor */
+  --c-dairy:#0369A1;     --c-dairy-t:#E0F2FE;
+  --c-curd:#0F766E;      --c-curd-t:#CCFBF1;
+  --c-beverages:#C2410C; --c-beverages-t:#FFEDD5;
+  --c-sweets:#BE185D;    --c-sweets-t:#FCE7F3;
+  --c-frozen:#4338CA;    --c-frozen-t:#E0E7FF;
+  --font:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --font-display:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   --tap:44px;
   --safe-b:env(safe-area-inset-bottom,0px);
   --safe-t:env(safe-area-inset-top,0px);
@@ -3091,7 +3091,7 @@ boot();
       el.id = 'native-offline-banner';
       el.textContent = 'No internet connection — some features are unavailable';
       el.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:9999;'
-        + 'background:#A82820;color:#fff;font:600 12px/1.4 sans-serif;'
+        + 'background:#DC2626;color:#fff;font:600 12px/1.4 sans-serif;'
         + 'text-align:center;padding:calc(6px + env(safe-area-inset-top,0px)) 12px 6px;';
       document.body.appendChild(el);
     } else if (!offline && el) {
