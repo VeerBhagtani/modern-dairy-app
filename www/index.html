@@ -484,7 +484,7 @@ if (firebaseConfig.apiKey === "PASTE_API_KEY") {
    create here — never read/update/delete — see backend/firestore.rules. ── */
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { getFirestore, collection, addDoc, doc, updateDoc, setDoc, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 const mirrorConfig = {
   apiKey: "AIzaSyD-3RNHrI9ZPmdTioLiuCi2gjwdNXZH8HI",
@@ -587,6 +587,17 @@ window.listenToOrderStatus = function(firestoreId, onChange) {
 window.cancelOrderInFirestore = async function(firestoreId) {
   await ensureSignedIn();
   await updateDoc(doc(mirrorDb, 'orders', firestoreId), { status: 'cancelled', cancelledAt: serverTimestamp() });
+};
+
+// Registers this device's FCM token so the broadcast relay (a scheduled
+// GitHub Action — see backend/scripts/send-broadcast-push.js, no Cloud
+// Function/Blaze needed) knows where to push admin broadcasts. Doc ID is
+// the token itself, so re-registering just overwrites in place.
+window.registerPushToken = async function(fcmToken, audience) {
+  try {
+    await ensureSignedIn();
+    await setDoc(doc(mirrorDb, 'device_tokens', fcmToken), { token: fcmToken, audience, updatedAt: serverTimestamp() });
+  } catch (e) { console.warn('Could not register push token:', e); }
 };
 </script>
 <script>
@@ -1514,6 +1525,7 @@ async function doVerifyOTP(){
   localStorage.setItem('mda_refresh',S.refresh);
   await Promise.all([loadWallet(), loadOrders(), loadBroadcasts()]);
   S.tab='home'; NAV.length=0; go('home',{replace:true});
+  initPushNotifications();
 }
 
 function scrPending(){
@@ -3264,8 +3276,40 @@ async function boot(){
   S.screen='home'; S.tab='home'; paint();
   await Promise.all([loadWallet(), loadOrders(), loadBroadcasts()]);
   paint();
+  initPushNotifications();
 }
 boot();
+
+/* ── Native push notifications (Capacitor PushNotifications plugin, no-op
+   on plain web / if permission is denied). Registers this device's FCM
+   token against the signed-in customer's account type so admin broadcasts
+   (legal/admin/ "Broadcasts" tab) reach it — see window.registerPushToken
+   in the module script above and backend/scripts/send-broadcast-push.js
+   for how those actually get sent (a free scheduled relay, not a paid
+   Cloud Function). ── */
+let PUSH_INIT_DONE = false;
+async function initPushNotifications(){
+  if(PUSH_INIT_DONE || !S.user) return;
+  const Push = window.Capacitor?.Plugins?.PushNotifications;
+  if(!Push) return; // plain web / plugin unavailable — nothing to do
+  PUSH_INIT_DONE = true;
+  try{
+    let perm = await Push.checkPermissions();
+    if(perm.receive === 'prompt') perm = await Push.requestPermissions();
+    if(perm.receive !== 'granted') return;
+    Push.addListener('registration', token => {
+      if(token?.value && window.registerPushToken) window.registerPushToken(token.value, isB2B()?'b2b':'b2c');
+    });
+    Push.addListener('registrationError', err => console.warn('Push registration failed:', err));
+    Push.addListener('pushNotificationReceived', n => {
+      // App was open when it arrived — Android won't auto-show a system
+      // banner in that case, so surface it the same way other in-app
+      // messages appear.
+      toast(n?.body || n?.title || 'New notification', 'check');
+    });
+    await Push.register();
+  }catch(e){ console.warn('Could not set up push notifications:', e); }
+}
 
 /* ── Native offline banner (Capacitor Network plugin, no-op on plain web) ── */
 (function(){

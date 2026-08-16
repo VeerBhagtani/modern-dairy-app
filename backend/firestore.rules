@@ -67,6 +67,18 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
+    // FCM device tokens, keyed by the token itself so re-registering the
+    // same device overwrites in place instead of piling up duplicates. Any
+    // signed-in (including anonymous) client can register/update its own
+    // token; only the admin (and the server-side broadcast relay, which
+    // uses a service account and bypasses rules entirely) can read them.
+    match /device_tokens/{tokenId} {
+      allow read: if isAdmin();
+      allow write: if request.auth != null
+                   && request.resource.data.keys().hasOnly(['token', 'audience', 'updatedAt'])
+                   && request.resource.data.token is string
+                   && request.resource.data.audience in ['b2b', 'b2c'];
+    }
 
     // Everything else (customers, wallet ledgers, admin audit log, OTP
     // challenges) holds personal/financial data — admin-only, no exceptions.

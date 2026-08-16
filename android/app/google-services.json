@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "711745048614",
+    "project_id": "modern-dairy-pune",
+    "storage_bucket": "modern-dairy-pune.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:711745048614:android:bf48d4a8c25a3c4eb856e7",
+        "android_client_info": {
+          "package_name": "in.moderndairy.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "711745048614-535oj3ggq41j3t23eoeki3loige2vt8h.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBSEh82ebphE4wH8pXC_EJRYupSMmwDDzk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "711745048614-535oj3ggq41j3t23eoeki3loige2vt8h.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
