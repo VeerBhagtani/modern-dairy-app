@@ -595,8 +595,12 @@ window.cancelOrderInFirestore = async function(firestoreId) {
 // the token itself, so re-registering just overwrites in place.
 window.registerPushToken = async function(fcmToken, audience) {
   try {
-    await ensureSignedIn();
-    await setDoc(doc(mirrorDb, 'device_tokens', fcmToken), { token: fcmToken, audience, updatedAt: serverTimestamp() });
+    const user = await ensureSignedIn();
+    // uid lets the admin target a single customer's device directly (e.g.
+    // "notify this specific order's customer") instead of only broadcasting
+    // to an entire audience — same uid this device's orders are created
+    // under (buildOrderDoc's createdByUid), since both use ensureSignedIn().
+    await setDoc(doc(mirrorDb, 'device_tokens', fcmToken), { token: fcmToken, audience, uid: user.uid, updatedAt: serverTimestamp() });
   } catch (e) { console.warn('Could not register push token:', e); }
 };
 </script>
