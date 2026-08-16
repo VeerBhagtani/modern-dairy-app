@@ -192,7 +192,7 @@ svg{display:block;flex-shrink:0;}
 .prow:active{background:var(--line-2);}
 .prow{transition:background var(--fast) linear;}
 .pthumb{
-  width:76px;height:76px;border-radius:var(--r-sm);background:var(--surface-2);
+  width:92px;height:92px;border-radius:var(--r-sm);background:var(--surface-2);
   border:1px solid var(--line-2);overflow:hidden;flex-shrink:0;
 }
 .pthumb img{width:100%;height:100%;object-fit:contain;padding:3px;}
@@ -1062,7 +1062,7 @@ function paint(){
 function navBar(title, opts={}){
   return `<div class="topbar">
     ${opts.noBack?'':`<button class="iconbtn" onclick="back()" aria-label="Back">${icon('left',22)}</button>`}
-    <img src="${APPCFG.logo}" alt="" style="width:46px;height:46px;object-fit:contain;flex-shrink:0;">
+    <img src="${APPCFG.logo}" alt="" style="width:60px;height:60px;object-fit:contain;flex-shrink:0;">
     <div class="grow"><div class="t-lg truncate">${esc(title)}</div>
       ${opts.sub?`<div class="t-sm muted truncate">${esc(opts.sub)}</div>`:''}</div>
     ${opts.action||''}
@@ -1096,7 +1096,7 @@ let LOGIN = {mode:'b2b', authMode:'signup', step:'entry', gstin:'', company:'', 
 function scrLogin(){
   return `<div class="screen on" style="background:var(--surface);">
     <div style="padding:calc(var(--safe-t) + 40px) 24px 24px;">
-      <img src="${APPCFG.logo}" alt="" onclick="tapLogo()" style="width:88px;height:88px;object-fit:contain;margin-bottom:20px;-webkit-tap-highlight-color:transparent;">
+      <img src="${APPCFG.logo}" alt="" onclick="tapLogo()" style="width:112px;height:112px;object-fit:contain;margin-bottom:20px;-webkit-tap-highlight-color:transparent;">
       <div class="t-2xl mb-4">${LOGIN.authMode==='signin'?'Welcome back':'Order for your business'}</div>
       <div class="t-md muted">Wholesale dairy, frozen and beverage supply across Pune.</div>
     </div>
@@ -1541,7 +1541,7 @@ function scrHome(){
       <header style="background:var(--brand);padding:calc(var(--safe-t) + 16px) 16px 14px;">
         <div class="row between">
           <div class="row gap-10" style="min-width:0;">
-            <img src="${APPCFG.logo}" alt="" style="width:56px;height:56px;object-fit:contain;flex-shrink:0;">
+            <img src="${APPCFG.logo}" alt="" style="width:68px;height:68px;object-fit:contain;flex-shrink:0;">
             <div style="min-width:0;">
               <div class="t-caption" style="color:rgba(255,255,255,.6);">${greet}, ${esc(first)}</div>
               <div class="truncate t-h3" style="color:#fff;margin-top:1px;">
@@ -1713,7 +1713,7 @@ function scrCatalogue(){
     <header class="appbar">
       <div class="appbar-row mb-12">
         <div class="row gap-10 grow" style="min-width:0;">
-          <img src="${APPCFG.logo}" alt="" style="width:48px;height:48px;object-fit:contain;flex-shrink:0;">
+          <img src="${APPCFG.logo}" alt="" style="width:60px;height:60px;object-fit:contain;flex-shrink:0;">
           <div class="grow" style="min-width:0;">
             <div class="t-xs" style="color:rgba(255,255,255,.62);font-weight:600;letter-spacing:.04em;text-transform:uppercase;">
               ${isB2B()?'Business account':'Personal account'}</div>
@@ -2178,12 +2178,14 @@ const STATUS = {
   denied:{l:'Denied',c:'r'},
 };
 async function loadOrders(){
-  if(FIRESTORE_LIVE && FB && S.user?.id){
-    const list = await FB.orders(S.user.id).catch(()=>[]);
-    S.orders = list.map(o=>({ ...o, orderNo:o.id,
-      placedAt: o.at?.toDate?.()?.toISOString() || new Date().toISOString() }));
-    return;
-  }
+  // Orders live in DB.orders (localStorage, 'mda_orders') — the durable,
+  // correctly-keyed record of what this device actually ordered, including
+  // the firestoreId patched on at placement time for live status/cancel.
+  // FB.orders(uid) was a dead end: it queried Firestore docs by a 'uid'
+  // field that mirrorOrderToFirestore() never writes (it writes
+  // createdByUid, under a separate anonymous auth session), so it always
+  // returned an empty list and silently wiped out the real local order
+  // history every time this ran — this was the "can't track my order" bug.
   const r=await API.get('/orders'); S.orders=r.success?r.data:[];
 }
 function scrOrders(){
@@ -2249,8 +2251,16 @@ async function doCancelOrder(){
   if(idx!==-1){ list[idx] = {...list[idx], status:'cancelled'}; DB.orders = list; }
   const oi = S.orders.findIndex(x=>x.orderNo===o.orderNo);
   if(oi!==-1) S.orders[oi] = {...S.orders[oi], status:'cancelled'};
-  closeSheet(); paint();
-  toast('Order cancelled','check');
+  paint();
+  // Cancelling in-app is the last step of the flow, not the whole thing —
+  // the customer still needs to speak to someone to close it out (refund,
+  // confirming nothing's already left the shop, etc).
+  openSheet(`<div class="sheet-head"><div class="t-lg">Order cancelled</div>
+      <button class="iconbtn" onclick="closeSheet()">${icon('close',20)}</button></div>
+    <div class="section">
+      <div class="banner warn mb-16">${icon('alert',17)}<div>One last step — please call us to confirm the cancellation${o.payment!=='cod'?' and start your refund':''}.</div></div>
+      <a class="btn" href="tel:${APPCFG.supportPhone}">${icon('phone',18)} Call ${esc(APPCFG.supportPhone)}</a>
+    </div>`);
 }
 function confirmCancelOrder(){
   const o=S.order; if(!o) return;
@@ -2985,7 +2995,7 @@ Today, the leadership team continues to expand the vision — focusing on innova
   ];
   return `<div class="screen on">${navBar('About Modern Dairy')}
     <div class="scroll section">
-      <img src="${APPCFG.logo}" style="width:76px;height:76px;object-fit:contain;margin-bottom:16px;">
+      <img src="${APPCFG.logo}" style="width:96px;height:96px;object-fit:contain;margin-bottom:16px;">
       <div class="t-xl mb-16">Our journey</div>
       ${chapters.map(c=>`
         <div class="mb-24">
