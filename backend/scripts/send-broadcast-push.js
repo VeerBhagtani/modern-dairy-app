@@ -110,12 +110,8 @@ async function main() {
   if (!pending.length) { console.log('No new broadcasts to push.'); return; }
 
   for (const b of pending) {
-    // targetUid (set from the admin website's per-order "Send notification")
-    // means this is aimed at one specific customer, not an audience.
-    const targets = b.targetUid
-      ? deviceTokens.filter(d => d.uid === b.targetUid)
-      : deviceTokens.filter(d => b.audience === 'all' || d.audience === b.audience);
-    console.log(`Broadcast ${b.id} ("${b.message}") -> ${targets.length} device(s), ${b.targetUid ? 'targetUid='+b.targetUid : 'audience='+b.audience}`);
+    const targets = deviceTokens.filter(d => b.audience === 'all' || d.audience === b.audience);
+    console.log(`Broadcast ${b.id} ("${b.message}") -> ${targets.length} device(s), audience=${b.audience}`);
     let sent = 0, failed = 0;
     for (const d of targets) {
       const result = await sendPush(token, d.token, 'Modern Dairy', b.message);

@@ -281,16 +281,9 @@ function openModal(id){
       <input id="deny-name" placeholder="Your name">
       <textarea id="deny-reason" placeholder="Reason for denying this order" rows="3" style="width:100%;margin:8px 0;padding:8px;border:1px solid var(--line);border-radius:8px;font:inherit;"></textarea>
       <button id="btn-deny-confirm" class="btn-sm" style="width:100%;background:var(--bad);color:#fff;border-color:var(--bad);">Confirm denial</button>
-    </div>`}
-    ${o.createdByUid ? `
-    <div class="muted" style="margin:14px 0 4px;font-weight:600;font-size:.85rem;">NOTIFY CUSTOMER</div>
-    <textarea id="notify-message" placeholder="e.g. Running 20 min late today, sorry!" rows="2" style="width:100%;margin-bottom:8px;padding:8px;border:1px solid var(--line);border-radius:8px;font:inherit;"></textarea>
-    <button id="btn-notify" class="btn-quiet btn-sm" style="width:100%;">Send push notification</button>
-    <span class="ok-msg" id="notify-sent" style="display:none;">Sent — should reach their phone within a few minutes ✓</span>` : ''}`;
+    </div>`}`;
   document.getElementById('btn-close').onclick = closeModal;
   document.querySelectorAll('#modal-content [data-status]').forEach(b => b.onclick = () => setStatus(id, b.dataset.status));
-  const notifyBtn = document.getElementById('btn-notify');
-  if(notifyBtn) notifyBtn.onclick = () => sendOrderNotification(id, o.createdByUid);
   const denyBtn = document.getElementById('btn-deny');
   if(denyBtn) denyBtn.onclick = () => { denyBtn.style.display='none'; document.getElementById('deny-form').style.display='block'; };
   const denyConfirm = document.getElementById('btn-deny-confirm');
@@ -316,25 +309,6 @@ async function denyOrder(id, deniedBy, deniedReason){
     closeModal();
   }catch(e){ alert('Could not deny order: ' + e.message); }
 }
-// Human-triggered, per-order push — not automatic on status change. Reuses
-// the 'broadcasts' collection with a targetUid instead of an audience; the
-// scheduled relay (backend/scripts/send-broadcast-push.js) treats that as
-// "send to this one customer's device(s)" rather than a whole audience.
-async function sendOrderNotification(orderId, targetUid){
-  const input = document.getElementById('notify-message');
-  const message = input.value.trim();
-  if(!message){ alert('Enter a message to send.'); return; }
-  const btn = document.getElementById('btn-notify');
-  try{
-    if(btn) btn.disabled = true;
-    await addDoc(collection(db, 'broadcasts'), { message, targetUid, createdAt: serverTimestamp() });
-    input.value = '';
-    const msg = document.getElementById('notify-sent');
-    if(msg) msg.style.display = 'inline';
-  }catch(e){ alert('Could not send: ' + e.message); }
-  finally{ if(btn) btn.disabled = false; }
-}
-
 function startOrdersListener(){
   const q = query(collection(db, 'orders'), orderBy('placedAt', 'desc'), limit(200));
   unsubOrders = onSnapshot(q, snap => {
