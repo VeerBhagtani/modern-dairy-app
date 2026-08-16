@@ -506,7 +506,7 @@ window.mirrorOrderToFirestore = async function(order) {
       gst: order.gst, delivery: order.delivery, total: order.total,
       payment: order.payment, customerType: order.customerType,
       company: order.company || null, gstin: order.gstin || null,
-      name: order.name || null, phone: order.phone || null,
+      name: order.name || null, phone: order.phone || null, address: order.address || null,
       status: 'placed', placedAt: serverTimestamp(),
     });
   } catch (e) {
@@ -1016,7 +1016,7 @@ function renderTabBadge(){
 /* ═══════════════════════════════════════════════════════════
    11. LOGIN
    ═══════════════════════════════════════════════════════════ */
-let LOGIN = {mode:'b2b', authMode:'signup', step:'entry', gstin:'', company:'', gstData:null, phone:'', name:''};
+let LOGIN = {mode:'b2b', authMode:'signup', step:'entry', gstin:'', company:'', gstData:null, phone:'', name:'', address:''};
 
 function scrLogin(){
   return `<div class="screen on" style="background:var(--surface);">
@@ -1067,6 +1067,9 @@ function b2bForm(){
       <div class="phone-field"><span class="phone-cc">+91</span>
       <input id="f-phone" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit number" value="${esc(LOGIN.phone)}"></div>
       <div class="hint" id="h-phone">We'll send a one-time code to verify this number.</div></div>
+    <div class="field"><label class="label">Delivery address</label>
+      <textarea class="input" id="f-address" rows="2" placeholder="Shop/warehouse address, area, landmark, Pune - PIN code">${esc(LOGIN.address)}</textarea>
+      <div class="hint" id="h-address">Where should we deliver your orders?</div></div>
     ${passwordField()}
     <button class="btn" id="btn-reg" onclick="doB2BRegister()">Continue</button>
     <button class="btn btn-quiet mt-8" onclick="LOGIN.step='entry';paint()">Back</button>`;
@@ -1090,6 +1093,9 @@ function b2cForm(){
       <div class="phone-field"><span class="phone-cc">+91</span>
       <input id="f-phone" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit number" value="${esc(LOGIN.phone)}"></div>
       <div class="hint" id="h-phone">We'll send a one-time code to verify this number.</div></div>
+    <div class="field"><label class="label">Delivery address</label>
+      <textarea class="input" id="f-address" rows="2" placeholder="House/flat, area, landmark, Pune - PIN code">${esc(LOGIN.address)}</textarea>
+      <div class="hint" id="h-address">Where should we deliver your orders?</div></div>
     ${passwordField()}
     <button class="btn" id="btn-otp" onclick="doSendOTP()">Send code</button>`;
 }
@@ -1114,7 +1120,7 @@ async function doSignIn(){
   if(!existing){ setErr('f-password','h-password','No account found for this number. Switch to "New account" to sign up.'); return; }
   if(pw !== existing.password){ setErr('f-password','h-password','Incorrect password.'); return; }
   LOGIN.name=existing.name||''; LOGIN.phone=p; LOGIN.password=pw;
-  LOGIN.company=existing.company||''; LOGIN.gstin=existing.gstin||'';
+  LOGIN.company=existing.company||''; LOGIN.gstin=existing.gstin||''; LOGIN.address=existing.address||'';
   if(existing.type) LOGIN.mode=existing.type;
   const btn=document.getElementById('btn-signin'); btn.dataset.lbl='Sign in';
   busy('btn-signin',true,'Sending code');
@@ -1292,11 +1298,13 @@ function checkLoginPassword(phone){
 async function doB2BRegister(){
   const n=document.getElementById('f-name').value.trim();
   const p=document.getElementById('f-phone').value.trim();
+  const addr=document.getElementById('f-address').value.trim();
   if(!n){ toast('Enter the contact person name','alert'); return; }
   if(!/^[6-9]\d{9}$/.test(p)){ setErr('f-phone','h-phone','Enter a valid 10-digit Indian mobile number.'); return; }
+  if(!addr){ setErr('f-address','h-address','Enter a delivery address.'); return; }
   const pw = checkLoginPassword(p);
   if(pw===null) return;
-  LOGIN.name=n; LOGIN.phone=p; LOGIN.password=pw;
+  LOGIN.name=n; LOGIN.phone=p; LOGIN.password=pw; LOGIN.address=addr;
   const btn=document.getElementById('btn-reg'); btn.dataset.lbl='Continue';
   busy('btn-reg',true,'Verifying account');
   if(OTP_READY){
@@ -1319,11 +1327,13 @@ async function doB2BRegister(){
 async function doSendOTP(){
   const n=document.getElementById('f-name').value.trim();
   const p=document.getElementById('f-phone').value.trim();
+  const addr=document.getElementById('f-address').value.trim();
   if(!n){ toast('Enter your name','alert'); return; }
   if(!/^[6-9]\d{9}$/.test(p)){ setErr('f-phone','h-phone','Enter a valid 10-digit Indian mobile number.'); return; }
+  if(!addr){ setErr('f-address','h-address','Enter a delivery address.'); return; }
   const pw = checkLoginPassword(p);
   if(pw===null) return;
-  LOGIN.name=n; LOGIN.phone=p; LOGIN.password=pw;
+  LOGIN.name=n; LOGIN.phone=p; LOGIN.password=pw; LOGIN.address=addr;
   const btn=document.getElementById('btn-otp'); btn.dataset.lbl='Send code';
   busy('btn-otp',true,'Sending');
   if(OTP_READY){
@@ -1372,10 +1382,11 @@ async function doVerifyOTP(){
         name: LOGIN.name || existing.name || 'Customer',
         phone: LOGIN.phone,
         type: LOGIN.mode==='b2b' ? 'b2b' : 'b2c',
+        address: LOGIN.address || existing.address || '',
         ...(LOGIN.mode==='b2b' ? { company:LOGIN.company, gstin:LOGIN.gstin } : {}),
       };
       r={success:true,data:{user:{id:'local.'+LOGIN.phone,name:profile.name,phone:profile.phone,
-         customerType:profile.type,company:profile.company||null,gstin:profile.gstin||null},
+         customerType:profile.type,company:profile.company||null,gstin:profile.gstin||null,address:profile.address},
          accessToken:'demo.'+Date.now(),refreshToken:'demo.r.'+Date.now()}};
     }catch(e){
       busy('btn-verify',false,'Verify and continue');
@@ -1415,7 +1426,7 @@ async function doVerifyOTP(){
   }
   busy('btn-verify',false,'Verify and continue');
   if(!r.success){ setErr('f-otp','h-otp', r.message); return; }
-  if(LOGIN.phone && LOGIN.password) saveCustomerAccount(LOGIN.phone, {password:LOGIN.password, name:LOGIN.name, company:LOGIN.company||null, gstin:LOGIN.gstin||null, type:LOGIN.mode});
+  if(LOGIN.phone && LOGIN.password) saveCustomerAccount(LOGIN.phone, {password:LOGIN.password, name:LOGIN.name, company:LOGIN.company||null, gstin:LOGIN.gstin||null, type:LOGIN.mode, address:LOGIN.address||null});
   S.user=r.data.user; S.token=r.data.accessToken; S.refresh=r.data.refreshToken;
   localStorage.setItem('mda_user',JSON.stringify(S.user));
   localStorage.setItem('mda_token',S.token);
@@ -1914,10 +1925,10 @@ function scrCheckout(){
           <div class="row between gap-12">
             <div class="grow">
               <div class="t-base mb-4" style="font-weight:600;">${esc(S.user?.company||S.user?.name||'Outlet')}</div>
-              <div class="t-sm muted" style="line-height:1.5;">${esc(APPCFG.address)}</div>
+              <div class="t-sm ${S.user?.address?'muted':'muted'}" style="line-height:1.5;">${S.user?.address?esc(S.user.address):'<span style="color:var(--bad);">No delivery address on file — tap edit to add one</span>'}</div>
               <div class="t-sm muted mt-4">+91 ${esc(S.user?.phone||'')}</div>
             </div>
-            <button class="iconbtn" onclick="toast('Address editing is managed by the office','info')">${icon('edit',18)}</button>
+            <button class="iconbtn" onclick="editDeliveryAddressSheet()">${icon('edit',18)}</button>
           </div>
         </div>
         <div class="banner info mt-12">${icon('truck',17)}
@@ -1994,6 +2005,7 @@ function radio(on){
 }
 
 async function placeOrder(){
+  if(!S.user?.address){ toast('Add a delivery address before placing your order','alert'); editDeliveryAddressSheet(); return; }
   const t=cartTotals();
   const btn=document.getElementById('btn-place'); btn.dataset.lbl=`Place order · ${money(t.total)}`;
   busy('btn-place',true,'Placing order');
@@ -2002,7 +2014,7 @@ async function placeOrder(){
     subtotal:t.sub, gst:t.gst, delivery:t.del, total:t.total,
     payment:PAY, customerType:S.user?.customerType||'b2c',
     company:S.user?.company||null, gstin:S.user?.gstin||null,
-    name:S.user?.name, phone:S.user?.phone,
+    name:S.user?.name, phone:S.user?.phone, address:S.user?.address||null,
   };
   let r;
   if(FIRESTORE_LIVE && FB){
@@ -2130,6 +2142,7 @@ function scrOrder(){
       <div class="section">
         <div class="row between mb-16"><span class="pill ${st.c}">${st.l}</span>
           <span class="t-sm muted">${esc(o.deliverySlot||'')}</span></div>
+        ${o.address?`<div class="banner info mb-16">${icon('pin',17)}<div><b>Delivering to</b><br>${esc(o.address)}</div></div>`:''}
         ${steps.map((s,i)=>`<div class="row gap-12" style="align-items:flex-start;">
           <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">
             <div style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;
@@ -2228,6 +2241,7 @@ function scrInvoiceDetail(){
         ${o.name&&o.company?`<div class="t-sm muted">${esc(o.name)}</div>`:''}
         <div class="t-sm muted">+91 ${esc(o.phone||'')}</div>
         ${o.gstin?`<div class="t-sm muted mt-4">GSTIN: <span class="num">${esc(o.gstin)}</span></div>`:''}
+        ${o.address?`<div class="t-sm muted mt-4">Delivered to: ${esc(o.address)}</div>`:''}
 
         <div class="divider" style="margin:16px -20px;"></div>
         <div class="eyebrow mb-12">Items</div>
@@ -2899,6 +2913,24 @@ function scrWallet(){
     </div>
   </div>`;
 }
+function editDeliveryAddressSheet(){
+  openSheet(`<div class="sheet-head"><div class="t-lg">Delivery address</div>
+    <button class="iconbtn" onclick="closeSheet()">${icon('close',20)}</button></div>
+    <div class="section">
+      <div class="field"><label class="label">Address</label>
+        <textarea class="input" id="f-checkout-address" rows="3" placeholder="House/shop, area, landmark, Pune - PIN code">${esc(S.user?.address||'')}</textarea></div>
+      <button class="btn" onclick="saveDeliveryAddress()">Save address</button>
+    </div>`);
+}
+function saveDeliveryAddress(){
+  const addr=document.getElementById('f-checkout-address').value.trim();
+  if(!addr){ toast('Enter a delivery address','alert'); return; }
+  S.user={...S.user, address:addr};
+  localStorage.setItem('mda_user',JSON.stringify(S.user));
+  if(S.user.phone) saveCustomerAccount(S.user.phone, {address:addr});
+  closeSheet(); paint();
+  toast('Delivery address updated','check');
+}
 function topUpSheet(){
   const presets = isB2B() ? [10000,25000,50000,100000] : [500,1000,2000,5000];
   openSheet(`<div class="sheet-head"><div class="t-lg">Add money to your ${isB2B()?'business credit':'wallet'}</div>
@@ -2979,6 +3011,44 @@ const ROUTES = {
 };
 window.addEventListener('popstate',()=>{ if(NAV.length) back(); });
 
+// Firestore REST value -> plain JS. products/app_config are public-read
+// (see backend/firestore.rules), so this is a plain unauthenticated fetch —
+// no SDK, no auth needed, just how it fetches the admin website's live edits.
+function fromFirestoreValue(v){
+  if(!v) return null;
+  if('stringValue' in v) return v.stringValue;
+  if('integerValue' in v) return parseInt(v.integerValue,10);
+  if('doubleValue' in v) return v.doubleValue;
+  if('booleanValue' in v) return v.booleanValue;
+  if('nullValue' in v) return null;
+  if('arrayValue' in v) return (v.arrayValue.values||[]).map(fromFirestoreValue);
+  if('mapValue' in v) return fromFirestoreDoc(v.mapValue.fields||{});
+  return null;
+}
+function fromFirestoreDoc(fields){
+  const out={};
+  for(const [k,v] of Object.entries(fields||{})) out[k]=fromFirestoreValue(v);
+  return out;
+}
+async function loadLiveCatalogueAndConfig(){
+  try{
+    const [prodRes, cfgRes] = await Promise.all([
+      fetch('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/products?pageSize=300'),
+      fetch('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/app_config/singleton'),
+    ]);
+    if(prodRes.ok){
+      const data = await prodRes.json();
+      (data.documents||[]).forEach(doc=>{
+        const id = doc.name.split('/').pop();
+        CATALOGUE[id] = { ...CATALOGUE[id], ...fromFirestoreDoc(doc.fields) };
+      });
+    }
+    if(cfgRes.ok){
+      const doc = await cfgRes.json();
+      if(doc.fields) APPCFG = { ...APPCFG, ...fromFirestoreDoc(doc.fields) };
+    }
+  }catch(e){ console.warn('Could not load live catalogue/config, using bundled defaults:', e); }
+}
 async function boot(){
   FB = await (window.__fbReady || Promise.resolve(null));
 
@@ -2997,7 +3067,12 @@ async function boot(){
       }
     }catch(e){ console.warn('Firestore read failed, using bundled catalogue:', e); }
   } else {
-    const cfg=await API.get('/config'); if(cfg.success) APPCFG={...APPCFG,...cfg.data};
+    // products/app_config allow public read in Firestore rules — no auth
+    // needed. This is how the admin website's edits (business settings,
+    // product prices/stock) actually reach every customer, without waiting
+    // on the backend. Bundled CATALOGUE/APPCFG stay as the fallback if this
+    // fetch fails (offline, etc).
+    await loadLiveCatalogueAndConfig();
   }
   applyAdminOverrides();
   if(!S.user){ S.screen='login'; paint(); return; }

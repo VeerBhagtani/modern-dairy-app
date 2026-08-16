@@ -5,33 +5,36 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Modern Dairy — Admin</title>
 <style>
-  :root{--brand:#0e2036;--brand-2:#153a63;--bg:#f1f2ee;--surface:#fff;--line:#dee1db;--ink:#161b22;--ink-2:#4b5768;--fresh:#1a7a4c;--warn:#8a5f14;--warn-tint:#faf1de;--bad:#b3261e;}
+  :root{--brand:#0e2036;--brand-2:#153a63;--brand-tint:#e3edf7;--bg:#f1f2ee;--surface:#fff;--line:#dee1db;--ink:#161b22;--ink-2:#4b5768;--fresh:#1a7a4c;--warn:#8a5f14;--warn-tint:#faf1de;--bad:#b3261e;}
   *{box-sizing:border-box;}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);margin:0;min-height:100vh;}
   .wrap{max-width:900px;margin:0 auto;padding:24px 16px 60px;}
   .center-wrap{max-width:360px;margin:80px auto;padding:0 16px;}
   h1{font-size:1.4rem;margin:0 0 4px;}
+  h3{font-size:1rem;margin:0 0 12px;}
   .muted{color:var(--ink-2);font-size:.9rem;}
   .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px;}
   label{display:block;font-size:.85rem;font-weight:600;margin-bottom:6px;}
-  input,select{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:8px;font-size:1rem;margin-bottom:14px;}
+  input,select,textarea{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:8px;font-size:1rem;margin-bottom:14px;font-family:inherit;}
   button{cursor:pointer;font-size:1rem;font-weight:600;border:none;border-radius:8px;padding:12px 16px;}
-  .btn-primary{background:var(--brand);color:#fff;width:100%;}
+  .btn-primary{background:var(--brand);color:#fff;}
   .btn-primary:disabled{opacity:.6;cursor:default;}
-  .btn-quiet{background:transparent;color:var(--brand);width:100%;margin-top:6px;}
+  .btn-quiet{background:transparent;color:var(--brand);}
+  .btn-sm{font-size:.85rem;padding:8px 12px;}
   .err{color:var(--bad);font-size:.85rem;margin:-8px 0 12px;}
-  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;}
+  .ok-msg{color:var(--fresh);font-size:.85rem;margin:-8px 0 12px;}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
   .signout{background:transparent;color:var(--ink-2);font-weight:500;font-size:.85rem;padding:6px 10px;}
   table{width:100%;border-collapse:collapse;}
   th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);font-size:.9rem;}
   th{color:var(--ink-2);font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;}
   tr:hover{background:var(--bg);cursor:pointer;}
   .pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:.75rem;font-weight:700;}
-  .pill.placed,.pill.confirmed{background:#e3edf7;color:var(--brand-2);}
-  .pill.pending_confirmation{background:var(--warn-tint);color:var(--warn);}
-  .pill.packed,.pill.out_for_delivery{background:var(--warn-tint);color:var(--warn);}
+  .pill.placed,.pill.confirmed{background:var(--brand-tint);color:var(--brand-2);}
+  .pill.pending_confirmation,.pill.packed,.pill.out_for_delivery{background:var(--warn-tint);color:var(--warn);}
   .pill.delivered{background:#e2f3e9;color:var(--fresh);}
   .pill.cancelled{background:#fbe4e2;color:var(--bad);}
+  .pill.in{background:#e2f3e9;color:var(--fresh);} .pill.low{background:var(--warn-tint);color:var(--warn);} .pill.out{background:#fbe4e2;color:var(--bad);}
   .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;padding:16px;z-index:10;}
   .modal-bg.on{display:flex;}
   .modal{background:#fff;border-radius:14px;max-width:480px;width:100%;max-height:85vh;overflow:auto;padding:20px;}
@@ -41,6 +44,15 @@
   .status-btns button.on{background:var(--brand);color:#fff;border-color:var(--brand);}
   .empty{text-align:center;padding:40px 20px;color:var(--ink-2);}
   .close-x{background:transparent;font-size:1.4rem;line-height:1;padding:4px 8px;color:var(--ink-2);}
+  .tabs{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--line);}
+  .tab{background:transparent;border-radius:0;padding:10px 4px;margin-right:20px;color:var(--ink-2);border-bottom:2px solid transparent;}
+  .tab.on{color:var(--brand);border-bottom-color:var(--brand);}
+  .variant-row{display:grid;grid-template-columns:1fr 90px 90px 70px 110px;gap:8px;align-items:center;margin-bottom:8px;}
+  .variant-row input,.variant-row select{margin-bottom:0;padding:8px;font-size:.85rem;}
+  .variant-row .vlabel{font-size:.85rem;font-weight:600;}
+  @media (max-width:640px){ .variant-row{grid-template-columns:1fr 1fr;} }
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 12px;}
+  @media (max-width:520px){ .grid2{grid-template-columns:1fr;} }
 </style>
 </head>
 <body>
@@ -50,7 +62,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFirestore, collection, query, orderBy, limit, onSnapshot, doc, updateDoc, serverTimestamp }
+import { getFirestore, collection, query, orderBy, limit, onSnapshot, doc, updateDoc, setDoc, getDoc, serverTimestamp }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 const firebaseConfig = {
@@ -72,8 +84,10 @@ const STATUS_LABEL = {
 const STATUS_FLOW = ['placed', 'confirmed', 'packed', 'out_for_delivery', 'delivered'];
 
 const $app = document.getElementById('app');
+let tab = 'orders';
 let orders = [];
-let unsubOrders = null;
+let products = [];
+let unsubOrders = null, unsubProducts = null;
 let openOrderId = null;
 
 function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -88,14 +102,14 @@ function renderLogin(err){
   $app.innerHTML = `
     <div class="center-wrap">
       <h1>Modern Dairy Admin</h1>
-      <div class="muted" style="margin-bottom:20px;">Sign in to manage orders.</div>
+      <div class="muted" style="margin-bottom:20px;">Sign in to manage the store.</div>
       <div class="card">
         <label>Username</label>
         <input id="f-user" autocomplete="off" placeholder="Username">
         <label>Password</label>
         <input id="f-pass" type="password" placeholder="Password">
         ${err ? `<div class="err">${esc(err)}</div>` : ''}
-        <button class="btn-primary" id="btn-login">Sign in</button>
+        <button class="btn-primary" id="btn-login" style="width:100%;">Sign in</button>
       </div>
     </div>`;
   document.getElementById('btn-login').onclick = doLogin;
@@ -115,35 +129,56 @@ async function doLogin(){
   }
 }
 
-function renderDashboard(){
+function renderShell(bodyHtml){
   $app.innerHTML = `
     <div class="wrap">
       <header>
-        <div><h1>Orders</h1><div class="muted">${orders.length} total</div></div>
+        <h1>Modern Dairy Admin</h1>
         <button class="signout" id="btn-signout">Sign out</button>
       </header>
-      <div class="card" style="padding:0;overflow:auto;">
-        ${!orders.length ? `<div class="empty">No orders yet. New orders from the app will appear here in real time.</div>` : `
-        <table>
-          <thead><tr><th>Order</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Placed</th></tr></thead>
-          <tbody>
-            ${orders.map(o => `
-              <tr data-id="${esc(o.id)}">
-                <td><b>${esc(o.orderNo||o.id)}</b></td>
-                <td>${esc(o.name||o.company||'—')}<br><span class="muted">${esc(o.phone||'')}</span></td>
-                <td>${(o.items||[]).length}</td>
-                <td>${money(o.total)}</td>
-                <td><span class="pill ${esc(o.status||'placed')}">${STATUS_LABEL[o.status]||o.status}</span></td>
-                <td class="muted">${fmtDate(o.placedAt)}</td>
-              </tr>`).join('')}
-          </tbody>
-        </table>`}
+      <div class="tabs">
+        <button class="tab ${tab==='orders'?'on':''}" data-tab="orders">Orders</button>
+        <button class="tab ${tab==='products'?'on':''}" data-tab="products">Products</button>
+        <button class="tab ${tab==='settings'?'on':''}" data-tab="settings">Settings</button>
       </div>
+      <div id="tab-body">${bodyHtml}</div>
     </div>
     <div class="modal-bg" id="modal-bg"><div class="modal" id="modal-content"></div></div>`;
   document.getElementById('btn-signout').onclick = () => signOut(auth);
-  document.querySelectorAll('tr[data-id]').forEach(tr => tr.onclick = () => openModal(tr.dataset.id));
+  document.querySelectorAll('.tab').forEach(b => b.onclick = () => { tab = b.dataset.tab; render(); });
   document.getElementById('modal-bg').onclick = (e) => { if(e.target.id==='modal-bg') closeModal(); };
+}
+
+function render(){
+  if(tab==='orders'){ renderShell(ordersBody()); wireOrdersEvents(); }
+  else if(tab==='products'){ renderShell(productsBody()); wireProductsEvents(); }
+  else { renderShell(settingsBody()); wireSettingsEvents(); }
+}
+
+/* ── Orders ───────────────────────────────────────────── */
+function ordersBody(){
+  return `
+    <div class="muted" style="margin-bottom:10px;">${orders.length} total</div>
+    <div class="card" style="padding:0;overflow:auto;">
+      ${!orders.length ? `<div class="empty">No orders yet. New orders from the app will appear here in real time.</div>` : `
+      <table>
+        <thead><tr><th>Order</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Placed</th></tr></thead>
+        <tbody>
+          ${orders.map(o => `
+            <tr data-id="${esc(o.id)}">
+              <td><b>${esc(o.orderNo||o.id)}</b></td>
+              <td>${esc(o.name||o.company||'—')}<br><span class="muted">${esc(o.phone||'')}</span></td>
+              <td>${(o.items||[]).length}</td>
+              <td>${money(o.total)}</td>
+              <td><span class="pill ${esc(o.status||'placed')}">${STATUS_LABEL[o.status]||o.status}</span></td>
+              <td class="muted">${fmtDate(o.placedAt)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`}
+    </div>`;
+}
+function wireOrdersEvents(){
+  document.querySelectorAll('tr[data-id]').forEach(tr => tr.onclick = () => openModal(tr.dataset.id));
 }
 
 function openModal(id){
@@ -158,6 +193,7 @@ function openModal(id){
     <div class="row"><span class="muted">Customer</span><span>${esc(o.name||'—')}${o.company?` (${esc(o.company)})`:''}</span></div>
     <div class="row"><span class="muted">Phone</span><span>${esc(o.phone||'—')}</span></div>
     ${o.gstin?`<div class="row"><span class="muted">GSTIN</span><span>${esc(o.gstin)}</span></div>`:''}
+    ${o.address?`<div class="row" style="align-items:flex-start;"><span class="muted">Deliver to</span><span style="text-align:right;max-width:70%;">${esc(o.address)}</span></div>`:''}
     <div style="border-top:1px solid var(--line);margin:10px 0;padding-top:10px;">
       ${(o.items||[]).map(i=>`<div class="row"><span>${esc(i.name)} (${esc(i.label||'')}) × ${i.qty}</span><span>${money(i.price*i.qty)}</span></div>`).join('')}
     </div>
@@ -184,19 +220,121 @@ function startOrdersListener(){
   const q = query(collection(db, 'orders'), orderBy('placedAt', 'desc'), limit(200));
   unsubOrders = onSnapshot(q, snap => {
     orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderDashboard();
-    if(openOrderId) openModal(openOrderId);
+    if(tab==='orders'){ render(); wireOrdersEvents(); if(openOrderId) openModal(openOrderId); }
   }, err => {
     $app.innerHTML = `<div class="wrap"><div class="card err">Could not load orders: ${esc(err.message)}</div></div>`;
   });
 }
 
+/* ── Products ─────────────────────────────────────────── */
+function productsBody(){
+  if(!products.length) return `<div class="empty">Loading products…</div>`;
+  return `<div>${products.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(p => `
+    <div class="card" id="prod-${esc(p.id)}">
+      <div class="row" style="margin-bottom:10px;"><h3 style="margin:0;">${esc(p.name)}</h3><span class="muted">${esc(p.cat||'')}</span></div>
+      <div class="variant-row" style="font-size:.78rem;color:var(--ink-2);font-weight:600;text-transform:uppercase;">
+        <div>Variant</div><div>MRP</div><div>B2B ₹</div><div>MOQ</div><div>Stock</div>
+      </div>
+      ${(p.variants||[]).map((v,vi) => `
+        <div class="variant-row">
+          <div class="vlabel">${esc(v.label)}</div>
+          <input type="number" data-p="${esc(p.id)}" data-v="${vi}" data-f="mrp" value="${v.mrp}">
+          <input type="number" data-p="${esc(p.id)}" data-v="${vi}" data-f="b2b" value="${v.b2b}">
+          <input type="number" data-p="${esc(p.id)}" data-v="${vi}" data-f="moq" value="${v.moq||1}">
+          <select data-p="${esc(p.id)}" data-v="${vi}" data-f="stock">
+            <option value="in" ${v.stock==='in'?'selected':''}>In stock</option>
+            <option value="low" ${v.stock==='low'?'selected':''}>Low stock</option>
+            <option value="out" ${v.stock==='out'?'selected':''}>Out of stock</option>
+          </select>
+        </div>`).join('')}
+      <button class="btn-primary btn-sm" data-save="${esc(p.id)}">Save ${esc(p.name)}</button>
+      <span class="ok-msg" id="saved-${esc(p.id)}" style="display:none;margin-left:10px;">Saved ✓</span>
+    </div>`).join('')}</div>`;
+}
+function wireProductsEvents(){
+  document.querySelectorAll('[data-save]').forEach(btn => btn.onclick = () => saveProduct(btn.dataset.save));
+}
+async function saveProduct(id){
+  const p = products.find(x => x.id === id);
+  if(!p) return;
+  const variants = (p.variants||[]).map((v, vi) => {
+    const get = f => document.querySelector(`[data-p="${id}"][data-v="${vi}"][data-f="${f}"]`).value;
+    return { ...v, mrp: Number(get('mrp'))||0, b2b: Number(get('b2b'))||0, moq: Number(get('moq'))||1, stock: get('stock') };
+  });
+  try{
+    await updateDoc(doc(db, 'products', id), { variants });
+    const msg = document.getElementById(`saved-${id}`);
+    if(msg){ msg.style.display='inline'; setTimeout(()=>msg.style.display='none', 2000); }
+  }catch(e){ alert('Could not save: ' + e.message); }
+}
+function startProductsListener(){
+  unsubProducts = onSnapshot(collection(db, 'products'), snap => {
+    products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if(tab==='products'){ render(); wireProductsEvents(); }
+  }, err => console.error(err));
+}
+
+/* ── Settings (app_config/singleton) ─────────────────────── */
+let cfg = {};
+function settingsBody(){
+  return `
+    <div class="card">
+      <div class="grid2">
+        <div><label>Business name</label><input id="s-businessName" value="${esc(cfg.businessName||'')}"></div>
+        <div><label>Support phone</label><input id="s-supportPhone" value="${esc(cfg.supportPhone||'')}"></div>
+        <div><label>WhatsApp number</label><input id="s-whatsapp" value="${esc(cfg.whatsapp||'')}"></div>
+        <div><label>Email</label><input id="s-email" value="${esc(cfg.email||'')}"></div>
+      </div>
+      <label>Address</label><textarea id="s-address" rows="2">${esc(cfg.address||'')}</textarea>
+      <label>Business hours</label><input id="s-businessHours" value="${esc(cfg.businessHours||'')}">
+      <div class="grid2">
+        <div><label>Minimum order value (₹)</label><input id="s-minOrderValue" type="number" value="${cfg.minOrderValue||0}"></div>
+        <div><label>Delivery fee (₹)</label><input id="s-deliveryFee" type="number" value="${cfg.deliveryFee||0}"></div>
+        <div><label>GST rate (e.g. 0.05 = 5%)</label><input id="s-gstRate" type="number" step="0.01" value="${cfg.gstRate??0.05}"></div>
+        <div><label>Order cutoff time</label><input id="s-orderCutoff" value="${esc(cfg.orderCutoff||'')}"></div>
+      </div>
+      <label>Announcement banner (leave blank to hide)</label><textarea id="s-announcement" rows="2">${esc(cfg.announcement||'')}</textarea>
+      <button class="btn-primary" id="btn-save-settings">Save settings</button>
+      <span class="ok-msg" id="saved-settings" style="display:none;margin-left:10px;">Saved ✓</span>
+    </div>`;
+}
+function wireSettingsEvents(){
+  const btn = document.getElementById('btn-save-settings');
+  if(btn) btn.onclick = saveSettings;
+}
+async function saveSettings(){
+  const val = id => document.getElementById(id).value;
+  const patch = {
+    businessName: val('s-businessName'), supportPhone: val('s-supportPhone'), whatsapp: val('s-whatsapp'),
+    email: val('s-email'), address: val('s-address'), businessHours: val('s-businessHours'),
+    minOrderValue: Number(val('s-minOrderValue'))||0, deliveryFee: Number(val('s-deliveryFee'))||0,
+    gstRate: Number(val('s-gstRate'))||0, orderCutoff: val('s-orderCutoff'), announcement: val('s-announcement'),
+  };
+  try{
+    await setDoc(doc(db, 'app_config', 'singleton'), patch, { merge: true });
+    cfg = { ...cfg, ...patch };
+    const msg = document.getElementById('saved-settings');
+    if(msg){ msg.style.display='inline'; setTimeout(()=>msg.style.display='none', 2000); }
+  }catch(e){ alert('Could not save: ' + e.message); }
+}
+async function loadSettings(){
+  try{
+    const snap = await getDoc(doc(db, 'app_config', 'singleton'));
+    if(snap.exists()) cfg = snap.data();
+    if(tab==='settings') render();
+  }catch(e){ console.error(e); }
+}
+
 onAuthStateChanged(auth, user => {
   if(user){
     startOrdersListener();
+    startProductsListener();
+    loadSettings();
+    render();
   }else{
     if(unsubOrders){ unsubOrders(); unsubOrders = null; }
-    orders = [];
+    if(unsubProducts){ unsubProducts(); unsubProducts = null; }
+    orders = []; products = []; tab = 'orders';
     renderLogin();
   }
 });
