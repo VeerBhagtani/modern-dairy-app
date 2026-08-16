@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Modern Dairy — Admin</title>
+<style>
+  :root{--brand:#0e2036;--brand-2:#153a63;--bg:#f1f2ee;--surface:#fff;--line:#dee1db;--ink:#161b22;--ink-2:#4b5768;--fresh:#1a7a4c;--warn:#8a5f14;--warn-tint:#faf1de;--bad:#b3261e;}
+  *{box-sizing:border-box;}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);margin:0;min-height:100vh;}
+  .wrap{max-width:900px;margin:0 auto;padding:24px 16px 60px;}
+  .center-wrap{max-width:360px;margin:80px auto;padding:0 16px;}
+  h1{font-size:1.4rem;margin:0 0 4px;}
+  .muted{color:var(--ink-2);font-size:.9rem;}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px;}
+  label{display:block;font-size:.85rem;font-weight:600;margin-bottom:6px;}
+  input,select{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:8px;font-size:1rem;margin-bottom:14px;}
+  button{cursor:pointer;font-size:1rem;font-weight:600;border:none;border-radius:8px;padding:12px 16px;}
+  .btn-primary{background:var(--brand);color:#fff;width:100%;}
+  .btn-primary:disabled{opacity:.6;cursor:default;}
+  .btn-quiet{background:transparent;color:var(--brand);width:100%;margin-top:6px;}
+  .err{color:var(--bad);font-size:.85rem;margin:-8px 0 12px;}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;}
+  .signout{background:transparent;color:var(--ink-2);font-weight:500;font-size:.85rem;padding:6px 10px;}
+  table{width:100%;border-collapse:collapse;}
+  th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);font-size:.9rem;}
+  th{color:var(--ink-2);font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;}
+  tr:hover{background:var(--bg);cursor:pointer;}
+  .pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:.75rem;font-weight:700;}
+  .pill.placed,.pill.confirmed{background:#e3edf7;color:var(--brand-2);}
+  .pill.pending_confirmation{background:var(--warn-tint);color:var(--warn);}
+  .pill.packed,.pill.out_for_delivery{background:var(--warn-tint);color:var(--warn);}
+  .pill.delivered{background:#e2f3e9;color:var(--fresh);}
+  .pill.cancelled{background:#fbe4e2;color:var(--bad);}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;padding:16px;z-index:10;}
+  .modal-bg.on{display:flex;}
+  .modal{background:#fff;border-radius:14px;max-width:480px;width:100%;max-height:85vh;overflow:auto;padding:20px;}
+  .row{display:flex;justify-content:space-between;padding:6px 0;font-size:.9rem;}
+  .status-btns{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px;}
+  .status-btns button{flex:1;min-width:100px;font-size:.8rem;padding:8px;background:var(--bg);color:var(--ink);border:1px solid var(--line);}
+  .status-btns button.on{background:var(--brand);color:#fff;border-color:var(--brand);}
+  .empty{text-align:center;padding:40px 20px;color:var(--ink-2);}
+  .close-x{background:transparent;font-size:1.4rem;line-height:1;padding:4px 8px;color:var(--ink-2);}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut }
+  from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getFirestore, collection, query, orderBy, limit, onSnapshot, doc, updateDoc, serverTimestamp }
+  from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyD-3RNHrI9ZPmdTioLiuCi2gjwdNXZH8HI",
+  authDomain: "modern-dairy-pune.firebaseapp.com",
+  projectId: "modern-dairy-pune",
+  storageBucket: "modern-dairy-pune.firebasestorage.app",
+  messagingSenderId: "711745048614",
+  appId: "1:711745048614:web:29e8641911c62c1bb856e7",
+};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+const STATUS_LABEL = {
+  placed: 'Placed', confirmed: 'Confirmed', pending_confirmation: 'Pending confirmation',
+  packed: 'Packed', out_for_delivery: 'Out for delivery', delivered: 'Delivered', cancelled: 'Cancelled',
+};
+const STATUS_FLOW = ['placed', 'confirmed', 'packed', 'out_for_delivery', 'delivered'];
+
+const $app = document.getElementById('app');
+let orders = [];
+let unsubOrders = null;
+let openOrderId = null;
+
+function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function money(n){ return '₹' + Math.round(Number(n)||0).toLocaleString('en-IN'); }
+function fmtDate(ts){
+  const d = ts?.toDate ? ts.toDate() : (ts ? new Date(ts) : null);
+  if(!d) return '—';
+  return d.toLocaleString('en-IN', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
+}
+
+function renderLogin(err){
+  $app.innerHTML = `
+    <div class="center-wrap">
+      <h1>Modern Dairy Admin</h1>
+      <div class="muted" style="margin-bottom:20px;">Sign in to manage orders.</div>
+      <div class="card">
+        <label>Username</label>
+        <input id="f-user" autocomplete="off" placeholder="Username">
+        <label>Password</label>
+        <input id="f-pass" type="password" placeholder="Password">
+        ${err ? `<div class="err">${esc(err)}</div>` : ''}
+        <button class="btn-primary" id="btn-login">Sign in</button>
+      </div>
+    </div>`;
+  document.getElementById('btn-login').onclick = doLogin;
+  document.getElementById('f-pass').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+}
+
+async function doLogin(){
+  const user = document.getElementById('f-user').value.trim();
+  const pass = document.getElementById('f-pass').value;
+  const btn = document.getElementById('btn-login');
+  if(!user || !pass){ renderLogin('Enter a username and password.'); return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try{
+    await signInWithEmailAndPassword(auth, user.toLowerCase().replace(/\s+/g,'_') + '@admin.local', pass);
+  }catch(e){
+    renderLogin('Incorrect username or password.');
+  }
+}
+
+function renderDashboard(){
+  $app.innerHTML = `
+    <div class="wrap">
+      <header>
+        <div><h1>Orders</h1><div class="muted">${orders.length} total</div></div>
+        <button class="signout" id="btn-signout">Sign out</button>
+      </header>
+      <div class="card" style="padding:0;overflow:auto;">
+        ${!orders.length ? `<div class="empty">No orders yet. New orders from the app will appear here in real time.</div>` : `
+        <table>
+          <thead><tr><th>Order</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Placed</th></tr></thead>
+          <tbody>
+            ${orders.map(o => `
+              <tr data-id="${esc(o.id)}">
+                <td><b>${esc(o.orderNo||o.id)}</b></td>
+                <td>${esc(o.name||o.company||'—')}<br><span class="muted">${esc(o.phone||'')}</span></td>
+                <td>${(o.items||[]).length}</td>
+                <td>${money(o.total)}</td>
+                <td><span class="pill ${esc(o.status||'placed')}">${STATUS_LABEL[o.status]||o.status}</span></td>
+                <td class="muted">${fmtDate(o.placedAt)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`}
+      </div>
+    </div>
+    <div class="modal-bg" id="modal-bg"><div class="modal" id="modal-content"></div></div>`;
+  document.getElementById('btn-signout').onclick = () => signOut(auth);
+  document.querySelectorAll('tr[data-id]').forEach(tr => tr.onclick = () => openModal(tr.dataset.id));
+  document.getElementById('modal-bg').onclick = (e) => { if(e.target.id==='modal-bg') closeModal(); };
+}
+
+function openModal(id){
+  openOrderId = id;
+  const o = orders.find(x => x.id === id);
+  if(!o) return;
+  document.getElementById('modal-content').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+      <div><b style="font-size:1.1rem;">${esc(o.orderNo||o.id)}</b><div class="muted">${fmtDate(o.placedAt)}</div></div>
+      <button class="close-x" id="btn-close">×</button>
+    </div>
+    <div class="row"><span class="muted">Customer</span><span>${esc(o.name||'—')}${o.company?` (${esc(o.company)})`:''}</span></div>
+    <div class="row"><span class="muted">Phone</span><span>${esc(o.phone||'—')}</span></div>
+    ${o.gstin?`<div class="row"><span class="muted">GSTIN</span><span>${esc(o.gstin)}</span></div>`:''}
+    <div style="border-top:1px solid var(--line);margin:10px 0;padding-top:10px;">
+      ${(o.items||[]).map(i=>`<div class="row"><span>${esc(i.name)} (${esc(i.label||'')}) × ${i.qty}</span><span>${money(i.price*i.qty)}</span></div>`).join('')}
+    </div>
+    <div class="row" style="border-top:1px solid var(--line);padding-top:10px;font-weight:700;"><span>Total</span><span>${money(o.total)}</span></div>
+    <div class="muted" style="margin:14px 0 4px;font-weight:600;font-size:.85rem;">UPDATE STATUS</div>
+    <div class="status-btns">
+      ${STATUS_FLOW.map(s=>`<button data-status="${s}" class="${o.status===s?'on':''}">${STATUS_LABEL[s]}</button>`).join('')}
+      <button data-status="cancelled" class="${o.status==='cancelled'?'on':''}" style="background:#fbe4e2;color:var(--bad);border-color:#f3c6c2;">Cancelled</button>
+    </div>`;
+  document.getElementById('btn-close').onclick = closeModal;
+  document.querySelectorAll('#modal-content [data-status]').forEach(b => b.onclick = () => setStatus(id, b.dataset.status));
+  document.getElementById('modal-bg').classList.add('on');
+}
+function closeModal(){ document.getElementById('modal-bg')?.classList.remove('on'); openOrderId = null; }
+
+async function setStatus(id, status){
+  try{
+    await updateDoc(doc(db, 'orders', id), { status, statusUpdatedAt: serverTimestamp() });
+    closeModal();
+  }catch(e){ alert('Could not update status: ' + e.message); }
+}
+
+function startOrdersListener(){
+  const q = query(collection(db, 'orders'), orderBy('placedAt', 'desc'), limit(200));
+  unsubOrders = onSnapshot(q, snap => {
+    orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderDashboard();
+    if(openOrderId) openModal(openOrderId);
+  }, err => {
+    $app.innerHTML = `<div class="wrap"><div class="card err">Could not load orders: ${esc(err.message)}</div></div>`;
+  });
+}
+
+onAuthStateChanged(auth, user => {
+  if(user){
+    startOrdersListener();
+  }else{
+    if(unsubOrders){ unsubOrders(); unsubOrders = null; }
+    orders = [];
+    renderLogin();
+  }
+});
+</script>
+</body>
+</html>

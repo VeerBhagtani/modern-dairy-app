@@ -1,12 +1,50 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // All real reads/writes go through the backend (Cloud Run, using the Admin
-    // SDK, which bypasses these rules entirely via a service account). These
-    // rules exist as a hard backstop in case a client ever talks to Firestore
-    // directly — default is deny-all.
+    // Interim architecture until the backend is deployed to Cloud Run
+    // (blocked on the Blaze plan / a payment method until 2026-09-11):
+    // the customer app writes orders directly here (anonymous auth, so
+    // there's at least a real Firebase session behind every write), and
+    // the admin website — a separate Firebase-Auth-gated static site —
+    // reads/manages everything. Once the backend deploys, real writes
+    // move behind the Admin SDK (which bypasses these rules via a service
+    // account) and this goes back to a deny-all backstop.
+    function isAdmin() {
+      return request.auth != null && request.auth.uid == '63cH4Dduh4WS7okdV0s0DcJtD7q2';
+    }
+
+    // Orders: any authenticated (including anonymous) client can create an
+    // order with the expected shape — never read, update, or delete someone
+    // else's (or even their own) order once written. Only the admin website
+    // can read the order list or change status.
+    match /orders/{orderId} {
+      allow create: if request.auth != null
+                    && request.resource.data.keys().hasAll(['orderNo', 'items', 'total', 'status', 'placedAt'])
+                    && request.resource.data.total is number
+                    && request.resource.data.items is list
+                    && request.resource.data.items.size() > 0 && request.resource.data.items.size() <= 50;
+      allow read, update, delete: if isAdmin();
+    }
+
+    // Catalogue/config: public read (so the app could fetch these directly
+    // in future), admin-only write.
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /app_config/{configId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Everything else (customers, wallet ledgers, admin audit log, OTP
+    // challenges) holds personal/financial data — admin-only, no exceptions.
     match /{document=**} {
-      allow read, write: if false;
+      allow read, write: if isAdmin();
     }
   }
 }

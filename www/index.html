@@ -474,6 +474,46 @@ if (firebaseConfig.apiKey === "PASTE_API_KEY") {
   }
 }
 </script>
+<script type="module">
+/* ── Order mirroring to Firestore — separate from the main (still dormant)
+   Firebase bridge above. Until the backend deploys to Cloud Run, this is
+   how the admin website (legal/admin/) sees real orders: every placed
+   order gets an anonymous, create-only write straight to Firestore
+   alongside the existing local-storage order (which the customer app
+   itself keeps reading from, unchanged). Firestore rules only allow
+   create here — never read/update/delete — see backend/firestore.rules. ── */
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getFirestore, collection, addDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+
+const mirrorConfig = {
+  apiKey: "AIzaSyD-3RNHrI9ZPmdTioLiuCi2gjwdNXZH8HI",
+  authDomain: "modern-dairy-pune.firebaseapp.com",
+  projectId: "modern-dairy-pune",
+  storageBucket: "modern-dairy-pune.firebasestorage.app",
+  messagingSenderId: "711745048614",
+  appId: "1:711745048614:web:29e8641911c62c1bb856e7",
+};
+const mirrorApp = initializeApp(mirrorConfig, 'orderMirror');
+const mirrorAuth = getAuth(mirrorApp);
+const mirrorDb = getFirestore(mirrorApp);
+
+window.mirrorOrderToFirestore = async function(order) {
+  try {
+    if (!mirrorAuth.currentUser) await signInAnonymously(mirrorAuth);
+    await addDoc(collection(mirrorDb, 'orders'), {
+      orderNo: order.orderNo, items: order.items, subtotal: order.subtotal,
+      gst: order.gst, delivery: order.delivery, total: order.total,
+      payment: order.payment, customerType: order.customerType,
+      company: order.company || null, gstin: order.gstin || null,
+      name: order.name || null, phone: order.phone || null,
+      status: 'placed', placedAt: serverTimestamp(),
+    });
+  } catch (e) {
+    console.warn('Could not mirror order to Firestore (admin website will not see this one):', e);
+  }
+};
+</script>
 <script>
 const CATALOGUE={"cow-milk":{"name":"Cow Milk","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758955/Pasteurised_Milk_Front_jnazr1.jpg","unit":"pouch","desc":"Pure cow milk sourced from our certified farms. Pasteurised, no additives. FAT 6% \u00b7 SNF 9%.","storage":"Refrigerate below 4\u00b0C.","freshness":"Best within 2 days of packaging","variants":[{"id":"v1","label":"500ml","mrp":28,"b2b":25,"moq":12,"case":12,"stock":"in"},{"id":"v2","label":"1L","mrp":54,"b2b":48,"moq":12,"case":12,"stock":"in"}]},"buffalo-milk":{"name":"Buffalo Milk","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758955/Pasteurised_Full_Cream_Milk_Front_ooi7c6.png","unit":"pouch","desc":"Rich premium buffalo milk. Higher fat and protein than cow milk. Ideal for making ghee, paneer and sweets.","storage":"Refrigerate below 4\u00b0C.","freshness":"Best within 2 days","variants":[{"id":"v1","label":"1L","mrp":65,"b2b":57,"moq":12,"case":12,"stock":"in"}]},"toned-milk":{"name":"Toned Milk","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758958/Taaza_Milk_akpyor.png","unit":"pouch","desc":"Pasteurised & homogenised toned milk. FAT 3% \u00b7 SNF 8.5%. Ideal for everyday use.","storage":"Refrigerate below 4\u00b0C.","freshness":"Best within 2 days","variants":[{"id":"v1","label":"1L","mrp":46,"b2b":40,"moq":12,"case":12,"stock":"in"}]},"cream":{"name":"Fresh Cream","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758964/Fresh_Cream_Front_j0uwx1.jpg","unit":"pack","desc":"Modern Dairy Fresh Cream (250ml / 1L) \u2014 pasteurised, smooth and creamy. Made from fresh full cream milk. No artificial additives.","storage":"Shake well before use. Do not buy puffed or leaky packs.","freshness":"Best within 10 days at 4\u00b0C","variants":[{"id":"v1","label":"1L","mrp":220,"b2b":194,"moq":3,"case":6,"stock":"in"}]},"butter":{"name":"Modern Butter","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758961/Butter_qy80zw.png","unit":"pack","desc":"Modern Dairy butter \u2014 rich, creamy, unsalted. Made from fresh cream.","storage":"Refrigerate at all times.","freshness":"Use within 30 days of opening","variants":[{"id":"v1","label":"500g","mrp":280,"b2b":246,"moq":5,"case":10,"stock":"in"}]},"mawa":{"name":"Fresh Mawa (Khoya)","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758953/Mawa_Front_li9d8l.png","unit":"pack","desc":"Fresh Mawa/Khoya made from pure milk at Santosh Milk. Ideal for modak, halwa, gulab jamun and mithai.","storage":"Refrigerate. Can be frozen.","freshness":"Consume within 5 days","variants":[{"id":"v1","label":"250g","mrp":90,"b2b":79,"moq":5,"case":5,"stock":"in"},{"id":"v2","label":"1kg","mrp":340,"b2b":299,"moq":2,"case":5,"stock":"in"}]},"tofu":{"name":"Tofu","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758960/Tofu_qerh72.jpg","unit":"pack","desc":"Modern Dairy Tofu \u2014 fresh, vacuum packed, cholesterol free. High protein. No added colours or preservatives.","storage":"Refrigerate in water.","freshness":"Best within 30 days","variants":[{"id":"v1","label":"200g","mrp":60,"b2b":53,"moq":10,"case":10,"stock":"in"}]},"mayonnaise":{"name":"Eggless Mayonnaise","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758963/Eggless_Mayonnaise_Front_k46mlo.png","unit":"jar","desc":"Modern Dairy Eggless Mayonnaise \u2014 smooth and creamy. Ideal for sandwiches, burgers, coleslaw.","storage":"Refrigerate after opening.","freshness":"36 months from manufacture","variants":[{"id":"v1","label":"1kg","mrp":180,"b2b":158,"moq":3,"case":6,"stock":"in"}]},"ghee":{"name":"Cow Ghee","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758950/Ghee_Jar_200_ml_Front_xs5wmd.png","unit":"jar","desc":"Pure Cow Ghee made from A2 milk. Danedaar Shudh Ghee. Packed at 45\u00b0C. Natural, no preservatives. Exported worldwide.","storage":"Cool, dry place. Refrigerate after opening.","freshness":"Best within 12 months from packing","variants":[{"id":"v1","label":"200ml","mrp":180,"b2b":158,"moq":3,"case":6,"stock":"in"},{"id":"v2","label":"500ml","mrp":430,"b2b":378,"moq":1,"case":6,"stock":"in"},{"id":"v3","label":"1L","mrp":840,"b2b":739,"moq":1,"case":6,"stock":"in"},{"id":"v4","label":"5L Tin","mrp":4000,"b2b":3520,"moq":1,"case":6,"stock":"in"}]},"paneer":{"name":"Fresh Malai Paneer","cat":"dairy","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758965/Fresh_Paneer_200gm_Front_pwiyrh.jpg","unit":"pack","desc":"Fresh Malai Paneer from standardised milk with Citric Acid & Common Salt. Low fat. Made at MIDC Tasawade, Karad.","storage":"Refrigerate at 0\u20135\u00b0C. Do not deep freeze.","freshness":"Best within 10 days from packing","variants":[{"id":"v1","label":"200g","mrp":80,"b2b":70,"moq":5,"case":5,"stock":"in"},{"id":"v2","label":"1kg","mrp":380,"b2b":334,"moq":2,"case":5,"stock":"in"}]},"frozen-paneer":{"name":"Frozen Paneer Cubes","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758966/Frozen_Paneer_Cube_100GM_Front_kef7lk.png","unit":"pack","desc":"Frozen Paneer Cubes from Santosh Milk. No preservatives. Thaw before using. Exported to Dubai & international markets.","storage":"Keep frozen. Thaw before using.","freshness":"12 months at -18\u00b0C","variants":[{"id":"v1","label":"100g","mrp":45,"b2b":36,"moq":10,"case":10,"stock":"in"},{"id":"v2","label":"200g","mrp":85,"b2b":68,"moq":10,"case":10,"stock":"in"},{"id":"v3","label":"500g","mrp":195,"b2b":156,"moq":5,"case":10,"stock":"in"},{"id":"v4","label":"1kg","mrp":380,"b2b":304,"moq":5,"case":10,"stock":"in"}]},"curd-cup":{"name":"Special Curd Cup","cat":"curd","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758963/Curd_80gms_Front_ialper.png","unit":"cup","desc":"Modern Dairy Special Curd in cup format. Pasteurised toned milk, rich probiotic culture. No preservatives.","storage":"Keep refrigerated at all times.","freshness":"Best within 10 days, below 8\u00b0C","variants":[{"id":"v1","label":"80g","mrp":15,"b2b":13,"moq":12,"case":12,"stock":"in"},{"id":"v2","label":"200g","mrp":30,"b2b":26,"moq":12,"case":12,"stock":"in"},{"id":"v3","label":"400g","mrp":55,"b2b":47,"moq":12,"case":12,"stock":"in"},{"id":"v4","label":"1kg","mrp":130,"b2b":110,"moq":6,"case":12,"stock":"in"},{"id":"v5","label":"2kg Bucket","mrp":240,"b2b":204,"moq":6,"case":12,"stock":"in"}]},"curd-pouch-special":{"name":"Special Curd Pouch","cat":"curd","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758963/CURD_POUCH_500GMS_FRONT_mnqtdb.jpg","unit":"pouch","desc":"Modern Dairy Special Curd in easy-pour pouch. Pasteurised toned milk, lactic culture. No preservatives.","storage":"Keep refrigerated.","freshness":"Best within 10 days","variants":[{"id":"v1","label":"250g","mrp":28,"b2b":24,"moq":12,"case":12,"stock":"in"},{"id":"v2","label":"500g","mrp":52,"b2b":44,"moq":12,"case":12,"stock":"in"},{"id":"v3","label":"1kg","mrp":100,"b2b":85,"moq":6,"case":12,"stock":"in"}]},"matka-dahi":{"name":"Matka Dahi","cat":"curd","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758953/Matka_Dahi_Front_uxliyr.png","unit":"pot","desc":"Creamy dahi set in a traditional matka (clay pot). Unique earthy flavour. Net Qty: 125g.","storage":"Keep refrigerated.","freshness":"Best within 10 days","variants":[{"id":"v1","label":"125g","mrp":35,"b2b":30,"moq":12,"case":12,"stock":"in"}]},"chaas":{"name":"Chaas (Buttermilk)","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758961/CHASS_FRONT_hawyph.jpg","unit":"bottle","desc":"Modern Dairy Chaas \u2014 milk solids, common salt, water, curd. Natural, no preservatives. Serve well chilled.","storage":"Consume within 6 hrs of opening.","freshness":"Best within 10 days below 4\u00b0C","variants":[{"id":"v1","label":"200ml","mrp":18,"b2b":14,"moq":12,"case":12,"stock":"in"},{"id":"v2","label":"500ml","mrp":28,"b2b":22,"moq":12,"case":12,"stock":"in"}]},"lassi":{"name":"Sweet Lassi","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758951/Lassi_Front_pxfnkt.png","unit":"bottle","desc":"Sweet lassi made from milk solids, curd, water, sugar and natural flavouring. Thick and refreshing.","storage":"Refrigerate. Shake well before serving.","freshness":"Best within 10 days","variants":[{"id":"v1","label":"200ml","mrp":30,"b2b":24,"moq":12,"case":12,"stock":"in"}]},"shrikhand":{"name":"Shrikhand","cat":"sweets","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758957/Shrikhand_Front_qlsfcv.png","unit":"tub","desc":"Shrikhand from chakka, sugar, kesar (saffron) & jaifal (nutmeg). No preservatives.","storage":"Keep frozen until use.","freshness":"3 months from packaging at 0\u00b0C","variants":[{"id":"v1","label":"100g","mrp":32,"b2b":26,"moq":12,"case":12,"stock":"in"},{"id":"v2","label":"250g","mrp":75,"b2b":62,"moq":12,"case":12,"stock":"in"},{"id":"v3","label":"500g","mrp":140,"b2b":115,"moq":6,"case":12,"stock":"in"}]},"amrakhand":{"name":"Amrakhand","cat":"sweets","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758961/Amrakhand_Front_alqpa0.png","unit":"tub","desc":"Amrakhand \u2014 shrikhand with Alphonso mango pulp. Chakka, sugar, mango pulp. No preservatives added.","storage":"Keep frozen until use.","freshness":"3 months from packaging at 0\u00b0C","variants":[{"id":"v1","label":"100g","mrp":38,"b2b":31,"moq":12,"case":12,"stock":"in"},{"id":"v2","label":"250g","mrp":85,"b2b":70,"moq":12,"case":12,"stock":"in"},{"id":"v3","label":"500g","mrp":160,"b2b":131,"moq":6,"case":12,"stock":"in"}]},"jaggery-cube":{"name":"Jaggery Cubes","cat":"sweets","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758947/Jaggery_Cube_vlpgkg.jpg","unit":"pack","desc":"India's finest small jaggery cubes. Chemical free process. Rich in iron and minerals.","storage":"Cool, dry place.","freshness":"12 months from manufacture","variants":[{"id":"v1","label":"500g","mrp":70,"b2b":57,"moq":10,"case":10,"stock":"in"}]},"jaggery-powder":{"name":"Jaggery Powder","cat":"sweets","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758949/Jaggery_Powder_Back_lub5zk.png","unit":"pack","desc":"Fine jaggery powder \u2014 easy to dissolve. Use in tea, sweets, or as a healthy sugar substitute.","storage":"Cool, dry place. Keep sealed.","freshness":"6 months from manufacture","variants":[{"id":"v1","label":"500g","mrp":70,"b2b":57,"moq":10,"case":10,"stock":"in"}]},"mango-crush":{"name":"Alphonso Mango Crush","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758961/Alphonso_Mango_Front_omlzza.png","unit":"bottle","desc":"Alphonso Mango Crush with real mango pulp (8%), sugar, water. No artificial colours.","storage":"Cool, dry place. Refrigerate after opening.","freshness":"10 months from manufacture","variants":[{"id":"v1","label":"750ml","mrp":85,"b2b":68,"moq":6,"case":6,"stock":"in"}]},"kiwi-crush":{"name":"Kiwi Crush","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758950/Kiwi_Front_rjdzyy.png","unit":"bottle","desc":"Kiwi Crush with real kiwi fruit pulp. Sugar, water, thickener. Natural and nature-identical flavour.","storage":"Cool, dry place. Refrigerate after opening.","freshness":"12 months","variants":[{"id":"v1","label":"750ml","mrp":85,"b2b":68,"moq":6,"case":6,"stock":"in"}]},"lychee-crush":{"name":"Lychee Crush","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758952/Litchi_Front_ghpvxz.png","unit":"bottle","desc":"Litchi Crush with real litchi pulp (20%), sugar, water. No artificial colours.","storage":"Cool, dry place. Refrigerate after opening.","freshness":"12 months","variants":[{"id":"v1","label":"750ml","mrp":85,"b2b":68,"moq":6,"case":6,"stock":"in"}]},"orange-crush":{"name":"Orange Crush","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758954/Orange_Front_u0cm4t.png","unit":"bottle","desc":"Orange Crush with real orange pulp. Sugar, water, thickener. Natural colour and flavour.","storage":"Cool, dry place. Refrigerate after opening.","freshness":"12 months","variants":[{"id":"v1","label":"750ml","mrp":85,"b2b":68,"moq":6,"case":6,"stock":"in"}]},"strawberry-crush":{"name":"Strawberry Crush","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758958/Strawberry_Crush_Front_d3grum.png","unit":"bottle","desc":"Strawberry Crush with real strawberry pulp. Sugar, water. Natural and nature-identical flavour.","storage":"Refrigerate after opening.","freshness":"12 months","variants":[{"id":"v1","label":"750ml","mrp":85,"b2b":68,"moq":6,"case":6,"stock":"in"}]},"guava-crush":{"name":"Pink Guava Crush","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758956/Pink_Guava_Front_b8vdb4.png","unit":"bottle","desc":"Pink Guava Crush with real pink guava pulp. Sugar, water, thickener. No artificial colours.","storage":"Refrigerate after opening.","freshness":"12 months","variants":[{"id":"v1","label":"750ml","mrp":85,"b2b":68,"moq":6,"case":6,"stock":"in"}]},"raspberry-crush":{"name":"Raspberry Crush","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758958/Strawberry_Crush_Front_d3grum.png","unit":"bottle","desc":"Raspberry Crush \u2014 vibrant tangy flavour. Real raspberry pulp, sugar, water.","storage":"Refrigerate after opening.","freshness":"12 months","variants":[{"id":"v1","label":"750ml","mrp":85,"b2b":68,"moq":6,"case":6,"stock":"in"}]},"rose-crush":{"name":"Rose Crush (Syrup)","cat":"beverages","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758957/Rose_Syrup_Front_pa4ree.png","unit":"bottle","desc":"Rose Syrup / Rose Crush with real rose petals (2%). Sugar, water. Perfect for sherbets and mocktails.","storage":"Refrigerate after opening.","freshness":"12 months","variants":[{"id":"v1","label":"750ml","mrp":85,"b2b":68,"moq":6,"case":6,"stock":"in"}]},"samosa":{"name":"Frozen Punjabi Samosa","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758956/Punjabi_Samosa_Front_pnfbzu.jpg","unit":"pack","desc":"Frozen Punjabi Samosa \u2014 15 pieces, 500g. Potato, green chilli, spices. 100% vegetarian, no preservatives. Deep fry at 160\u00b0C.","storage":"Store at -18\u00b0C. Do not thaw.","freshness":"Best within 12 months at -18\u00b0C","variants":[{"id":"v1","label":"500g (15 pcs)","mrp":160,"b2b":128,"moq":5,"case":10,"stock":"in"}]},"spring-roll":{"name":"Frozen Spring Roll","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758957/Spring_Roll_Back_vvfngd.png","unit":"pack","desc":"Frozen Spring Roll \u2014 20 pieces, 300g. Cabbage, onion, capsicum, rice noodles. Deep fry at 180\u00b0C.","storage":"Store at -18\u00b0C. Do not thaw.","freshness":"12 months at -18\u00b0C","variants":[{"id":"v1","label":"300g (20 pcs)","mrp":140,"b2b":112,"moq":5,"case":10,"stock":"in"}]},"poppers":{"name":"Frozen Paneer Poppers","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758955/Paneer_Poppers_Front_sxcrhq.jpg","unit":"pack","desc":"Paneer Poppers \u2014 15 pieces, 400g. Paneer in crispy breadcrumb coating. 100% vegetarian, no preservatives. Ready in 3 minutes.","storage":"Store at -18\u00b0C or below.","freshness":"Best by Jul 2027","variants":[{"id":"v1","label":"400g (15 pcs)","mrp":250,"b2b":200,"moq":5,"case":10,"stock":"in"}]},"cc-rolls":{"name":"Paneer Cheese Corn Rolls","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758954/Paneer_Cheese_Corn_Roll_Front_jw0u7r.jpg","unit":"pack","desc":"Paneer, sweet corn, cheese & seasoning in crispy roll. 10 pieces, 400g. 100% vegetarian. Fry at 180\u00b0C.","storage":"Store at -16\u00b0C or below.","freshness":"Best by Aug 2027","variants":[{"id":"v1","label":"400g (10 pcs)","mrp":220,"b2b":176,"moq":5,"case":10,"stock":"in"}]},"fries":{"name":"French Fries","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758964/French_Fries_Back_bf2ja4.png","unit":"pack","desc":"Modern Dairy Frozen French Fries. No artificial colouring or flavouring. Deep fry at 175\u00b0C for 3 minutes.","storage":"Do not refreeze after thawing.","freshness":"12 months at -18\u00b0C","variants":[{"id":"v1","label":"420g","mrp":110,"b2b":88,"moq":5,"case":10,"stock":"in"},{"id":"v2","label":"1kg","mrp":240,"b2b":192,"moq":5,"case":10,"stock":"in"}]},"puff-paratha":{"name":"Puff Paratha","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758956/Puff_Paratha_Maida_Front_lwl9q5.png","unit":"pack","desc":"Layered Puff Paratha \u2014 12 pieces, 850g. Wheat flour (51%), water, salt, oil. Heat on tawa with ghee for 3-4 minutes.","storage":"Store at -18\u00b0C.","freshness":"60 days at -18\u00b0C","variants":[{"id":"v1","label":"850g (12 pcs)","mrp":125,"b2b":100,"moq":5,"case":10,"stock":"in"}]},"wheat-paratha":{"name":"Whole Wheat Puff Paratha","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758960/Whole_Wheat_Puff_paratha_front_i8z1dp.png","unit":"pack","desc":"Whole Wheat Puff Paratha \u2014 12 pieces, 850g. Whole wheat flour (51%), water, salt, oil. Heat on tawa with ghee.","storage":"Store at -18\u00b0C.","freshness":"60 days at -18\u00b0C","variants":[{"id":"v1","label":"850g (12 pcs)","mrp":125,"b2b":100,"moq":5,"case":10,"stock":"in"}]},"malabar-paratha":{"name":"Malabar Paratha","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758953/Malabar_Paratha_Front_vi20gc.png","unit":"pack","desc":"Malabar Paratha \u2014 5 pieces, 400g. Refined wheat flour, oil, salt. Heat & Eat. 100% vegetarian, no preservatives.","storage":"Store at -18\u00b0C.","freshness":"60 days at -18\u00b0C","variants":[{"id":"v1","label":"400gms (5 pcs)","mrp":75,"b2b":60,"moq":10,"case":10,"stock":"in"}]},"green-peas":{"name":"Frozen Green Peas","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758951/Green_Peas_Front_ulzpny.jpg","unit":"pack","desc":"Frozen Green Peas \u2014 fresh peas blanched and frozen. No additives. Best before 18 months.","storage":"Store at -18\u00b0C. Do not refreeze.","freshness":"18 months at -18\u00b0C","variants":[{"id":"v1","label":"200g","mrp":35,"b2b":28,"moq":10,"case":10,"stock":"in"},{"id":"v2","label":"1kg","mrp":150,"b2b":120,"moq":5,"case":10,"stock":"in"}]},"mix-veg":{"name":"Mix Vegetable","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758954/Mix_Veg_Back_l5fthl.png","unit":"pack","desc":"Modern Dairy frozen mixed vegetables. Ready to cook. Use direct from frozen.","storage":"Store at -18\u00b0C.","freshness":"12 months at -18\u00b0C","variants":[{"id":"v1","label":"500g","mrp":80,"b2b":64,"moq":10,"case":10,"stock":"in"}]},"veg-chop":{"name":"Veg Chop (Chaap)","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758960/Veg_Chaap_qvm195.jpg","unit":"pack","desc":"Frozen Veg Chaap \u2014 soya-based, marinated, ready to fry. Perfect party snack.","storage":"Store at -18\u00b0C.","freshness":"12 months at -18\u00b0C","variants":[{"id":"v1","label":"1kg","mrp":220,"b2b":176,"moq":2,"case":5,"stock":"in"}]},"sweet-corn":{"name":"Sweet Corn","cat":"frozen","img":"https://res.cloudinary.com/dovozcgxb/image/upload/v1778758958/Sweet_Corn_Front_d8pb9c.jpg","unit":"pack","desc":"100% natural American sweet corn kernels, steamed and frozen. No artificial colouring or flavouring.","storage":"Store at -18\u00b0C. Do not refreeze.","freshness":"18 months at -18\u00b0C","variants":[{"id":"v1","label":"200g","mrp":40,"b2b":32,"moq":10,"case":10,"stock":"in"},{"id":"v2","label":"1kg","mrp":150,"b2b":120,"moq":5,"case":10,"stock":"in"}]}};
 </script>
@@ -1062,7 +1102,8 @@ function signInForm(){
     <div class="field"><label class="label">Password</label>
       <input class="input" id="f-password" type="password" placeholder="Enter your password" autocomplete="off">
       <div class="hint" id="h-password">Don't have an account yet? Switch to "New account" above.</div></div>
-    <button class="btn" id="btn-signin" onclick="doSignIn()">Sign in</button>`;
+    <button class="btn" id="btn-signin" onclick="doSignIn()">Sign in</button>
+    <button class="btn btn-quiet mt-8" onclick="go('forgotPassword')">Forgot password?</button>`;
 }
 async function doSignIn(){
   const p=document.getElementById('f-phone').value.trim();
@@ -1081,6 +1122,89 @@ async function doSignIn(){
   catch(e){ busy('btn-signin',false,'Sign in'); showDebugError('Could not send the code', e); return; }
   busy('btn-signin',false,'Sign in'); LOGIN.step='otp'; paint();
 }
+
+/* ── Forgot password: phone + name (must match the saved account) + real
+   OTP, then a new password. Works for both Business and Personal accounts
+   the same way, since accounts are just keyed by phone either way. ── */
+let RESET = { phone:'', name:'', step:'entry' };
+function scrForgotPassword(){
+  return `<div class="screen on">${navBar('Reset password')}
+    <div class="scroll"><div class="section">
+      ${RESET.step==='entry' ? forgotEntryForm() : RESET.step==='otp' ? forgotOtpForm() : forgotNewPwForm()}
+    </div></div></div>`;
+}
+function forgotEntryForm(){
+  return `
+    <div class="t-md muted mb-16">Enter your registered mobile number and name to verify it's you.</div>
+    <div class="field"><label class="label">Mobile number</label>
+      <div class="phone-field"><span class="phone-cc">+91</span>
+      <input id="f-reset-phone" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit number" value="${esc(RESET.phone)}"></div>
+      <div class="hint" id="h-reset-phone"></div></div>
+    <div class="field"><label class="label">Full name (as on your account)</label>
+      <input class="input" id="f-reset-name" placeholder="Full name" value="${esc(RESET.name)}">
+      <div class="hint" id="h-reset-name"></div></div>
+    <button class="btn" id="btn-reset-send" onclick="doForgotSend()">Send code</button>
+    <button class="btn btn-quiet mt-8" onclick="go('login',{replace:true})">Back to sign in</button>`;
+}
+async function doForgotSend(){
+  const p=document.getElementById('f-reset-phone').value.trim();
+  const n=document.getElementById('f-reset-name').value.trim();
+  setErr('f-reset-phone','h-reset-phone',''); setErr('f-reset-name','h-reset-name','');
+  if(!/^[6-9]\d{9}$/.test(p)){ setErr('f-reset-phone','h-reset-phone','Enter a valid 10-digit Indian mobile number.'); return; }
+  if(!n){ setErr('f-reset-name','h-reset-name','Enter your name.'); return; }
+  const existing = getCustomerAccounts()[p];
+  if(!existing){ setErr('f-reset-phone','h-reset-phone','No account found for this number.'); return; }
+  if((existing.name||'').trim().toLowerCase() !== n.toLowerCase()){ setErr('f-reset-name','h-reset-name','Name does not match our records for this number.'); return; }
+  RESET.phone=p; RESET.name=n;
+  const btn=document.getElementById('btn-reset-send'); btn.dataset.lbl='Send code';
+  busy('btn-reset-send',true,'Sending');
+  try{ await otpSend('91'+p); }
+  catch(e){ busy('btn-reset-send',false,'Send code'); showDebugError('Could not send the code', e); return; }
+  busy('btn-reset-send',false,'Send code');
+  RESET.step='otp'; paint();
+}
+function forgotOtpForm(){
+  return `<div class="t-lg mb-4">Enter the ${OTP_LENGTH}-digit code</div>
+    <div class="t-md muted mb-16">Sent to +91 ${esc(RESET.phone)}</div>
+    <input class="input mb-4" id="f-reset-otp" type="tel" inputmode="numeric" maxlength="${OTP_LENGTH}" placeholder="${'•'.repeat(OTP_LENGTH)}"
+           style="text-align:center;font-size:22px;font-weight:700;letter-spacing:.5em;height:56px;">
+    <div class="hint mb-16" id="h-reset-otp">${RESET.phone===TEST_PHONE ? `Test number — the code is <b>${TEST_OTP}</b>.` : 'Enter the code sent by SMS.'}</div>
+    <button class="btn" id="btn-reset-verify" onclick="doForgotVerify()">Verify</button>`;
+}
+async function doForgotVerify(){
+  const o=document.getElementById('f-reset-otp').value.trim();
+  if(o.length!==OTP_LENGTH){ setErr('f-reset-otp','h-reset-otp',`Enter all ${OTP_LENGTH} digits.`); return; }
+  const btn=document.getElementById('btn-reset-verify'); btn.dataset.lbl='Verify';
+  busy('btn-reset-verify',true,'Verifying');
+  try{ await otpVerify(o); }
+  catch(e){ busy('btn-reset-verify',false,'Verify'); setErr('f-reset-otp','h-reset-otp', e.message||'Incorrect or expired code.'); return; }
+  busy('btn-reset-verify',false,'Verify');
+  RESET.step='newpw'; paint();
+}
+function forgotNewPwForm(){
+  return `
+    <div class="banner ok mb-16">${icon('check',17)}<div>Number verified — set a new password.</div></div>
+    <div class="field"><label class="label">New password</label>
+      <input class="input" id="f-reset-pw" type="password" placeholder="At least 6 characters" autocomplete="off"></div>
+    <div class="field"><label class="label">Confirm new password</label>
+      <input class="input" id="f-reset-pw2" type="password" placeholder="Re-enter password" autocomplete="off">
+      <div class="hint" id="h-reset-pw2"></div></div>
+    <button class="btn" id="btn-reset-save" onclick="doForgotSave()">Save new password</button>`;
+}
+function doForgotSave(){
+  const pw=document.getElementById('f-reset-pw').value;
+  const pw2=document.getElementById('f-reset-pw2').value;
+  setErr('f-reset-pw2','h-reset-pw2','');
+  if(pw.length<6){ setErr('f-reset-pw2','h-reset-pw2','Password must be at least 6 characters.'); return; }
+  if(pw!==pw2){ setErr('f-reset-pw2','h-reset-pw2','Passwords do not match.'); return; }
+  saveCustomerAccount(RESET.phone, {password:pw});
+  toast('Password updated — sign in with your new password','check');
+  const resetPhone = RESET.phone;
+  RESET = { phone:'', name:'', step:'entry' };
+  LOGIN.authMode='signin'; LOGIN.step='entry'; LOGIN.phone=resetPhone;
+  go('login',{replace:true});
+}
+
 function passwordField(){
   return `<div class="field"><label class="label">Password</label>
       <input class="input" id="f-password" type="password" placeholder="Create or enter your password" autocomplete="off">
@@ -1902,6 +2026,7 @@ async function placeOrder(){
     toast(r.message||'Could not place the order. Try again.','alert'); return;
   }
   S.lastOrder={...r.data, items:payload.items, total:payload.total, payment:PAY};
+  if(window.mirrorOrderToFirestore) window.mirrorOrderToFirestore({...payload, orderNo:r.data.orderNo});
   S.cart=[]; persist(); await loadWallet();
   go('placed',{replace:true});
 }
@@ -2054,6 +2179,75 @@ function reorder(no){
 }
 
 /* ═══════════════════════════════════════════════════════════
+   17b. INVOICES — one per past order, formatted like a real bill
+   ═══════════════════════════════════════════════════════════ */
+function scrInvoices(){
+  return `<div class="screen on">
+    ${navBar('Invoices',{sub:`${S.orders.length} order${S.orders.length===1?'':'s'}`})}
+    <div class="scroll">
+      ${!S.orders.length ? stateBlock('file','No invoices yet','An invoice is generated for every order you place.','') :
+        `<div>${S.orders.map(o=>`
+          <div class="lrow" onclick="openInvoice('${esc(o.orderNo)}')" style="align-items:flex-start;">
+            <div class="lrow-ic">${icon('file',17)}</div>
+            <div class="lrow-body">
+              <div class="row between mb-4"><span class="t-base num" style="font-weight:700;">${esc(o.orderNo)}</span>
+                <span class="t-base num" style="font-weight:600;">${money(o.total)}</span></div>
+              <div class="t-sm muted">${dtFmt(o.placedAt)} · ${o.items.length} item${o.items.length>1?'s':''}</div>
+            </div>
+            ${icon('right',18)}
+          </div>`).join('')}
+          <div style="height:calc(24px + var(--safe-b));"></div></div>`}
+    </div>
+  </div>`;
+}
+function openInvoice(no){
+  const o=S.orders.find(x=>x.orderNo===no); if(!o) return;
+  S.order=o; go('invoiceDetail');
+}
+function scrInvoiceDetail(){
+  const o=S.order; if(!o) return `<div class="screen on">${navBar('Invoice')}${stateBlock('alert','Invoice not found','','')}</div>`;
+  return `<div class="screen on">
+    ${navBar('Invoice',{sub:o.orderNo})}
+    <div class="scroll"><div class="section">
+      <div class="card" style="padding:20px;">
+        <div class="row between mb-16" style="align-items:flex-start;">
+          <div>
+            <div class="t-lg" style="font-weight:700;">${esc(APPCFG.businessName)}</div>
+            <div class="t-xs muted mt-4">${esc(APPCFG.address)}</div>
+            <div class="t-xs muted">${esc(APPCFG.email)} · ${esc(APPCFG.supportPhone)}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="eyebrow">Invoice</div>
+            <div class="t-base num" style="font-weight:700;">${esc(o.orderNo)}</div>
+            <div class="t-xs muted mt-4">${dtFmt(o.placedAt)}</div>
+          </div>
+        </div>
+        <div class="divider" style="margin:0 -20px 16px;"></div>
+        <div class="eyebrow mb-8">Billed to</div>
+        <div class="t-base" style="font-weight:600;">${esc(o.company||o.name||'Customer')}</div>
+        ${o.name&&o.company?`<div class="t-sm muted">${esc(o.name)}</div>`:''}
+        <div class="t-sm muted">+91 ${esc(o.phone||'')}</div>
+        ${o.gstin?`<div class="t-sm muted mt-4">GSTIN: <span class="num">${esc(o.gstin)}</span></div>`:''}
+
+        <div class="divider" style="margin:16px -20px;"></div>
+        <div class="eyebrow mb-12">Items</div>
+        ${o.items.map(i=>`<div class="tot"><span class="muted truncate" style="max-width:60%;">${esc(i.name)} ${esc(i.label)} × ${i.qty}</span>
+          <span class="num">${money(i.price*i.qty)}</span></div>`).join('')}
+        <div class="tot" style="border-top:1px solid var(--line-2);margin-top:8px;padding-top:10px;">
+          <span class="muted">Subtotal</span><span class="num">${money2(o.subtotal ?? (o.total-(o.gst||0)-(o.delivery||0)))}</span></div>
+        <div class="tot"><span class="muted">GST</span><span class="num">${money2(o.gst||0)}</span></div>
+        ${o.delivery?`<div class="tot"><span class="muted">Delivery</span><span class="num">${money2(o.delivery)}</span></div>`:''}
+        <div class="tot grand" style="border-top:1px solid var(--line-2);margin-top:8px;padding-top:10px;"><span>Total</span><span class="num">${money2(o.total)}</span></div>
+
+        <div class="divider" style="margin:16px -20px;"></div>
+        <div class="t-xs muted-2 center">FSSAI licensed · Thank you for your business</div>
+      </div>
+      <button class="btn btn-ghost mt-16" onclick="window.print()">${icon('file',18)} Print / Save as PDF</button>
+    </div></div>
+  </div>`;
+}
+
+/* ═══════════════════════════════════════════════════════════
    18. REORDER — the fastest path for a repeat B2B customer
    ═══════════════════════════════════════════════════════════ */
 function scrReorder(){
@@ -2140,7 +2334,7 @@ function scrAccount(){
       <div class="card" style="margin:0 16px;">
         ${arow('receipt','Order history', `${S.orders.length} order${S.orders.length===1?'':'s'}`, `switchTab('orders')`)}
         ${arow('repeat','Reorder items','', `switchTab('reorder')`)}
-        ${isB2B()?arow('file','Tax invoices','GST invoices for your orders',`toast('Invoices are emailed to ${esc(APPCFG.email)}','info')`):''}
+        ${arow('file','Invoices', `${S.orders.length} past invoice${S.orders.length===1?'':'s'}`, `go('invoices')`)}
       </div>
 
       <div class="section-head"><span class="eyebrow">Support</span></div>
@@ -2778,8 +2972,10 @@ const ROUTES = {
   catalogue:scrCatalogue, product:scrProduct,
   cart:scrCart, checkout:scrCheckout, placed:scrPlaced,
   orders:scrOrders, order:scrOrder, reorder:scrReorder,
+  invoices:scrInvoices, invoiceDetail:scrInvoiceDetail,
   account:scrAccount, wallet:scrWallet, about:scrAbout,
   adminLogin:scrAdminLogin, admin:scrAdmin, adminGuide:scrAdminGuide,
+  forgotPassword:scrForgotPassword,
 };
 window.addEventListener('popstate',()=>{ if(NAV.length) back(); });
 
