@@ -2175,6 +2175,7 @@ const STATUS = {
   placed:{l:'Placed',c:'b'}, pending_confirmation:{l:'Pending confirmation',c:'a'},
   confirmed:{l:'Confirmed',c:'b'}, packed:{l:'Packed',c:'a'},
   out_for_delivery:{l:'Out for delivery',c:'a'}, delivered:{l:'Delivered',c:'g'}, cancelled:{l:'Cancelled',c:'r'},
+  denied:{l:'Denied',c:'r'},
 };
 async function loadOrders(){
   if(FIRESTORE_LIVE && FB && S.user?.id){
@@ -2281,8 +2282,9 @@ function scrOrder(){
       <div class="section">
         <div class="row between mb-16"><span class="pill ${st.c}">${st.l}</span>
           <span class="t-sm muted">${esc(o.deliverySlot||'')}</span></div>
+        ${o.status==='denied'?`<div class="banner alert mb-16">${icon('alert',17)}<div><b>This order was denied</b><br>${esc(o.deniedReason||'Please call us for details.')}</div></div>`:''}
         ${o.address?`<div class="banner info mb-16">${icon('pin',17)}<div><b>Delivering to</b><br>${esc(o.address)}</div></div>`:''}
-        ${steps.map((s,i)=>`<div class="row gap-12" style="align-items:flex-start;">
+        ${o.status!=='denied' && o.status!=='cancelled' ? steps.map((s,i)=>`<div class="row gap-12" style="align-items:flex-start;">
           <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">
             <div style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;
               background:${i<=at?'var(--brand)':'var(--surface)'};border:1.5px solid ${i<=at?'var(--brand)':'var(--line)'};color:#fff;">
@@ -2291,7 +2293,7 @@ function scrOrder(){
           </div>
           <div style="padding-bottom:${i<steps.length-1?'8px':'0'};">
             <div class="t-md" style="font-weight:${i<=at?'600':'400'};color:${i<=at?'var(--ink)':'var(--ink-3)'};">${STATUS[s].l}</div>
-          </div></div>`).join('')}
+          </div></div>`).join('') : ''}
       </div>
       <div class="divider"></div>
       <div class="section">
@@ -2313,7 +2315,7 @@ function scrOrder(){
       <div style="padding:0 16px calc(24px + var(--safe-b));">
         <button class="btn btn-ghost" onclick="reorder('${esc(o.orderNo)}')">${icon('repeat',18)} Reorder these items</button>
         <a class="btn btn-quiet mt-8" href="tel:${APPCFG.supportPhone}">${icon('phone',18)} Call about this order</a>
-        ${o.status!=='cancelled' && o.status!=='delivered' ? `<button class="btn btn-quiet mt-8" style="color:var(--bad);" onclick="confirmCancelOrder()">${icon('close',18)} Cancel order</button>` : ''}
+        ${!['cancelled','delivered','denied'].includes(o.status) ? `<button class="btn btn-quiet mt-8" style="color:var(--bad);" onclick="confirmCancelOrder()">${icon('close',18)} Cancel order</button>` : ''}
       </div>
     </div>
   </div>`;

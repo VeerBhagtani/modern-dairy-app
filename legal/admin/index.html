@@ -34,6 +34,7 @@
   .pill.pending_confirmation,.pill.packed,.pill.out_for_delivery{background:var(--warn-tint);color:var(--warn);}
   .pill.delivered{background:#e2f3e9;color:var(--fresh);}
   .pill.cancelled{background:#fbe4e2;color:var(--bad);}
+  .pill.denied{background:#fbe4e2;color:var(--bad);}
   .pill.in{background:#e2f3e9;color:var(--fresh);} .pill.low{background:var(--warn-tint);color:var(--warn);} .pill.out{background:#fbe4e2;color:var(--bad);}
   .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;padding:16px;z-index:10;}
   .modal-bg.on{display:flex;}
@@ -80,6 +81,7 @@ const db = getFirestore(app);
 const STATUS_LABEL = {
   placed: 'Placed', confirmed: 'Confirmed', pending_confirmation: 'Pending confirmation',
   packed: 'Packed', out_for_delivery: 'Out for delivery', delivered: 'Delivered', cancelled: 'Cancelled',
+  denied: 'Denied',
 };
 const STATUS_FLOW = ['placed', 'confirmed', 'packed', 'out_for_delivery', 'delivered'];
 
@@ -164,6 +166,7 @@ const FILTER_SECTIONS = [
   { id: 'confirmed', label: 'Order accepted' },
   { id: 'out_for_delivery', label: 'Out for delivery' },
   { id: 'delivered', label: 'Orders delivered' },
+  { id: 'denied', label: 'Orders denied' },
   { id: 'cancelled', label: 'Cancelled' },
 ];
 function filteredOrders(){
@@ -261,13 +264,32 @@ function openModal(id){
     <div class="row" style="border-top:1px solid var(--line);padding-top:10px;font-weight:700;"><span>Total</span><span>${money(o.total)}</span></div>
     ${o.status==='cancelled' ? `
     <div class="muted" style="margin:14px 0 4px;font-weight:600;font-size:.85rem;">STATUS</div>
-    <div class="status-btns"><button class="on" disabled style="background:#fbe4e2;color:var(--bad);border-color:#f3c6c2;cursor:default;">Cancelled by customer</button></div>` : `
+    <div class="status-btns"><button class="on" disabled style="background:#fbe4e2;color:var(--bad);border-color:#f3c6c2;cursor:default;">Cancelled by customer</button></div>` : o.status==='denied' ? `
+    <div class="muted" style="margin:14px 0 4px;font-weight:600;font-size:.85rem;">STATUS</div>
+    <div class="status-btns"><button class="on" disabled style="background:#fbe4e2;color:var(--bad);border-color:#f3c6c2;cursor:default;">Denied</button></div>
+    <div class="row" style="align-items:flex-start;"><span class="muted">Denied by</span><span>${esc(o.deniedBy||'—')}</span></div>
+    <div class="row" style="align-items:flex-start;"><span class="muted">Reason</span><span style="text-align:right;max-width:70%;">${esc(o.deniedReason||'—')}</span></div>` : `
     <div class="muted" style="margin:14px 0 4px;font-weight:600;font-size:.85rem;">UPDATE STATUS</div>
     <div class="status-btns">
       ${STATUS_FLOW.map(s=>`<button data-status="${s}" class="${o.status===s?'on':''}">${STATUS_LABEL[s]}</button>`).join('')}
+    </div>
+    <button id="btn-deny" class="btn-quiet btn-sm mt-8" style="width:100%;color:var(--bad);border-color:#f3c6c2;">Deny this order</button>
+    <div id="deny-form" style="display:none;margin-top:10px;">
+      <input id="deny-name" placeholder="Your name">
+      <textarea id="deny-reason" placeholder="Reason for denying this order" rows="3" style="width:100%;margin:8px 0;padding:8px;border:1px solid var(--line);border-radius:8px;font:inherit;"></textarea>
+      <button id="btn-deny-confirm" class="btn-sm" style="width:100%;background:var(--bad);color:#fff;border-color:var(--bad);">Confirm denial</button>
     </div>`}`;
   document.getElementById('btn-close').onclick = closeModal;
   document.querySelectorAll('#modal-content [data-status]').forEach(b => b.onclick = () => setStatus(id, b.dataset.status));
+  const denyBtn = document.getElementById('btn-deny');
+  if(denyBtn) denyBtn.onclick = () => { denyBtn.style.display='none'; document.getElementById('deny-form').style.display='block'; };
+  const denyConfirm = document.getElementById('btn-deny-confirm');
+  if(denyConfirm) denyConfirm.onclick = () => {
+    const name = document.getElementById('deny-name').value.trim();
+    const reason = document.getElementById('deny-reason').value.trim();
+    if(!name || !reason){ alert('Please enter your name and a reason before denying this order.'); return; }
+    denyOrder(id, name, reason);
+  };
   document.getElementById('modal-bg').classList.add('on');
 }
 function closeModal(){ document.getElementById('modal-bg')?.classList.remove('on'); openOrderId = null; }
@@ -277,6 +299,12 @@ async function setStatus(id, status){
     await updateDoc(doc(db, 'orders', id), { status, statusUpdatedAt: serverTimestamp() });
     closeModal();
   }catch(e){ alert('Could not update status: ' + e.message); }
+}
+async function denyOrder(id, deniedBy, deniedReason){
+  try{
+    await updateDoc(doc(db, 'orders', id), { status: 'denied', deniedBy, deniedReason, statusUpdatedAt: serverTimestamp() });
+    closeModal();
+  }catch(e){ alert('Could not deny order: ' + e.message); }
 }
 
 function startOrdersListener(){
