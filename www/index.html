@@ -805,6 +805,7 @@ const S = {
   cart: JSON.parse(localStorage.getItem('mda_cart')||'[]'),
   wallet: { balance:0, txns:[] },
   orders: [],
+  broadcasts: [],
   tab: 'catalogue',
   cat: 'all',
   query: '',
@@ -1511,7 +1512,7 @@ async function doVerifyOTP(){
   localStorage.setItem('mda_user',JSON.stringify(S.user));
   localStorage.setItem('mda_token',S.token);
   localStorage.setItem('mda_refresh',S.refresh);
-  await Promise.all([loadWallet(), loadOrders()]);
+  await Promise.all([loadWallet(), loadOrders(), loadBroadcasts()]);
   S.tab='home'; NAV.length=0; go('home',{replace:true});
 }
 
@@ -1586,6 +1587,9 @@ function scrHome(){
 
       ${APPCFG.announcement?`<div style="padding:14px 16px 0;">
         <div class="banner info">${icon('info',17)}<div>${esc(APPCFG.announcement)}</div></div></div>`:''}
+      ${(()=>{ const b=activeBroadcast(); return b?`<div style="padding:14px 16px 0;">
+        <div class="banner info" style="align-items:flex-start;">${icon('info',17)}<div class="grow">${esc(b.message)}</div>
+          <button class="iconbtn" style="margin:-8px -6px -8px 4px;flex-shrink:0;" onclick="dismissBroadcast('${esc(b.id)}')" aria-label="Dismiss">${icon('close',16)}</button></div></div>`:''; })()}
 
       <!-- Live order -->
       ${live?`<div style="padding:16px 16px 0;">
@@ -3206,6 +3210,30 @@ async function loadLiveCatalogueAndConfig(){
     }
   }catch(e){ console.warn('Could not load live catalogue/config, using bundled defaults:', e); }
 }
+// Admin broadcasts (backend/firestore.rules: public read, admin-only write)
+// — plain unauthenticated REST fetch, same as products/app_config above.
+async function loadBroadcasts(){
+  try{
+    const res = await fetch('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/broadcasts?pageSize=50');
+    if(!res.ok) return;
+    const data = await res.json();
+    S.broadcasts = (data.documents||[]).map(doc=>{
+      const f = fromFirestoreDoc(doc.fields);
+      return { id: doc.name.split('/').pop(), message: f.message, audience: f.audience||'all', createdAt: doc.createTime };
+    }).sort((a,b)=> new Date(b.createdAt) - new Date(a.createdAt));
+  }catch(e){ console.warn('Could not load broadcasts:', e); }
+}
+function activeBroadcast(){
+  const dismissed = JSON.parse(localStorage.getItem('mda_dismissed_broadcasts')||'[]');
+  const audience = isB2B() ? 'b2b' : 'b2c';
+  return (S.broadcasts||[]).find(b => !dismissed.includes(b.id) && (b.audience==='all' || b.audience===audience));
+}
+function dismissBroadcast(id){
+  const dismissed = JSON.parse(localStorage.getItem('mda_dismissed_broadcasts')||'[]');
+  if(!dismissed.includes(id)) dismissed.push(id);
+  localStorage.setItem('mda_dismissed_broadcasts', JSON.stringify(dismissed));
+  paint();
+}
 async function boot(){
   FB = await (window.__fbReady || Promise.resolve(null));
 
@@ -3234,7 +3262,7 @@ async function boot(){
   applyAdminOverrides();
   if(!S.user){ S.screen='login'; paint(); return; }
   S.screen='home'; S.tab='home'; paint();
-  await Promise.all([loadWallet(), loadOrders()]);
+  await Promise.all([loadWallet(), loadOrders(), loadBroadcasts()]);
   paint();
 }
 boot();

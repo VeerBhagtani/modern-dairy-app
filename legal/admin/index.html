@@ -63,7 +63,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFirestore, collection, query, orderBy, limit, onSnapshot, doc, updateDoc, setDoc, getDoc, serverTimestamp }
+import { getFirestore, collection, query, orderBy, limit, onSnapshot, doc, updateDoc, setDoc, getDoc, addDoc, deleteDoc, serverTimestamp }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 const firebaseConfig = {
@@ -89,7 +89,8 @@ const $app = document.getElementById('app');
 let tab = 'orders';
 let orders = [];
 let products = [];
-let unsubOrders = null, unsubProducts = null;
+let broadcasts = [];
+let unsubOrders = null, unsubProducts = null, unsubBroadcasts = null;
 let openOrderId = null;
 
 function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -141,6 +142,7 @@ function renderShell(bodyHtml){
       <div class="tabs">
         <button class="tab ${tab==='orders'?'on':''}" data-tab="orders">Orders</button>
         <button class="tab ${tab==='products'?'on':''}" data-tab="products">Products</button>
+        <button class="tab ${tab==='broadcasts'?'on':''}" data-tab="broadcasts">Broadcasts</button>
         <button class="tab ${tab==='settings'?'on':''}" data-tab="settings">Settings</button>
       </div>
       <div id="tab-body">${bodyHtml}</div>
@@ -154,6 +156,7 @@ function renderShell(bodyHtml){
 function render(){
   if(tab==='orders'){ renderShell(ordersBody()); wireOrdersEvents(); }
   else if(tab==='products'){ renderShell(productsBody()); wireProductsEvents(); }
+  else if(tab==='broadcasts'){ renderShell(broadcastsBody()); wireBroadcastsEvents(); }
   else { renderShell(settingsBody()); wireSettingsEvents(); }
 }
 
@@ -372,6 +375,66 @@ function startProductsListener(){
   }, err => console.error(err));
 }
 
+/* ── Broadcasts ───────────────────────────────────────── */
+const AUDIENCE_LABEL = { all: 'Everyone', b2b: 'Business customers', b2c: 'Personal customers' };
+function broadcastsBody(){
+  return `
+    <div class="card" style="padding:12px;margin-bottom:12px;">
+      <label>Message</label>
+      <textarea id="bc-message" rows="3" placeholder="e.g. Fresh paneer back in stock today!"></textarea>
+      <div class="grid2">
+        <div><label>Send to</label>
+          <select id="bc-audience">
+            <option value="all">Everyone</option>
+            <option value="b2b">Business customers only</option>
+            <option value="b2c">Personal customers only</option>
+          </select></div>
+      </div>
+      <button class="btn-primary" id="btn-send-broadcast">Send broadcast</button>
+    </div>
+    <div class="muted" style="margin-bottom:10px;">${broadcasts.length} sent</div>
+    <div class="card" style="padding:0;overflow:auto;">
+      ${!broadcasts.length ? `<div class="empty">No broadcasts sent yet. Customers will see the newest one as a banner on their Home screen until they dismiss it.</div>` : `
+      <table>
+        <thead><tr><th>Message</th><th>Audience</th><th>Sent</th><th></th></tr></thead>
+        <tbody>
+          ${broadcasts.map(b => `
+            <tr>
+              <td style="max-width:320px;">${esc(b.message)}</td>
+              <td>${AUDIENCE_LABEL[b.audience]||'Everyone'}</td>
+              <td class="muted">${fmtDate(b.createdAt)}</td>
+              <td><button class="btn-quiet btn-sm" data-delete="${esc(b.id)}" style="color:var(--bad);">Delete</button></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`}
+    </div>`;
+}
+function wireBroadcastsEvents(){
+  const btn = document.getElementById('btn-send-broadcast');
+  if(btn) btn.onclick = sendBroadcast;
+  document.querySelectorAll('[data-delete]').forEach(b => b.onclick = () => deleteBroadcast(b.dataset.delete));
+}
+async function sendBroadcast(){
+  const message = document.getElementById('bc-message').value.trim();
+  const audience = document.getElementById('bc-audience').value;
+  if(!message){ alert('Enter a message to send.'); return; }
+  try{
+    await addDoc(collection(db, 'broadcasts'), { message, audience, createdAt: serverTimestamp() });
+  }catch(e){ alert('Could not send broadcast: ' + e.message); }
+}
+async function deleteBroadcast(id){
+  if(!confirm('Delete this broadcast? Customers who haven\'t dismissed it will stop seeing it.')) return;
+  try{ await deleteDoc(doc(db, 'broadcasts', id)); }
+  catch(e){ alert('Could not delete: ' + e.message); }
+}
+function startBroadcastsListener(){
+  const q = query(collection(db, 'broadcasts'), orderBy('createdAt', 'desc'), limit(50));
+  unsubBroadcasts = onSnapshot(q, snap => {
+    broadcasts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if(tab==='broadcasts'){ render(); wireBroadcastsEvents(); }
+  }, err => console.error(err));
+}
+
 /* ── Settings (app_config/singleton) ─────────────────────── */
 let cfg = {};
 function settingsBody(){
@@ -427,12 +490,14 @@ onAuthStateChanged(auth, user => {
   if(user){
     startOrdersListener();
     startProductsListener();
+    startBroadcastsListener();
     loadSettings();
     render();
   }else{
     if(unsubOrders){ unsubOrders(); unsubOrders = null; }
     if(unsubProducts){ unsubProducts(); unsubProducts = null; }
-    orders = []; products = []; tab = 'orders';
+    if(unsubBroadcasts){ unsubBroadcasts(); unsubBroadcasts = null; }
+    orders = []; products = []; broadcasts = []; tab = 'orders';
     renderLogin();
   }
 });

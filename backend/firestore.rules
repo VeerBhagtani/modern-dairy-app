@@ -61,6 +61,12 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
+    // Admin broadcast announcements (e.g. "fresh paneer back in stock") —
+    // public read so any customer can see them, admin-only write/delete.
+    match /broadcasts/{broadcastId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
 
     // Everything else (customers, wallet ledgers, admin audit log, OTP
     // challenges) holds personal/financial data — admin-only, no exceptions.
