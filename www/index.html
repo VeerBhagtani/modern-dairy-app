@@ -627,10 +627,15 @@ let OTP_VERIFICATION_ID = null; // set by otpSend(), consumed by otpVerify()
 
 // One free-to-use test number for development — signing in with this number
 // never calls the real (paid) OTP provider at all, so testing the login flow
-// repeatedly doesn't cost anything. Any other number still goes through
-// Message Central for real.
+// repeatedly doesn't cost anything.
 const TEST_PHONE = '9000000000';
 const TEST_OTP = '0000';
+
+// TESTING MODE: while true, EVERY phone number (not just TEST_PHONE) skips
+// the real paid Message Central send and accepts 0000 as the code — so
+// nothing during testing can accidentally burn real OTP credit. Set this to
+// false before the real launch, once you're done testing with real numbers.
+const OTP_TESTING_MODE = true;
 
 /* ── Real GST verification via sandbox.co.in — called directly from the app,
    same reasoning as OTP: the backend that would normally own this isn't
@@ -701,7 +706,7 @@ async function otpApi(path, params, opts = {}) {
   return data;
 }
 async function otpSend(identifier) {
-  if (identifier === '91' + TEST_PHONE) { OTP_VERIFICATION_ID = 'test'; return { responseCode: 200, message: 'SUCCESS' }; }
+  if (OTP_TESTING_MODE || identifier === '91' + TEST_PHONE) { OTP_VERIFICATION_ID = 'test'; return { responseCode: 200, message: 'SUCCESS' }; }
   const mobileNumber = identifier.replace(/^91/, '');
   const data = await otpApi('/verification/v3/send',
     { countryCode: '91', customerId: OTP_CUSTOMER_ID, flowType: 'SMS', otpLength: '4', mobileNumber }, { method: 'POST' });
@@ -1249,7 +1254,7 @@ function forgotOtpForm(){
     <div class="t-md muted mb-16">Sent to +91 ${esc(RESET.phone)}</div>
     <input class="input mb-4" id="f-reset-otp" type="tel" inputmode="numeric" maxlength="${OTP_LENGTH}" placeholder="${'•'.repeat(OTP_LENGTH)}"
            style="text-align:center;font-size:22px;font-weight:700;letter-spacing:.5em;height:56px;">
-    <div class="hint mb-16" id="h-reset-otp">${RESET.phone===TEST_PHONE ? `Test number — the code is <b>${TEST_OTP}</b>.` : 'Enter the code sent by SMS.'}</div>
+    <div class="hint mb-16" id="h-reset-otp">${OTP_TESTING_MODE || RESET.phone===TEST_PHONE ? `Testing mode — the code is <b>${TEST_OTP}</b>.` : 'Enter the code sent by SMS.'}</div>
     <button class="btn" id="btn-reset-verify" onclick="doForgotVerify()">Verify</button>`;
 }
 async function doForgotVerify(){
@@ -1300,7 +1305,7 @@ function otpForm(){
     <div class="t-md muted mb-16">Sent to +91 ${esc(LOGIN.phone)} · <button class="t-md" style="color:var(--brand);font-weight:600;" onclick="LOGIN.step='${(LOGIN.mode==='b2b'&&LOGIN.authMode==='signup')?'contact':'entry'}';paint()">Change</button></div>
     <input class="input mb-4" id="f-otp" type="tel" inputmode="numeric" maxlength="${OTP_LENGTH}" placeholder="${'•'.repeat(OTP_LENGTH)}"
            style="text-align:center;font-size:22px;font-weight:700;letter-spacing:.5em;height:56px;">
-    <div class="hint mb-16" id="h-otp">${LOGIN.phone===TEST_PHONE ? `Test number — the code is <b>${TEST_OTP}</b>.` : (OTP_READY||FB) ? 'Enter the code sent by SMS.' : 'Demo mode — the code is <b>123456</b>.'}</div>
+    <div class="hint mb-16" id="h-otp">${OTP_TESTING_MODE || LOGIN.phone===TEST_PHONE ? `Testing mode — the code is <b>${TEST_OTP}</b>.` : (OTP_READY||FB) ? 'Enter the code sent by SMS.' : 'Demo mode — the code is <b>123456</b>.'}</div>
     <button class="btn" id="btn-verify" onclick="doVerifyOTP()">Verify and continue</button>
     <button class="btn btn-quiet mt-8" id="btn-resend" onclick="doResend()">Resend code</button>`;
 }
