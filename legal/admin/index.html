@@ -156,15 +156,51 @@ function render(){
 }
 
 /* ── Orders ───────────────────────────────────────────── */
+let orderFilter = 'all';
+let orderSearch = '';
+const FILTER_SECTIONS = [
+  { id: 'all', label: 'All' },
+  { id: 'placed', label: 'Orders placed' },
+  { id: 'confirmed', label: 'Order accepted' },
+  { id: 'out_for_delivery', label: 'Out for delivery' },
+  { id: 'delivered', label: 'Orders delivered' },
+];
+function filteredOrders(){
+  return orders.filter(o => {
+    if(orderFilter !== 'all' && (o.status||'placed') !== orderFilter) return false;
+    if(orderSearch && !String(o.orderNo||o.id||'').toLowerCase().includes(orderSearch.toLowerCase())) return false;
+    return true;
+  });
+}
 function ordersBody(){
+  // The search <input> lives outside #orders-list on purpose — only
+  // #orders-list is replaced on every keystroke, so the input's own DOM
+  // node (and cursor position) is never recreated while typing.
   return `
-    <div class="muted" style="margin-bottom:10px;">${orders.length} total</div>
+    <div class="card" style="padding:12px;margin-bottom:12px;">
+      <input id="order-search" placeholder="Search by order ID…" value="${esc(orderSearch)}" style="margin-bottom:12px;">
+      <div id="filter-chips" style="display:flex;flex-wrap:wrap;gap:6px;">
+        ${filterChipsHtml()}
+      </div>
+    </div>
+    <div id="orders-list">${ordersListHtml()}</div>`;
+}
+function filterChipsHtml(){
+  return FILTER_SECTIONS.map(s => {
+    const count = s.id==='all' ? orders.length : orders.filter(o=>(o.status||'placed')===s.id).length;
+    return `<button class="btn-quiet btn-sm" data-filter="${s.id}" style="background:${orderFilter===s.id?'var(--brand)':'var(--bg)'};color:${orderFilter===s.id?'#fff':'var(--ink)'};">${s.label} (${count})</button>`;
+  }).join('');
+}
+function ordersListHtml(){
+  const list = filteredOrders();
+  return `
+    <div class="muted" style="margin-bottom:10px;">${list.length} order${list.length===1?'':'s'}${orderFilter!=='all'||orderSearch?' matching':''}</div>
     <div class="card" style="padding:0;overflow:auto;">
-      ${!orders.length ? `<div class="empty">No orders yet. New orders from the app will appear here in real time.</div>` : `
+      ${!list.length ? `<div class="empty">${orders.length?'No orders match this filter/search.':'No orders yet. New orders from the app will appear here in real time.'}</div>` : `
       <table>
         <thead><tr><th>Order</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Placed</th></tr></thead>
         <tbody>
-          ${orders.map(o => `
+          ${list.map(o => `
             <tr data-id="${esc(o.id)}">
               <td><b>${esc(o.orderNo||o.id)}</b></td>
               <td>${esc(o.name||o.company||'—')}<br><span class="muted">${esc(o.phone||'')}</span></td>
@@ -178,7 +214,26 @@ function ordersBody(){
     </div>`;
 }
 function wireOrdersEvents(){
+  wireOrdersListEvents();
+  wireFilterChipEvents();
+  const search = document.getElementById('order-search');
+  if(search){
+    search.oninput = () => { orderSearch = search.value; refreshOrdersList(); };
+  }
+}
+function wireOrdersListEvents(){
   document.querySelectorAll('tr[data-id]').forEach(tr => tr.onclick = () => openModal(tr.dataset.id));
+}
+function wireFilterChipEvents(){
+  document.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { orderFilter = b.dataset.filter; refreshChips(); refreshOrdersList(); });
+}
+function refreshOrdersList(){
+  const el = document.getElementById('orders-list');
+  if(el){ el.innerHTML = ordersListHtml(); wireOrdersListEvents(); }
+}
+function refreshChips(){
+  const el = document.getElementById('filter-chips');
+  if(el){ el.innerHTML = filterChipsHtml(); wireFilterChipEvents(); }
 }
 
 function openModal(id){
@@ -220,7 +275,14 @@ function startOrdersListener(){
   const q = query(collection(db, 'orders'), orderBy('placedAt', 'desc'), limit(200));
   unsubOrders = onSnapshot(q, snap => {
     orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    if(tab==='orders'){ render(); wireOrdersEvents(); if(openOrderId) openModal(openOrderId); }
+    if(tab==='orders'){
+      // Refresh the list/chip counts in place — never re-render the search
+      // input itself, so a real-time update never steals focus/cursor
+      // position from an admin who's mid-search.
+      if(document.getElementById('orders-list')){ refreshOrdersList(); refreshChips(); }
+      else { render(); }
+      if(openOrderId) openModal(openOrderId);
+    }
   }, err => {
     $app.innerHTML = `<div class="wrap"><div class="card err">Could not load orders: ${esc(err.message)}</div></div>`;
   });

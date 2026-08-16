@@ -498,19 +498,54 @@ const mirrorApp = initializeApp(mirrorConfig, 'orderMirror');
 const mirrorAuth = getAuth(mirrorApp);
 const mirrorDb = getFirestore(mirrorApp);
 
+function buildOrderDoc(order) {
+  return {
+    orderNo: order.orderNo, items: order.items, subtotal: order.subtotal,
+    gst: order.gst, delivery: order.delivery, total: order.total,
+    payment: order.payment, customerType: order.customerType,
+    company: order.company || null, gstin: order.gstin || null,
+    name: order.name || null, phone: order.phone || null, address: order.address || null,
+    status: 'placed',
+  };
+}
+
+// Plain Firestore REST fallback — bypasses the Firestore SDK's real-time
+// (WebChannel/streaming) transport entirely, using a single POST instead.
+// Kept as a fallback because that streaming transport has a known history
+// of breaking silently under WebView network interception (e.g. Capacitor's
+// CapacitorHttp plugin, now disabled, was exactly this) — a plain fetch is
+// far more reliable in a Capacitor WebView than a long-lived stream.
+function toFirestoreValue(v) {
+  if (v === null || v === undefined) return { nullValue: null };
+  if (typeof v === 'string') return { stringValue: v };
+  if (typeof v === 'boolean') return { booleanValue: v };
+  if (typeof v === 'number') return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  if (Array.isArray(v)) return { arrayValue: { values: v.map(toFirestoreValue) } };
+  if (typeof v === 'object') return { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, val]) => [k, toFirestoreValue(val)])) } };
+  return { stringValue: String(v) };
+}
+async function mirrorOrderViaRest(order, idToken) {
+  const fields = toFirestoreValue({ ...buildOrderDoc(order), placedAt: new Date().toISOString() }).mapValue.fields;
+  const res = await fetch('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/orders', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields }),
+  });
+  if (!res.ok) throw new Error(`Firestore REST write failed (HTTP ${res.status})`);
+}
+
 window.mirrorOrderToFirestore = async function(order) {
   try {
     if (!mirrorAuth.currentUser) await signInAnonymously(mirrorAuth);
-    await addDoc(collection(mirrorDb, 'orders'), {
-      orderNo: order.orderNo, items: order.items, subtotal: order.subtotal,
-      gst: order.gst, delivery: order.delivery, total: order.total,
-      payment: order.payment, customerType: order.customerType,
-      company: order.company || null, gstin: order.gstin || null,
-      name: order.name || null, phone: order.phone || null, address: order.address || null,
-      status: 'placed', placedAt: serverTimestamp(),
-    });
+    await addDoc(collection(mirrorDb, 'orders'), { ...buildOrderDoc(order), placedAt: serverTimestamp() });
   } catch (e) {
-    console.warn('Could not mirror order to Firestore (admin website will not see this one):', e);
+    console.warn('Firestore SDK write failed, falling back to plain REST:', e);
+    try {
+      const token = await mirrorAuth.currentUser.getIdToken();
+      await mirrorOrderViaRest(order, token);
+    } catch (e2) {
+      console.warn('Could not mirror order to Firestore at all (admin website will not see this one):', e2);
+    }
   }
 };
 </script>
