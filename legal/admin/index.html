@@ -164,11 +164,17 @@ const FILTER_SECTIONS = [
   { id: 'confirmed', label: 'Order accepted' },
   { id: 'out_for_delivery', label: 'Out for delivery' },
   { id: 'delivered', label: 'Orders delivered' },
+  { id: 'cancelled', label: 'Cancelled' },
 ];
 function filteredOrders(){
   return orders.filter(o => {
     if(orderFilter !== 'all' && (o.status||'placed') !== orderFilter) return false;
-    if(orderSearch && !String(o.orderNo||o.id||'').toLowerCase().includes(orderSearch.toLowerCase())) return false;
+    if(orderSearch){
+      const q = orderSearch.toLowerCase();
+      const inOrderNo = String(o.orderNo||o.id||'').toLowerCase().includes(q);
+      const inItems = (o.items||[]).some(i => String(i.name||'').toLowerCase().includes(q));
+      if(!inOrderNo && !inItems) return false;
+    }
     return true;
   });
 }
@@ -178,7 +184,7 @@ function ordersBody(){
   // node (and cursor position) is never recreated while typing.
   return `
     <div class="card" style="padding:12px;margin-bottom:12px;">
-      <input id="order-search" placeholder="Search by order ID…" value="${esc(orderSearch)}" style="margin-bottom:12px;">
+      <input id="order-search" placeholder="Search by order ID or product name…" value="${esc(orderSearch)}" style="margin-bottom:12px;">
       <div id="filter-chips" style="display:flex;flex-wrap:wrap;gap:6px;">
         ${filterChipsHtml()}
       </div>
@@ -253,11 +259,13 @@ function openModal(id){
       ${(o.items||[]).map(i=>`<div class="row"><span>${esc(i.name)} (${esc(i.label||'')}) × ${i.qty}</span><span>${money(i.price*i.qty)}</span></div>`).join('')}
     </div>
     <div class="row" style="border-top:1px solid var(--line);padding-top:10px;font-weight:700;"><span>Total</span><span>${money(o.total)}</span></div>
+    ${o.status==='cancelled' ? `
+    <div class="muted" style="margin:14px 0 4px;font-weight:600;font-size:.85rem;">STATUS</div>
+    <div class="status-btns"><button class="on" disabled style="background:#fbe4e2;color:var(--bad);border-color:#f3c6c2;cursor:default;">Cancelled by customer</button></div>` : `
     <div class="muted" style="margin:14px 0 4px;font-weight:600;font-size:.85rem;">UPDATE STATUS</div>
     <div class="status-btns">
       ${STATUS_FLOW.map(s=>`<button data-status="${s}" class="${o.status===s?'on':''}">${STATUS_LABEL[s]}</button>`).join('')}
-      <button data-status="cancelled" class="${o.status==='cancelled'?'on':''}" style="background:#fbe4e2;color:var(--bad);border-color:#f3c6c2;">Cancelled</button>
-    </div>`;
+    </div>`}`;
   document.getElementById('btn-close').onclick = closeModal;
   document.querySelectorAll('#modal-content [data-status]').forEach(b => b.onclick = () => setStatus(id, b.dataset.status));
   document.getElementById('modal-bg').classList.add('on');

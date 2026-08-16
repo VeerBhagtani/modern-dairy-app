@@ -52,4 +52,31 @@ async function createDelivery({ customerId, pickup, dropoff, manifest }) {
   return res.json();
 }
 
-module.exports = { createDelivery };
+// Gets Uber's actual quoted delivery cost for a pickup→dropoff pair, without
+// booking anything (Uber's /delivery_quotes endpoint is quote-only, no charge).
+async function getDeliveryQuote({ customerId, pickupAddress, dropoffAddress }) {
+  const token = await getAccessToken();
+  const res = await fetch(`${API_BASE}/customers/${customerId}/delivery_quotes`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pickup_address: pickupAddress, dropoff_address: dropoffAddress }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    const err = new Error(`Uber Direct quote failed (${res.status}): ${body.slice(0, 300)}`);
+    err.code = 'PROVIDER_ERROR';
+    throw err;
+  }
+  const data = await res.json();
+  return { feePaise: data.fee, currency: data.currency, expiresAt: data.expires, raw: data };
+}
+
+// NOT YET WIRED TO CHECKOUT — awaiting go-ahead. Per owner: charge Uber's
+// actual quoted cost plus a flat ₹20 markup (percentage-based markups came
+// out to only ₹5-6 on typical in-city hops, too low to be worth it).
+const DELIVERY_MARKUP_PAISE = 20 * 100;
+function calculateDeliveryFee(uberQuoteFeePaise) {
+  return uberQuoteFeePaise + DELIVERY_MARKUP_PAISE;
+}
+
+module.exports = { createDelivery, getDeliveryQuote, calculateDeliveryFee, DELIVERY_MARKUP_PAISE };

@@ -12,18 +12,39 @@ service cloud.firestore {
     function isAdmin() {
       return request.auth != null && request.auth.uid == '63cH4Dduh4WS7okdV0s0DcJtD7q2';
     }
+    function isOwner() {
+      return request.auth != null && resource.data.createdByUid == request.auth.uid;
+    }
+    // Statuses a customer is still allowed to cancel from — once an order
+    // is out for delivery (or later), only the admin can see it change and
+    // the customer must call in instead. This must match CANCELLABLE_STATUSES
+    // in www/index.html — keep both in sync if either changes.
+    function isCancellable(status) {
+      return status in ['placed', 'confirmed', 'pending_confirmation', 'packed'];
+    }
 
-    // Orders: any authenticated (including anonymous) client can create an
-    // order with the expected shape — never read, update, or delete someone
-    // else's (or even their own) order once written. Only the admin website
-    // can read the order list or change status.
     match /orders/{orderId} {
+      // Any authenticated (including anonymous) client can create an order
+      // with the expected shape, tagged with their own uid as the owner.
       allow create: if request.auth != null
-                    && request.resource.data.keys().hasAll(['orderNo', 'items', 'total', 'status', 'placedAt'])
+                    && request.resource.data.keys().hasAll(['orderNo', 'items', 'total', 'status', 'placedAt', 'createdByUid'])
+                    && request.resource.data.createdByUid == request.auth.uid
                     && request.resource.data.total is number
                     && request.resource.data.items is list
                     && request.resource.data.items.size() > 0 && request.resource.data.items.size() <= 50;
-      allow read, update, delete: if isAdmin();
+
+      // Owner can read their own order (powers live status sync back to the
+      // phone) and can self-cancel it — but ONLY while still cancellable,
+      // ONLY by setting status to 'cancelled', and ONLY that field (plus a
+      // cancelledAt timestamp) may change. No human — including the admin —
+      // can set an order to cancelled; that status is customer-triggered only.
+      allow read: if isAdmin() || isOwner();
+      allow update: if isAdmin()
+                    || (isOwner()
+                        && isCancellable(resource.data.status)
+                        && request.resource.data.status == 'cancelled'
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelledAt']));
+      allow delete: if isAdmin();
     }
 
     // Catalogue/config: public read (so the app could fetch these directly

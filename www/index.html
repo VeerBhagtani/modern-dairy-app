@@ -484,7 +484,7 @@ if (firebaseConfig.apiKey === "PASTE_API_KEY") {
    create here — never read/update/delete — see backend/firestore.rules. ── */
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFirestore, collection, addDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 const mirrorConfig = {
   apiKey: "AIzaSyD-3RNHrI9ZPmdTioLiuCi2gjwdNXZH8HI",
@@ -498,22 +498,32 @@ const mirrorApp = initializeApp(mirrorConfig, 'orderMirror');
 const mirrorAuth = getAuth(mirrorApp);
 const mirrorDb = getFirestore(mirrorApp);
 
-function buildOrderDoc(order) {
+// Statuses a customer can still self-cancel from. Must match isCancellable()
+// in backend/firestore.rules — the rule is the real enforcement, this is
+// just so the UI doesn't offer a cancel that the rule would reject anyway.
+const CANCELLABLE_STATUSES = ['placed', 'confirmed', 'pending_confirmation', 'packed'];
+
+async function ensureSignedIn() {
+  if (!mirrorAuth.currentUser) await signInAnonymously(mirrorAuth);
+  return mirrorAuth.currentUser;
+}
+
+function buildOrderDoc(order, uid) {
   return {
     orderNo: order.orderNo, items: order.items, subtotal: order.subtotal,
     gst: order.gst, delivery: order.delivery, total: order.total,
     payment: order.payment, customerType: order.customerType,
     company: order.company || null, gstin: order.gstin || null,
     name: order.name || null, phone: order.phone || null, address: order.address || null,
-    status: 'placed',
+    status: 'placed', createdByUid: uid,
   };
 }
 
 // Plain Firestore REST fallback — bypasses the Firestore SDK's real-time
-// (WebChannel/streaming) transport entirely, using a single POST instead.
+// (WebChannel/streaming) transport entirely, using plain HTTP instead.
 // Kept as a fallback because that streaming transport has a known history
 // of breaking silently under WebView network interception (e.g. Capacitor's
-// CapacitorHttp plugin, now disabled, was exactly this) — a plain fetch is
+// CapacitorHttp plugin, now disabled, was exactly this) — plain fetch is
 // far more reliable in a Capacitor WebView than a long-lived stream.
 function toFirestoreValue(v) {
   if (v === null || v === undefined) return { nullValue: null };
@@ -524,29 +534,59 @@ function toFirestoreValue(v) {
   if (typeof v === 'object') return { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, val]) => [k, toFirestoreValue(val)])) } };
   return { stringValue: String(v) };
 }
-async function mirrorOrderViaRest(order, idToken) {
-  const fields = toFirestoreValue({ ...buildOrderDoc(order), placedAt: new Date().toISOString() }).mapValue.fields;
+async function mirrorOrderViaRest(order, uid, idToken) {
+  const fields = toFirestoreValue({ ...buildOrderDoc(order, uid), placedAt: new Date().toISOString() }).mapValue.fields;
   const res = await fetch('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/orders', {
     method: 'POST',
     headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ fields }),
   });
   if (!res.ok) throw new Error(`Firestore REST write failed (HTTP ${res.status})`);
+  const body = await res.json();
+  return body.name.split('/').pop();
 }
 
+// Returns the created Firestore doc id (or null if the write failed
+// entirely), so the app can target this exact doc later for live status
+// sync and self-cancel — no query/read-list permission needed for that.
 window.mirrorOrderToFirestore = async function(order) {
   try {
-    if (!mirrorAuth.currentUser) await signInAnonymously(mirrorAuth);
-    await addDoc(collection(mirrorDb, 'orders'), { ...buildOrderDoc(order), placedAt: serverTimestamp() });
+    const user = await ensureSignedIn();
+    const ref = await addDoc(collection(mirrorDb, 'orders'), { ...buildOrderDoc(order, user.uid), placedAt: serverTimestamp() });
+    return ref.id;
   } catch (e) {
     console.warn('Firestore SDK write failed, falling back to plain REST:', e);
     try {
-      const token = await mirrorAuth.currentUser.getIdToken();
-      await mirrorOrderViaRest(order, token);
+      const user = await ensureSignedIn();
+      const token = await user.getIdToken();
+      return await mirrorOrderViaRest(order, user.uid, token);
     } catch (e2) {
       console.warn('Could not mirror order to Firestore at all (admin website will not see this one):', e2);
+      return null;
     }
   }
+};
+
+// Live status sync: called when the order-tracking screen is open. Returns
+// an unsubscribe function. onChange(status|null) fires once immediately
+// with the current value, then again on every admin-side status change.
+window.listenToOrderStatus = function(firestoreId, onChange) {
+  try {
+    return onSnapshot(doc(mirrorDb, 'orders', firestoreId),
+      snap => onChange(snap.exists() ? snap.data().status : null),
+      err => { console.warn('Order status listener failed:', err); onChange(null); });
+  } catch (e) {
+    console.warn('Could not start order status listener:', e);
+    return () => {};
+  }
+};
+
+// Self-cancel, customer-initiated only — enforced server-side by
+// backend/firestore.rules (owner + still-cancellable + status-only diff),
+// this call just attempts it and reports success/failure.
+window.cancelOrderInFirestore = async function(firestoreId) {
+  await ensureSignedIn();
+  await updateDoc(doc(mirrorDb, 'orders', firestoreId), { status: 'cancelled', cancelledAt: serverTimestamp() });
 };
 </script>
 <script>
@@ -2073,9 +2113,22 @@ async function placeOrder(){
     toast(r.message||'Could not place the order. Try again.','alert'); return;
   }
   S.lastOrder={...r.data, items:payload.items, total:payload.total, payment:PAY};
-  if(window.mirrorOrderToFirestore) window.mirrorOrderToFirestore({...payload, orderNo:r.data.orderNo});
   S.cart=[]; persist(); await loadWallet();
   go('placed',{replace:true});
+  // Fire-and-forget: doesn't block navigation, but once the doc id comes
+  // back it's saved onto the local order record so the tracking screen can
+  // live-listen to status changes and self-cancel against the right doc.
+  if(window.mirrorOrderToFirestore){
+    window.mirrorOrderToFirestore({...payload, orderNo:r.data.orderNo}).then(firestoreId=>{
+      if(!firestoreId) return;
+      const list = DB.orders;
+      const idx = list.findIndex(o=>o.orderNo===r.data.orderNo);
+      if(idx!==-1){ list[idx] = {...list[idx], firestoreId}; DB.orders = list; }
+      if(S.lastOrder?.orderNo===r.data.orderNo) S.lastOrder = {...S.lastOrder, firestoreId};
+      const oi = S.orders.findIndex(o=>o.orderNo===r.data.orderNo);
+      if(oi!==-1) S.orders[oi] = {...S.orders[oi], firestoreId};
+    });
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -2156,15 +2209,66 @@ function ordersBody(){
     </div>`;
   }).join('')}<div style="height:calc(24px + var(--safe-b));"></div></div>`;
 }
+let ORDER_STATUS_UNSUB = null;
+const CANCELLABLE_STATUSES = ['placed','confirmed','pending_confirmation','packed']; // must match backend/firestore.rules isCancellable()
+function stopOrderStatusListener(){ if(ORDER_STATUS_UNSUB){ ORDER_STATUS_UNSUB(); ORDER_STATUS_UNSUB=null; } }
+function startOrderStatusListener(o){
+  stopOrderStatusListener();
+  if(!o?.firestoreId || !window.listenToOrderStatus) return;
+  ORDER_STATUS_UNSUB = window.listenToOrderStatus(o.firestoreId, (status)=>{
+    if(!status || status===S.order?.status) return;
+    S.order = {...S.order, status};
+    const list = DB.orders;
+    const idx = list.findIndex(x=>x.orderNo===o.orderNo);
+    if(idx!==-1){ list[idx] = {...list[idx], status}; DB.orders = list; }
+    const oi = S.orders.findIndex(x=>x.orderNo===o.orderNo);
+    if(oi!==-1) S.orders[oi] = {...S.orders[oi], status};
+    if(S.screen==='order') paint();
+  });
+}
 async function openOrder(no){
   if(!no) return;
   if(FIRESTORE_LIVE && FB && S.user?.id){
     const o=S.orders.find(x=>x.orderNo===no);
-    if(o){ S.order=o; go('order'); return; }
+    if(o){ S.order=o; go('order'); startOrderStatusListener(o); return; }
   }
   const r=await API.get('/orders/'+no);
   if(!r.success){ toast('Could not load that order','alert'); return; }
   S.order=r.data; go('order');
+  startOrderStatusListener(r.data);
+}
+async function doCancelOrder(){
+  const o=S.order; if(!o?.firestoreId) return;
+  if(!CANCELLABLE_STATUSES.includes(o.status)) return;
+  try{ await window.cancelOrderInFirestore(o.firestoreId); }
+  catch(e){ closeSheet(); toast('Could not cancel — please call us instead.','alert'); return; }
+  S.order = {...o, status:'cancelled'};
+  const list = DB.orders;
+  const idx = list.findIndex(x=>x.orderNo===o.orderNo);
+  if(idx!==-1){ list[idx] = {...list[idx], status:'cancelled'}; DB.orders = list; }
+  const oi = S.orders.findIndex(x=>x.orderNo===o.orderNo);
+  if(oi!==-1) S.orders[oi] = {...S.orders[oi], status:'cancelled'};
+  closeSheet(); paint();
+  toast('Order cancelled','check');
+}
+function confirmCancelOrder(){
+  const o=S.order; if(!o) return;
+  if(!CANCELLABLE_STATUSES.includes(o.status)){
+    openSheet(`<div class="sheet-head"><div class="t-lg">Can't cancel from here</div>
+        <button class="iconbtn" onclick="closeSheet()">${icon('close',20)}</button></div>
+      <div class="section">
+        <div class="banner warn mb-16">${icon('alert',17)}<div>This order is already ${(STATUS[o.status]||STATUS.placed).l.toLowerCase()} — please call us to cancel or make changes.</div></div>
+        <a class="btn" href="tel:${APPCFG.supportPhone}">${icon('phone',18)} Call ${esc(APPCFG.supportPhone)}</a>
+      </div>`);
+    return;
+  }
+  openSheet(`<div class="sheet-head"><div class="t-lg">Cancel this order?</div>
+      <button class="iconbtn" onclick="closeSheet()">${icon('close',20)}</button></div>
+    <div class="section">
+      <div class="t-md muted mb-16">${esc(o.orderNo)} · ${money(o.total)} will be cancelled. This can't be undone from the app.</div>
+      <button class="btn" style="background:var(--bad);border-color:var(--bad);" onclick="doCancelOrder()">Yes, cancel order</button>
+      <button class="btn btn-quiet mt-8" onclick="closeSheet()">Keep order</button>
+    </div>`);
 }
 function scrOrder(){
   const o=S.order; if(!o) return `<div class="screen on">${navBar('Order')}${stateBlock('alert','Order not found','','')}</div>`;
@@ -2209,6 +2313,7 @@ function scrOrder(){
       <div style="padding:0 16px calc(24px + var(--safe-b));">
         <button class="btn btn-ghost" onclick="reorder('${esc(o.orderNo)}')">${icon('repeat',18)} Reorder these items</button>
         <a class="btn btn-quiet mt-8" href="tel:${APPCFG.supportPhone}">${icon('phone',18)} Call about this order</a>
+        ${o.status!=='cancelled' && o.status!=='delivered' ? `<button class="btn btn-quiet mt-8" style="color:var(--bad);" onclick="confirmCancelOrder()">${icon('close',18)} Cancel order</button>` : ''}
       </div>
     </div>
   </div>`;
