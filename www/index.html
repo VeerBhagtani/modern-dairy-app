@@ -1062,7 +1062,7 @@ function paint(){
 function navBar(title, opts={}){
   return `<div class="topbar">
     ${opts.noBack?'':`<button class="iconbtn" onclick="back()" aria-label="Back">${icon('left',22)}</button>`}
-    <img src="${APPCFG.logo}" alt="" style="width:34px;height:34px;object-fit:contain;flex-shrink:0;">
+    <img src="${APPCFG.logo}" alt="" style="width:46px;height:46px;object-fit:contain;flex-shrink:0;">
     <div class="grow"><div class="t-lg truncate">${esc(title)}</div>
       ${opts.sub?`<div class="t-sm muted truncate">${esc(opts.sub)}</div>`:''}</div>
     ${opts.action||''}
@@ -1096,7 +1096,7 @@ let LOGIN = {mode:'b2b', authMode:'signup', step:'entry', gstin:'', company:'', 
 function scrLogin(){
   return `<div class="screen on" style="background:var(--surface);">
     <div style="padding:calc(var(--safe-t) + 40px) 24px 24px;">
-      <img src="${APPCFG.logo}" alt="" onclick="tapLogo()" style="width:52px;height:52px;object-fit:contain;margin-bottom:20px;-webkit-tap-highlight-color:transparent;">
+      <img src="${APPCFG.logo}" alt="" onclick="tapLogo()" style="width:88px;height:88px;object-fit:contain;margin-bottom:20px;-webkit-tap-highlight-color:transparent;">
       <div class="t-2xl mb-4">${LOGIN.authMode==='signin'?'Welcome back':'Order for your business'}</div>
       <div class="t-md muted">Wholesale dairy, frozen and beverage supply across Pune.</div>
     </div>
@@ -1541,7 +1541,7 @@ function scrHome(){
       <header style="background:var(--brand);padding:calc(var(--safe-t) + 16px) 16px 14px;">
         <div class="row between">
           <div class="row gap-10" style="min-width:0;">
-            <img src="${APPCFG.logo}" alt="" style="width:44px;height:44px;object-fit:contain;flex-shrink:0;">
+            <img src="${APPCFG.logo}" alt="" style="width:56px;height:56px;object-fit:contain;flex-shrink:0;">
             <div style="min-width:0;">
               <div class="t-caption" style="color:rgba(255,255,255,.6);">${greet}, ${esc(first)}</div>
               <div class="truncate t-h3" style="color:#fff;margin-top:1px;">
@@ -1713,7 +1713,7 @@ function scrCatalogue(){
     <header class="appbar">
       <div class="appbar-row mb-12">
         <div class="row gap-10 grow" style="min-width:0;">
-          <img src="${APPCFG.logo}" alt="" style="width:38px;height:38px;object-fit:contain;flex-shrink:0;">
+          <img src="${APPCFG.logo}" alt="" style="width:48px;height:48px;object-fit:contain;flex-shrink:0;">
           <div class="grow" style="min-width:0;">
             <div class="t-xs" style="color:rgba(255,255,255,.62);font-weight:600;letter-spacing:.04em;text-transform:uppercase;">
               ${isB2B()?'Business account':'Personal account'}</div>
@@ -2985,7 +2985,7 @@ Today, the leadership team continues to expand the vision — focusing on innova
   ];
   return `<div class="screen on">${navBar('About Modern Dairy')}
     <div class="scroll section">
-      <img src="${APPCFG.logo}" style="width:56px;height:56px;object-fit:contain;margin-bottom:16px;">
+      <img src="${APPCFG.logo}" style="width:76px;height:76px;object-fit:contain;margin-bottom:16px;">
       <div class="t-xl mb-16">Our journey</div>
       ${chapters.map(c=>`
         <div class="mb-24">

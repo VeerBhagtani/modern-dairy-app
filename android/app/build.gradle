@@ -35,8 +35,23 @@ android {
                 keyPassword releaseKeyPassword
             }
         }
+        // A checked-in, stable debug key — NOT the AGP-default one, which is
+        // auto-generated fresh on every CI runner. A changing debug signature
+        // forces "uninstall old app before installing new" on-device, which
+        // wipes localStorage (login session, cart, saved addresses) on every
+        // update. Using the same key across builds lets `adb install -r` /
+        // Play-style "update" installs replace the APK in place and keep data.
+        debug {
+            storeFile file('keystores/debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
     }
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
