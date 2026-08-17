@@ -1,0 +1,82 @@
+name: Build iOS IPA (unsigned, for local sideloading)
+
+# Produces a genuinely UNSIGNED .ipa for a real iPhone (arm64 device slice,
+# not Simulator) — this cannot be installed on an iPhone as-is. Apple
+# requires every app installed on a real device to be code-signed with a
+# real Apple ID, and doing that non-interactively from CI would mean
+# putting an Apple ID/password or a signing certificate + private key into
+# GitHub Secrets, which this repo deliberately does not do (no paid Apple
+# Developer Program account here, and credentials never belong in CI for a
+# personal project like this).
+#
+# Instead: this workflow automates everything that CAN be automated (build
+# + package + publish), and the one remaining step — signing the IPA with
+# your own free Apple ID — happens locally on your computer using a
+# sideloading tool (Sideloadly or AltStore/AltServer). See IOS_IPA_BUILD.md
+# for the full walkthrough.
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # needed to publish/update the GitHub Release below
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Add iOS platform
+        run: |
+          npx cap add ios
+          npx cap sync ios
+
+      - name: Build for a real iPhone (device slice), unsigned
+        working-directory: ios/App
+        run: |
+          xcodebuild -workspace App.xcworkspace -scheme App \
+            -sdk iphoneos -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            build
+
+      - name: Package as an IPA (Payload/App.app)
+        working-directory: ios/App/build/Build/Products/Release-iphoneos
+        run: |
+          mkdir -p Payload
+          cp -R App.app Payload/
+          zip -r -y ModernDairy-unsigned.ipa Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: modern-dairy-ios-unsigned-ipa
+          path: ios/App/build/Build/Products/Release-iphoneos/ModernDairy-unsigned.ipa
+
+      - name: Publish/update the "latest" GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-latest
+          name: "iOS IPA (unsigned) — latest build"
+          body: |
+            Automatically built by GitHub Actions from commit ${{ github.sha }}.
+
+            This IPA is **unsigned** — it will NOT install by tapping it on
+            an iPhone. Sign + install it locally with Sideloadly or
+            AltStore using your own free Apple ID. See IOS_IPA_BUILD.md in
+            the repo for exact steps.
+          files: ios/App/build/Build/Products/Release-iphoneos/ModernDairy-unsigned.ipa
+          make_latest: true

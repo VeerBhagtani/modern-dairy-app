@@ -9,6 +9,19 @@ android/captures/
 *.aab
 .idea/
 
+# iOS — the native project is generated on demand (`npx cap add ios`), same
+# as CI does; never commit it or anything signing-related.
+ios/
+*.ipa
+*.mobileprovision
+*.p12
+*.cer
+*.certSigningRequest
+*.p8
+exportOptions.plist
+DerivedData/
+*.xcarchive
+
 # Secrets — real credentials belong in Secret Manager / Cloud Run env config,
 # never in a committed file. These patterns exist as a backstop in case a
 # local .env is ever created for backend dev.
