@@ -214,7 +214,7 @@ function ordersListHtml(){
         <tbody>
           ${list.map(o => `
             <tr data-id="${esc(o.id)}">
-              <td><b>${esc(o.orderNo||o.id)}</b></td>
+              <td><b>${esc(o.orderNo||o.id)}</b>${o.priceMismatch?' <span title="Price mismatch vs catalogue" style="color:var(--bad);">⚠</span>':''}</td>
               <td>${esc(o.name||o.company||'—')}<br><span class="muted">${esc(o.phone||'')}</span></td>
               <td>${(o.items||[]).length}</td>
               <td>${money(o.total)}</td>
@@ -257,6 +257,9 @@ function openModal(id){
       <div><b style="font-size:1.1rem;">${esc(o.orderNo||o.id)}</b><div class="muted">${fmtDate(o.placedAt)}</div></div>
       <button class="close-x" id="btn-close">×</button>
     </div>
+    ${o.priceMismatch ? `<div style="margin:10px 0;padding:10px;border-radius:8px;background:#fbe4e2;color:var(--bad);font-size:.85rem;">
+      <b>⚠ Price mismatch detected</b> — this order's price doesn't match the current catalogue. Verify before fulfilling.<br>${esc(o.priceMismatchDetail||'')}
+    </div>` : ''}
     <div class="row"><span class="muted">Customer</span><span>${esc(o.name||'—')}${o.company?` (${esc(o.company)})`:''}</span></div>
     <div class="row"><span class="muted">Phone</span><span>${esc(o.phone||'—')}</span></div>
     ${o.gstin?`<div class="row"><span class="muted">GSTIN</span><span>${esc(o.gstin)}</span></div>`:''}

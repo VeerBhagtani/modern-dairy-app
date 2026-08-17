@@ -35,6 +35,28 @@ A real Node.js backend exists in the repo but is still not deployed.
   checked into the repo anywhere.
 
 ## Done so far (this session, on top of everything below)
+- **Security audit + fix: forged order prices.** Ran a real (not just diff)
+  security review. Finding: `orders` create rule in `firestore.rules` only
+  checked `total is number` — never validated it against real catalogue
+  prices, so anyone with the app's public Firebase config could write an
+  order directly to Firestore at any price (e.g. real items, `total: 1`).
+  Fixed with two changes, both deployed live:
+  - `backend/firestore.rules` — items must now have positive, bounded
+    price/qty, and `total` is capped at ₹5,00,000 (defense-in-depth only —
+    Firestore rules can't cheaply re-check price against the catalogue for
+    up to 50 items per write, so this alone doesn't close the gap).
+  - `backend/scripts/verify-order-prices.js` +
+    `.github/workflows/verify-order-prices.yml` — new GitHub Actions cron
+    (every 3 min, same zero-cost pattern as the broadcast push relay) that
+    re-checks every new order's item prices against the live `products`
+    collection and flags mismatches (`priceMismatch`/`priceMismatchDetail`
+    on the order doc, surfaced as a ⚠ badge + warning banner in the admin
+    website). Real fix (server-side price computation) still needs the
+    backend deployed (Sept 11).
+  - Also checked: the in-app "super admin" panel (logo-tap, `moderndairy`)
+    and the admin website's own login — both confirmed **not** exploitable;
+    admin website login is real Firebase Auth, and every privileged write is
+    gated by `isAdmin()` in the rules regardless of client-side UI state.
 - **Admin website went live**, directly on Firestore (no backend needed):
   Orders (live status, search by order ID *and* product name, filter chips
   for every status including Cancelled/Denied), Products (price/MOQ/stock
@@ -137,10 +159,18 @@ A real Node.js backend exists in the repo but is still not deployed.
   actioned yet.
 - **`OTP_TESTING_MODE` must be flipped off before real launch** — flagged
   above and in the code, easy to forget.
-- **Uber Direct integration** — customer ID/client ID/client secret still
-  not actually received (asked for, never came through in a message). Quote
-  + delivery-fee helper is written and ready, not wired to checkout, no live
-  API call has been tested with real credentials yet.
+- **Uber Direct integration** — real customer ID/client ID/client secret were
+  received and live-tested (2026-08-17): OAuth `client_credentials` auth
+  succeeds (credentials are valid), but the `eats.deliveries` scope is
+  rejected as `invalid_scope` — same result with no scope param at all. This
+  means the **Uber Direct product hasn't been enabled/approved for this app**
+  on Uber's developer dashboard yet — needs action on Uber's side before the
+  scope will work. Credentials were **not** written anywhere (repo rule: real
+  creds only ever go in GCP Secret Manager, never committed/local files) —
+  they'll need to be re-supplied once Secret Manager is available (Sept 11)
+  or once the scope issue is resolved and a quick recheck is wanted sooner.
+  Quote + delivery-fee helper (`backend/src/services/uberDirectClient.js`)
+  is written and ready, not wired to checkout.
 - **Two secrets still ship inside the public APK/repo**: the Message Central
   auth token and the sandbox.co.in API key+secret. Should move server-side
   once the backend is deployed.
@@ -152,8 +182,10 @@ A real Node.js backend exists in the repo but is still not deployed.
    deploy `backend/`, move the two exposed secrets server-side, and consider
    moving the push-notification relay from the free GitHub Actions cron to
    a proper Cloud Function (not required, just cleaner once available).
-3. Get real Uber Direct credentials, do a one-time live auth/quote check,
-   then decide whether/how to wire the delivery-fee helper into checkout.
+3. Resolve the Uber Direct `invalid_scope` issue (enable/approve the Direct
+   API product for this app on Uber's developer dashboard), then re-supply
+   the credentials for a live auth+quote recheck, then decide whether/how to
+   wire the delivery-fee helper into checkout.
 4. Remember to flip `OTP_TESTING_MODE` to `false` before real users touch it.
 5. Razorpay/WhatsApp/GoFrugal only if/when actually needed.
 

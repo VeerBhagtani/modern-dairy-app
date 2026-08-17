@@ -1,0 +1,24 @@
+name: Verify Order Prices
+
+on:
+  schedule:
+    # Every 3 minutes — the customer app writes orders directly to Firestore
+    # (no backend deployed yet), and firestore.rules can't fully validate
+    # that an order's price matches the real catalogue, so this closes that
+    # gap out-of-band: catch a forged/tampered order fast, before it's
+    # fulfilled at the wrong price.
+    - cron: '*/3 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check new orders against real catalogue prices
+        env:
+          FCM_SERVICE_ACCOUNT_JSON: ${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}
+        run: node backend/scripts/verify-order-prices.js

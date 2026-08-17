@@ -23,6 +23,17 @@ service cloud.firestore {
       return status in ['placed', 'confirmed', 'pending_confirmation', 'packed'];
     }
 
+    // Every item must look like a real cart line (positive price/qty,
+    // sane bounds) — doesn't prove the price matches the real catalogue
+    // (Firestore rules can't cheaply re-look-up up to 50 products per
+    // write), so that's checked out-of-band by
+    // backend/scripts/verify-order-prices.js, which flags any order whose
+    // prices don't match products/{id} for admin review. This is
+    // defense-in-depth against obviously-garbage writes, not a substitute.
+    function isValidOrderItem(item) {
+      return item.price is number && item.price > 0 && item.price <= 100000
+             && item.qty is number && item.qty > 0 && item.qty <= 1000;
+    }
     match /orders/{orderId} {
       // Any authenticated (including anonymous) client can create an order
       // with the expected shape, tagged with their own uid as the owner.
@@ -30,8 +41,11 @@ service cloud.firestore {
                     && request.resource.data.keys().hasAll(['orderNo', 'items', 'total', 'status', 'placedAt', 'createdByUid'])
                     && request.resource.data.createdByUid == request.auth.uid
                     && request.resource.data.total is number
+                    && request.resource.data.total > 0 && request.resource.data.total <= 500000
                     && request.resource.data.items is list
-                    && request.resource.data.items.size() > 0 && request.resource.data.items.size() <= 50;
+                    && request.resource.data.items.size() > 0 && request.resource.data.items.size() <= 50
+                    && request.resource.data.items[0].keys().hasAll(['pk', 'vid', 'qty', 'price'])
+                    && isValidOrderItem(request.resource.data.items[0]);
 
       // Owner can read their own order (powers live status sync back to the
       // phone) and can self-cancel it — but ONLY while still cancellable,
