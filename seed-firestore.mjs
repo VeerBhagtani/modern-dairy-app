@@ -7,8 +7,16 @@ import fs from 'fs';
 
 const PROJECT_ID = 'modern-dairy-pune';
 const API_KEY = 'AIzaSyD-3RNHrI9ZPmdTioLiuCi2gjwdNXZH8HI';
-const ADMIN_EMAIL = 'modern_dairy@admin.local';
-const ADMIN_PASSWORD = 'Mdairypune@1942';
+// Admin credentials come from the environment now — NEVER hardcode them here.
+// This file used to carry the real admin password in plaintext and was
+// committed to a public repo (full admin access to the live site). Run with:
+//   ADMIN_EMAIL=modern_dairy@admin.local ADMIN_PASSWORD=... node seed-firestore.mjs
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'modern_dairy@admin.local';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+if (!ADMIN_PASSWORD) {
+  console.error('Set ADMIN_PASSWORD in the environment before running this script.');
+  process.exit(1);
+}
 
 function toFirestoreValue(v) {
   if (v === null || v === undefined) return { nullValue: null };

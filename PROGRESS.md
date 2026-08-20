@@ -14,8 +14,10 @@ A real Node.js backend exists in the repo but is still not deployed.
 - **Latest APK:** `index.apk` in this folder (also as a GitHub Release: check
   https://github.com/VeerBhagtani/modern-dairy-app/releases — currently `v4.8.0-debug`).
 - **Admin website (live):** https://modern-dairy-pune.web.app/admin/ — sign in
-  with Name `Modern_Dairy`, password `Mdairypune@1942`. Tabs: Orders,
-  Products, Broadcasts, Settings.
+  with Name `Modern_Dairy` (password is NOT written down here on purpose —
+  it must be rotated and kept out of the repo; the old one was committed in
+  plaintext and is considered compromised). Tabs: Orders, Products,
+  Broadcasts, Settings.
 - **Firebase/GCP project:** `modern-dairy-pune` — console at
   https://console.firebase.google.com/project/modern-dairy-pune/overview
   (logged in as veerstarsky@gmail.com). Still on the free Spark plan.

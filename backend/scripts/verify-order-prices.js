@@ -100,7 +100,16 @@ async function firestorePatch(token, collection, id, fields) {
 function expectedUnitPrice(product, vid, customerType) {
   const variant = (product?.variants || []).find(v => v.id === vid);
   if (!variant) return null;
-  return customerType === 'business' ? variant.b2b : variant.mrp;
+  // The customer app tags orders with customerType 'b2b' | 'b2c' (see
+  // buildOrderDoc in www/index.html) — NOT 'business'. Matching the real
+  // value is what makes b2b price verification actually fire; the old
+  // 'business' check never matched, so every b2b order was validated
+  // against the (higher) mrp and false-flagged. Residual limitation until
+  // the backend deploys: there's no server-side customer record here, so a
+  // b2c buyer could still tag an order 'b2b' to be checked against the b2b
+  // price — a small (b2b-vs-b2c gap) exposure, unlike the total forgery
+  // closed below. Real fix is server-side pricing on Cloud Run.
+  return customerType === 'b2b' ? variant.b2b : variant.mrp;
 }
 
 async function main() {
@@ -120,15 +129,30 @@ async function main() {
 
   for (const o of pending) {
     const mismatches = [];
+    // Recompute the true line-items subtotal from the live catalogue as we go,
+    // so we can also catch a forged *total* — the firestore.rules only bound
+    // total to 0<t<=500000 and can't sum a variable-length item list, so a
+    // write with real item prices but total:1 would otherwise pass rules AND
+    // (before this) be blessed priceMismatch:false. The order total can never
+    // legitimately be below the sum of its catalogue-priced line items
+    // (gst/delivery only add to it), so total < that sum = tampering.
+    let expectedItemsSum = 0;
     for (const item of o.items || []) {
       const expected = expectedUnitPrice(productsById[item.pk], item.vid, o.customerType);
+      const qty = Number(item.qty) || 0;
       if (expected == null) {
         mismatches.push(`${item.name || item.pk}: product/variant no longer exists`);
+        expectedItemsSum += (Number(item.price) || 0) * qty; // fall back to charged price
         continue;
       }
+      expectedItemsSum += expected * qty;
       if (Math.abs((item.price ?? 0) - expected) > PRICE_TOLERANCE_PAISE) {
         mismatches.push(`${item.name || item.pk}: charged ₹${item.price}, catalogue price is ₹${expected}`);
       }
+    }
+    const total = Number(o.total) || 0;
+    if (total + PRICE_TOLERANCE_PAISE < expectedItemsSum) {
+      mismatches.push(`order total ₹${o.total} is below the catalogue value of its items (₹${expectedItemsSum})`);
     }
 
     if (mismatches.length) {
