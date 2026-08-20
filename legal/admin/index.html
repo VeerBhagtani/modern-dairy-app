@@ -24,6 +24,22 @@
   .err{color:var(--bad);font-size:.85rem;margin:-8px 0 12px;}
   .ok-msg{color:var(--fresh);font-size:.85rem;margin:-8px 0 12px;}
   header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+  .brand{display:flex;align-items:center;gap:12px;}
+  .brand-logo{width:48px;height:48px;object-fit:contain;border-radius:10px;flex-shrink:0;}
+  .login-logo{width:76px;height:76px;object-fit:contain;display:block;margin:0 auto 16px;}
+  .m-entry{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px;}
+  .m-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px;}
+  .m-title{font-weight:700;font-size:1rem;margin:0;}
+  .m-badges{display:flex;gap:6px;flex-wrap:wrap;}
+  .m-field{margin-top:8px;font-size:.9rem;line-height:1.5;}
+  .m-field b{color:var(--ink-2);font-weight:700;font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;display:block;margin-bottom:1px;}
+  .pill.security{background:#fbe4e2;color:var(--bad);}
+  .pill.bugfix{background:var(--brand-tint);color:var(--brand-2);}
+  .pill.improvement{background:#e2f3e9;color:var(--fresh);}
+  .pill.critical{background:#b3261e;color:#fff;} .pill.high{background:#fbe4e2;color:var(--bad);}
+  .pill.medium{background:var(--warn-tint);color:var(--warn);} .pill.low,.pill.info{background:var(--bg);color:var(--ink-2);}
+  .pill.deployed,.pill.shipped,.pill.tested{background:#e2f3e9;color:var(--fresh);}
+  .pill.action-needed{background:var(--warn-tint);color:var(--warn);}
   .signout{background:transparent;color:var(--ink-2);font-weight:500;font-size:.85rem;padding:6px 10px;}
   table{width:100%;border-collapse:collapse;}
   th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);font-size:.9rem;}
@@ -90,7 +106,8 @@ let tab = 'orders';
 let orders = [];
 let products = [];
 let broadcasts = [];
-let unsubOrders = null, unsubProducts = null, unsubBroadcasts = null;
+let maintenance = [];
+let unsubOrders = null, unsubProducts = null, unsubBroadcasts = null, unsubMaintenance = null;
 let openOrderId = null;
 
 function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -104,8 +121,9 @@ function fmtDate(ts){
 function renderLogin(err){
   $app.innerHTML = `
     <div class="center-wrap">
-      <h1>Modern Dairy Admin</h1>
-      <div class="muted" style="margin-bottom:20px;">Sign in to manage the store.</div>
+      <img src="logo.png" alt="Modern Dairy" class="login-logo">
+      <h1 style="text-align:center;">Modern Dairy Admin</h1>
+      <div class="muted" style="margin-bottom:20px;text-align:center;">Super admin panel — sign in to manage the store.</div>
       <div class="card">
         <label>Username</label>
         <input id="f-user" autocomplete="off" placeholder="Username">
@@ -136,7 +154,13 @@ function renderShell(bodyHtml){
   $app.innerHTML = `
     <div class="wrap">
       <header>
-        <h1>Modern Dairy Admin</h1>
+        <div class="brand">
+          <img src="logo.png" alt="Modern Dairy" class="brand-logo">
+          <div>
+            <h1>Modern Dairy Admin</h1>
+            <div class="muted" style="font-size:.8rem;">Super admin panel</div>
+          </div>
+        </div>
         <button class="signout" id="btn-signout">Sign out</button>
       </header>
       <div class="tabs">
@@ -144,6 +168,7 @@ function renderShell(bodyHtml){
         <button class="tab ${tab==='products'?'on':''}" data-tab="products">Products</button>
         <button class="tab ${tab==='broadcasts'?'on':''}" data-tab="broadcasts">Broadcasts</button>
         <button class="tab ${tab==='settings'?'on':''}" data-tab="settings">Settings</button>
+        <button class="tab ${tab==='maintenance'?'on':''}" data-tab="maintenance">Maintenance</button>
       </div>
       <div id="tab-body">${bodyHtml}</div>
     </div>
@@ -157,6 +182,7 @@ function render(){
   if(tab==='orders'){ renderShell(ordersBody()); wireOrdersEvents(); }
   else if(tab==='products'){ renderShell(productsBody()); wireProductsEvents(); }
   else if(tab==='broadcasts'){ renderShell(broadcastsBody()); wireBroadcastsEvents(); }
+  else if(tab==='maintenance'){ renderShell(maintenanceBody()); }
   else { renderShell(settingsBody()); wireSettingsEvents(); }
 }
 
@@ -437,6 +463,46 @@ function startBroadcastsListener(){
   }, err => console.error(err));
 }
 
+/* ── Maintenance log ──────────────────────────────────────
+   Read-only record of automated/assisted maintenance: bugs fixed,
+   security hardening, and improvements — what was wrong, how it was
+   fixed, and whether it's live. Written to the `maintenance_log`
+   Firestore collection (admin-only); newest first. */
+const CAT_LABEL = { security: 'Security', bugfix: 'Bug fix', improvement: 'Improvement' };
+function mEntryDate(e){ const d = e.date?.toDate ? e.date.toDate() : (e.date ? new Date(e.date) : null); return d ? d.getTime() : 0; }
+function maintenanceBody(){
+  const items = [...maintenance].sort((a,b) => mEntryDate(b) - mEntryDate(a));
+  const counts = items.reduce((m,e)=>{ m[e.category]=(m[e.category]||0)+1; return m; }, {});
+  const summary = ['security','bugfix','improvement']
+    .filter(c=>counts[c]).map(c=>`${counts[c]} ${CAT_LABEL[c].toLowerCase()}${counts[c]>1?'s':''}`).join(' · ');
+  return `
+    <div class="muted" style="margin-bottom:12px;">
+      ${items.length ? `${items.length} update${items.length===1?'':'s'} logged${summary?` — ${summary}`:''}` :
+        'No maintenance entries yet. Fixes and security updates will appear here automatically.'}
+    </div>
+    ${items.map(e => `
+      <div class="m-entry">
+        <div class="m-head">
+          <h3 class="m-title">${esc(e.title||'Untitled')}</h3>
+          <div class="m-badges">
+            ${e.category ? `<span class="pill ${esc(e.category)}">${esc(CAT_LABEL[e.category]||e.category)}</span>` : ''}
+            ${e.severity ? `<span class="pill ${esc(e.severity)}">${esc(e.severity)}</span>` : ''}
+            ${e.status ? `<span class="pill ${esc(e.status)}">${esc(String(e.status).replace('-',' '))}</span>` : ''}
+          </div>
+        </div>
+        <div class="muted" style="font-size:.8rem;">${fmtDate(e.date)}${e.area?` · ${esc(e.area)}`:''}</div>
+        ${e.problem ? `<div class="m-field"><b>Problem</b>${esc(e.problem)}</div>` : ''}
+        ${e.fix ? `<div class="m-field"><b>Fix</b>${esc(e.fix)}</div>` : ''}
+        ${e.verified ? `<div class="m-field"><b>Verified</b>${esc(e.verified)}</div>` : ''}
+      </div>`).join('')}`;
+}
+function startMaintenanceListener(){
+  unsubMaintenance = onSnapshot(collection(db, 'maintenance_log'), snap => {
+    maintenance = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if(tab==='maintenance'){ render(); }
+  }, err => console.error(err));
+}
+
 /* ── Settings (app_config/singleton) ─────────────────────── */
 let cfg = {};
 function settingsBody(){
@@ -493,13 +559,15 @@ onAuthStateChanged(auth, user => {
     startOrdersListener();
     startProductsListener();
     startBroadcastsListener();
+    startMaintenanceListener();
     loadSettings();
     render();
   }else{
     if(unsubOrders){ unsubOrders(); unsubOrders = null; }
     if(unsubProducts){ unsubProducts(); unsubProducts = null; }
     if(unsubBroadcasts){ unsubBroadcasts(); unsubBroadcasts = null; }
-    orders = []; products = []; broadcasts = []; tab = 'orders';
+    if(unsubMaintenance){ unsubMaintenance(); unsubMaintenance = null; }
+    orders = []; products = []; broadcasts = []; maintenance = []; tab = 'orders';
     renderLogin();
   }
 });
