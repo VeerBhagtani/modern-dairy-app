@@ -2138,7 +2138,11 @@ async function placeOrder(){
     toast(r.message||'Could not place the order. Try again.','alert'); return;
   }
   S.lastOrder={...r.data, items:payload.items, total:payload.total, payment:PAY};
-  S.cart=[]; persist(); await loadWallet();
+  // Refresh the in-memory order list from storage right away — the order was
+  // just written to DB.orders, but S.orders (what the Orders/Invoices/Home
+  // screens render) is only otherwise reloaded on app boot, so without this a
+  // freshly placed order wouldn't show until the app was restarted.
+  S.cart=[]; persist(); await Promise.all([loadWallet(), loadOrders()]);
   go('placed',{replace:true});
   // Fire-and-forget: doesn't block navigation, but once the doc id comes
   // back it's saved onto the local order record so the tracking screen can
@@ -3026,11 +3030,10 @@ Today, the leadership team continues to expand the vision — focusing on innova
         <div class="mb-24">
           ${c.year?`<div class="t-sm" style="font-weight:700;color:var(--brand-3);letter-spacing:.04em;margin-bottom:2px;">${esc(c.year)}</div>`:''}
           <div class="t-lg mb-8" style="font-weight:700;">${esc(c.title)}</div>
-          ${esc(c.body).split('\n\n').map(p=>`<div class="t-md muted mb-12" style="line-height:1.65;">${esc(p)}</div>`).join('')}
+          ${c.body.split('\n\n').map(p=>`<div class="t-md muted mb-12" style="line-height:1.65;">${esc(p)}</div>`).join('')}
         </div>`).join('')}
       <div class="card">
         ${arow('shield','FSSAI licensed','Food Safety and Standards Authority of India','')}
-        ${arow('building','Manufacturing','MIDC Tasawade, Karad','')}
         ${arow('pin','Head office','Camp, Pune','')}
       </div>
     </div></div>`;
