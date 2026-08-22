@@ -70,6 +70,23 @@
   @media (max-width:640px){ .variant-row{grid-template-columns:1fr 1fr;} }
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 12px;}
   @media (max-width:520px){ .grid2{grid-template-columns:1fr;} }
+  /* ── Assistant (admin AI) ─────────────────────────────── */
+  .asst-wrap{display:flex;flex-direction:column;height:calc(100vh - 210px);min-height:420px;}
+  .asst-log{flex:1;overflow-y:auto;padding:4px 2px 12px;display:flex;flex-direction:column;gap:12px;}
+  .asst-msg{max-width:86%;padding:11px 14px;border-radius:14px;font-size:.92rem;line-height:1.55;white-space:pre-wrap;word-wrap:break-word;}
+  .asst-msg.user{align-self:flex-end;background:var(--brand);color:#fff;border-bottom-right-radius:4px;}
+  .asst-msg.bot{align-self:flex-start;background:var(--surface);border:1px solid var(--line);border-bottom-left-radius:4px;}
+  .asst-msg.tool{align-self:flex-start;background:var(--warn-tint);color:var(--warn);border:1px solid #e9d9b0;font-size:.82rem;font-family:ui-monospace,monospace;max-width:92%;}
+  .asst-msg.err{align-self:flex-start;background:#fbe4e2;color:var(--bad);border:1px solid #f2c4c0;}
+  .asst-msg b{font-weight:700;}
+  .asst-empty{color:var(--ink-2);font-size:.9rem;text-align:center;margin:auto;max-width:420px;line-height:1.6;}
+  .asst-bar{display:flex;gap:8px;align-items:flex-end;border-top:1px solid var(--line);padding-top:10px;}
+  .asst-bar textarea{flex:1;margin:0;resize:none;max-height:140px;min-height:44px;}
+  .asst-send{white-space:nowrap;}
+  .asst-typing{align-self:flex-start;color:var(--ink-2);font-size:.85rem;font-style:italic;padding:4px 6px;}
+  .asst-head-row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;}
+  .asst-model{font-size:.82rem;padding:6px 8px;width:auto;margin:0;}
+  .chip-btn{background:var(--bg);border:1px solid var(--line);color:var(--ink-2);font-size:.8rem;padding:6px 10px;border-radius:8px;}
 </style>
 </head>
 <body>
@@ -169,6 +186,7 @@ function renderShell(bodyHtml){
         <button class="tab ${tab==='broadcasts'?'on':''}" data-tab="broadcasts">Broadcasts</button>
         <button class="tab ${tab==='settings'?'on':''}" data-tab="settings">Settings</button>
         <button class="tab ${tab==='maintenance'?'on':''}" data-tab="maintenance">Maintenance</button>
+        <button class="tab ${tab==='assistant'?'on':''}" data-tab="assistant">Assistant</button>
       </div>
       <div id="tab-body">${bodyHtml}</div>
     </div>
@@ -183,6 +201,7 @@ function render(){
   else if(tab==='products'){ renderShell(productsBody()); wireProductsEvents(); }
   else if(tab==='broadcasts'){ renderShell(broadcastsBody()); wireBroadcastsEvents(); }
   else if(tab==='maintenance'){ renderShell(maintenanceBody()); }
+  else if(tab==='assistant'){ renderShell(assistantBody()); wireAssistantEvents(); }
   else { renderShell(settingsBody()); wireSettingsEvents(); }
 }
 
@@ -566,6 +585,312 @@ async function loadSettings(){
    what exists and invited them to hunt for one unguarded call. Anyone who
    is not the admin now gets signed out and returned to the login screen. */
 const ADMIN_UID = '63cH4Dduh4WS7okdV0s0DcJtD7q2';
+/* ═══════════════════════════════════════════════════════════
+   ADMIN AI ASSISTANT (Assistant tab)
+   An operations assistant for the store owner. Chats with Claude
+   using the owner's OWN API key, entered here and stored ONLY in
+   this device's localStorage — never committed, never sent anywhere
+   except api.anthropic.com. Because there is no backend yet, the
+   call is made directly from the browser; when the backend deploys,
+   move the key + call server-side (same reasoning as every other
+   credential in this app). It can read the store's live data and,
+   with a confirmation each time, send a broadcast or log a
+   maintenance entry. It CANNOT change the app's code or deploy —
+   it's an operator's assistant, not a self-editing system.
+   ═══════════════════════════════════════════════════════════ */
+const ASST_KEY_LS = 'mda_admin_ai_key';
+const ASST_MODEL_LS = 'mda_admin_ai_model';
+const ASST_MODELS = [
+  { id:'claude-sonnet-5', label:'Sonnet 5 — balanced (recommended)' },
+  { id:'claude-opus-5', label:'Opus 5 — most capable, pricier' },
+  { id:'claude-haiku-4-5-20251001', label:'Haiku 4.5 — fastest, cheapest' },
+];
+let asstChat = [];       // Anthropic message array: {role, content:string|blocks[]}
+let asstBusy = false;
+
+function asstGetKey(){ try{ return localStorage.getItem(ASST_KEY_LS)||''; }catch(e){ return ''; } }
+function asstGetModel(){ try{ return localStorage.getItem(ASST_MODEL_LS)||'claude-sonnet-5'; }catch(e){ return 'claude-sonnet-5'; } }
+
+function asstSetupBody(){
+  return `<div style="max-width:560px;">
+    <h3>Set up the assistant</h3>
+    <div class="card" style="background:var(--warn-tint);border-color:#e9d9b0;">
+      <div style="font-size:.88rem;line-height:1.6;color:var(--warn);">
+        <b>Before you paste a key, understand the trade-off.</b> There's no server yet, so the
+        assistant talks to Claude straight from this browser — which means your API key is stored
+        in <b>this device's local storage</b> and travels in requests to Anthropic. Only ever use
+        <b>your own</b> Claude API key here, on a device you trust. It is never committed to the
+        repo and never sent anywhere except <code>api.anthropic.com</code>. When the backend is
+        deployed, this moves server-side and the key leaves the browser entirely.
+      </div>
+    </div>
+    <label>Your Claude API key</label>
+    <input id="asst-key-in" type="password" autocomplete="off" placeholder="sk-ant-…">
+    <label>Model</label>
+    <select id="asst-model-in">${ASST_MODELS.map(m=>`<option value="${m.id}" ${m.id===asstGetModel()?'selected':''}>${esc(m.label)}</option>`).join('')}</select>
+    <div class="muted" style="font-size:.82rem;margin:-6px 0 14px;">Get a key at console.anthropic.com → API keys. Usage is billed to that account.</div>
+    <button class="btn-primary" id="asst-save-key" style="width:100%;">Save &amp; start</button>
+    <div class="err" id="asst-key-err" style="display:none;"></div>
+  </div>`;
+}
+
+function asstBody(){
+  if(!asstGetKey()) return asstSetupBody();
+  return `<div class="asst-wrap">
+    <div class="asst-head-row">
+      <div class="muted" style="font-size:.85rem;">Operations assistant · reads live store data · asks before it sends anything</div>
+      <div style="display:flex;gap:6px;">
+        <select id="asst-model" class="asst-model">${ASST_MODELS.map(m=>`<option value="${m.id}" ${m.id===asstGetModel()?'selected':''}>${esc(m.label)}</option>`).join('')}</select>
+        <button class="chip-btn" id="asst-clear">Clear</button>
+        <button class="chip-btn" id="asst-key">Key</button>
+      </div>
+    </div>
+    <div class="asst-log" id="asst-log">${asstLogHtml()}</div>
+    <div class="asst-bar">
+      <textarea id="asst-input" placeholder="e.g. Summarise today's orders · Draft a broadcast about fresh paneer · Why didn't my push arrive?" rows="1" ${asstBusy?'disabled':''}></textarea>
+      <button class="btn-primary asst-send" id="asst-send" ${asstBusy?'disabled':''}>Send</button>
+    </div>
+  </div>`;
+}
+// The render() switch calls assistantBody(); alias to keep naming consistent.
+function assistantBody(){ return asstBody(); }
+
+function asstLogHtml(){
+  if(!asstChat.length && !asstBusy) return `<div class="asst-empty">
+    Ask me about your orders, products or settings, to draft a broadcast, or to help work out
+    why something isn't behaving. I read your live store data, and I'll always show you a
+    confirmation before I send a broadcast or log anything.</div>`;
+  let html = '';
+  for(const m of asstChat){
+    if(m.role==='user'){
+      // Skip tool_result-only turns in the visible log.
+      if(typeof m.content === 'string') html += `<div class="asst-msg user">${esc(m.content)}</div>`;
+    } else if(m.role==='assistant'){
+      const blocks = Array.isArray(m.content) ? m.content : [{type:'text',text:m.content}];
+      for(const b of blocks){
+        if(b.type==='text' && b.text.trim()) html += `<div class="asst-msg bot">${asstFmt(b.text)}</div>`;
+        else if(b.type==='tool_use') html += `<div class="asst-msg tool">↳ ${esc(asstToolLabel(b.name))}…</div>`;
+      }
+    }
+  }
+  if(asstBusy) html += `<div class="asst-typing" id="asst-typing">Assistant is thinking…</div>`;
+  return html;
+}
+// Minimal, safe formatting: bold **text**, escape everything else.
+function asstFmt(t){
+  return esc(t).replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
+}
+function asstToolLabel(name){
+  return ({ get_orders:'Reading orders', get_products:'Reading products', get_settings:'Reading settings',
+    send_broadcast:'Preparing a broadcast', log_maintenance:'Preparing a maintenance entry' })[name] || name;
+}
+
+function wireAssistantEvents(){
+  const saveKeyBtn = document.getElementById('asst-save-key');
+  if(saveKeyBtn){
+    saveKeyBtn.onclick = () => {
+      const k = document.getElementById('asst-key-in').value.trim();
+      const mdl = document.getElementById('asst-model-in').value;
+      const errEl = document.getElementById('asst-key-err');
+      if(!k.startsWith('sk-ant-')){ errEl.textContent='That does not look like a Claude API key (they start with sk-ant-).'; errEl.style.display='block'; return; }
+      try{ localStorage.setItem(ASST_KEY_LS,k); localStorage.setItem(ASST_MODEL_LS,mdl); }catch(e){}
+      render();
+    };
+    return;
+  }
+  const send = document.getElementById('asst-send');
+  const input = document.getElementById('asst-input');
+  const log = document.getElementById('asst-log');
+  if(log) log.scrollTop = log.scrollHeight;
+  if(input){
+    input.oninput = () => { input.style.height='auto'; input.style.height=Math.min(input.scrollHeight,140)+'px'; };
+    input.onkeydown = (e) => { if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); asstSend(); } };
+  }
+  if(send) send.onclick = asstSend;
+  const modelSel = document.getElementById('asst-model');
+  if(modelSel) modelSel.onchange = () => { try{ localStorage.setItem(ASST_MODEL_LS, modelSel.value); }catch(e){} };
+  const clearBtn = document.getElementById('asst-clear');
+  if(clearBtn) clearBtn.onclick = () => { asstChat=[]; render(); };
+  const keyBtn = document.getElementById('asst-key');
+  if(keyBtn) keyBtn.onclick = () => { if(confirm('Remove the saved API key from this device and re-enter it?')){ try{ localStorage.removeItem(ASST_KEY_LS); }catch(e){} asstChat=[]; render(); } };
+}
+
+function asstRefreshLog(){
+  const log = document.getElementById('asst-log');
+  if(log){ log.innerHTML = asstLogHtml(); log.scrollTop = log.scrollHeight; }
+}
+
+async function asstSend(){
+  if(asstBusy) return;
+  const input = document.getElementById('asst-input');
+  const text = (input?.value || '').trim();
+  if(!text) return;
+  input.value=''; input.style.height='auto';
+  asstChat.push({ role:'user', content:text });
+  asstBusy = true;
+  document.getElementById('asst-send')?.setAttribute('disabled','');
+  asstRefreshLog();
+  try{
+    await asstRunLoop();
+  }catch(e){
+    asstChat.push({ role:'assistant', content:[{type:'text', text:'⚠ '+(e.message||'Something went wrong talking to Claude.')}] });
+  }
+  asstBusy = false;
+  asstRefreshLog();
+  document.getElementById('asst-send')?.removeAttribute('disabled');
+  const inp = document.getElementById('asst-input'); if(inp){ inp.removeAttribute('disabled'); inp.focus(); }
+}
+
+// The tool-use loop: call Claude, run any tools it requests, feed results back,
+// repeat until it returns a plain text answer. Capped so a misbehaving loop
+// can't spin forever.
+async function asstRunLoop(){
+  for(let turn=0; turn<8; turn++){
+    const data = await asstCallClaude();
+    asstChat.push({ role:'assistant', content:data.content });
+    asstRefreshLog();
+    if(data.stop_reason !== 'tool_use') return;
+    const toolResults = [];
+    for(const block of data.content){
+      if(block.type==='tool_use'){
+        const result = await asstRunTool(block.name, block.input || {});
+        toolResults.push({ type:'tool_result', tool_use_id:block.id, content:result.content, is_error: !!result.is_error });
+      }
+    }
+    asstChat.push({ role:'user', content: toolResults });
+  }
+  asstChat.push({ role:'assistant', content:[{type:'text', text:'(Stopped after several tool steps — ask me to continue if needed.)'}] });
+}
+
+async function asstCallClaude(){
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{
+      'content-type':'application/json',
+      'x-api-key': asstGetKey(),
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true',
+    },
+    body: JSON.stringify({
+      model: asstGetModel(),
+      max_tokens: 2048,
+      system: asstSystemPrompt(),
+      tools: ASST_TOOLS,
+      messages: asstChat,
+    }),
+  });
+  if(!res.ok){
+    let msg = `Claude API error (HTTP ${res.status})`;
+    try{ const e = await res.json(); msg = e?.error?.message || msg; }catch(_){}
+    if(res.status===401) msg = 'That API key was rejected. Check it in the key settings.';
+    if(res.status===429) msg = 'Rate limited or out of credit on that Claude account.';
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+function asstSystemPrompt(){
+  const orderLines = (orders||[]).slice(0,40).map(o=>{
+    const items=(o.items||[]).map(i=>`${i.name||i.pk}×${i.qty}`).join(', ');
+    return `#${o.orderNo||o.id} ${o.status||'?'} ₹${o.total||0} — ${o.name||'?'} (${o.customerType||'?'})${o.priceMismatch?' ⚠PRICE-MISMATCH':''} [${items}]`;
+  }).join('\n');
+  const prodLines = (products||[]).map(p=>{
+    const vs=(p.variants||[]).map(v=>`${v.label}:₹${v.b2b??v.mrp}/${v.stock}`).join(' ');
+    return `- ${p.name}: ${vs}`;
+  }).join('\n');
+  return `You are the operations assistant built into the admin panel of "Modern Dairy", a dairy and frozen-foods business in Pune, India, that takes wholesale (b2b) and personal (b2c) orders through an Android app.
+
+You are talking to the store owner/operator. Be concise, practical and direct — this is a busy person running a shop, not a technical audience. Use ₹ for money and Indian number formatting. When you are unsure, say so.
+
+WHAT YOU CAN DO:
+- Answer questions about the store's orders, products, settings and broadcasts (you have tools to read the live data, and a snapshot is below).
+- Help draft broadcast messages and, with the operator's confirmation, send them.
+- Diagnose operational issues (e.g. "a push notification didn't arrive") and explain likely causes in plain language.
+- Record a maintenance/issue entry in the log, with confirmation.
+
+WHAT YOU CANNOT DO — be honest about this if asked:
+- You cannot change the app's code, fix software bugs, or deploy anything. You are an operator's assistant, not a self-editing system. If something needs a code change, explain what's wrong and suggest the owner raise it with their developer.
+- You cannot see customer passwords or wallets — those live on each customer's own device, not in the cloud.
+- Every send_broadcast and log_maintenance action pops up a confirmation the operator must approve; never claim you've sent something until the tool returns success.
+
+USEFUL CONTEXT:
+- Push notifications for broadcasts are relayed by a scheduled job that GitHub often runs late, so pushes can be delayed by many minutes — that is the usual reason a broadcast "doesn't arrive" promptly, not a failure. If the app is open when a push arrives it shows as an in-app message, not a system banner.
+- Orders flagged ⚠PRICE-MISMATCH were auto-flagged because their prices didn't match the catalogue — review before fulfilling.
+
+LIVE SNAPSHOT (may be truncated; use the tools for the full/fresh picture):
+Settings: min order ₹${(cfg&&cfg.minOrderValue)||0}, delivery fee ₹${(cfg&&cfg.deliveryFee)||0}, GST ${((cfg&&cfg.gstRate)||0)*100}%.
+Products (${(products||[]).length}):
+${prodLines || '(none loaded)'}
+Recent orders (${(orders||[]).length} total, showing up to 40):
+${orderLines || '(none yet)'}`;
+}
+
+const ASST_TOOLS = [
+  { name:'get_orders', description:"Return the store's current orders as JSON. Use when you need full detail beyond the snapshot, or to filter by status.",
+    input_schema:{ type:'object', properties:{ status:{ type:'string', description:"Optional status filter e.g. placed, confirmed, pending_confirmation, packed, out_for_delivery, delivered, cancelled, denied" } } } },
+  { name:'get_products', description:"Return the full product catalogue as JSON (names, variants, prices, stock).",
+    input_schema:{ type:'object', properties:{} } },
+  { name:'get_settings', description:"Return the store's business settings as JSON.",
+    input_schema:{ type:'object', properties:{} } },
+  { name:'send_broadcast', description:"Send an in-app + push broadcast to customers. Pops up a confirmation the operator must approve first. Keep messages short and clear.",
+    input_schema:{ type:'object', properties:{
+      message:{ type:'string', description:'The message text (max ~200 chars).' },
+      audience:{ type:'string', enum:['all','b2b','b2c'], description:"Who receives it: all customers, business (b2b) only, or personal (b2c) only." }
+    }, required:['message','audience'] } },
+  { name:'log_maintenance', description:"Add an entry to the maintenance log (shown in the Maintenance tab). Pops up a confirmation first. Use for recording issues, fixes or notes.",
+    input_schema:{ type:'object', properties:{
+      title:{ type:'string' },
+      category:{ type:'string', enum:['security','bugfix','improvement'] },
+      problem:{ type:'string', description:'What was wrong / the issue.' },
+      fix:{ type:'string', description:'What was done or recommended.' },
+      status:{ type:'string', enum:['shipped','deployed','tested','action-needed'] }
+    }, required:['title','category'] } },
+];
+
+async function asstRunTool(name, input){
+  try{
+    if(name==='get_orders'){
+      let list = orders||[];
+      if(input.status) list = list.filter(o=>o.status===input.status);
+      const slim = list.slice(0,80).map(o=>({ orderNo:o.orderNo, status:o.status, total:o.total, name:o.name,
+        phone:o.phone, type:o.customerType, priceMismatch:!!o.priceMismatch,
+        items:(o.items||[]).map(i=>({ name:i.name, qty:i.qty, price:i.price })), placedAt:o.placedAt }));
+      return { content: JSON.stringify({ count:list.length, orders:slim }) };
+    }
+    if(name==='get_products'){
+      return { content: JSON.stringify((products||[]).map(p=>({ id:p.id, name:p.name, variants:p.variants }))) };
+    }
+    if(name==='get_settings'){
+      return { content: JSON.stringify(cfg||{}) };
+    }
+    if(name==='send_broadcast'){
+      const message = String(input.message||'').slice(0,300).trim();
+      const audience = ['all','b2b','b2c'].includes(input.audience) ? input.audience : 'all';
+      if(!message) return { content:'No message text was provided.', is_error:true };
+      const who = audience==='all'?'ALL customers':audience==='b2b'?'BUSINESS customers':'PERSONAL customers';
+      if(!confirm(`Send this broadcast to ${who}?\n\n"${message}"`)) return { content:'The operator declined — broadcast NOT sent.' };
+      await addDoc(collection(db,'broadcasts'), { message, audience, createdAt: serverTimestamp() });
+      return { content:`Broadcast queued to ${who}. It shows in-app immediately; the push may take a few minutes (scheduled relay).` };
+    }
+    if(name==='log_maintenance'){
+      const entry = {
+        title: String(input.title||'Untitled').slice(0,200),
+        category: ['security','bugfix','improvement'].includes(input.category)?input.category:'improvement',
+        problem: String(input.problem||'').slice(0,2000),
+        fix: String(input.fix||'').slice(0,2000),
+        status: ['shipped','deployed','tested','action-needed'].includes(input.status)?input.status:'',
+        date: serverTimestamp(),
+      };
+      if(!confirm(`Add this to the maintenance log?\n\n${entry.title} (${entry.category})`)) return { content:'The operator declined — nothing was logged.' };
+      await addDoc(collection(db,'maintenance_log'), entry);
+      return { content:'Maintenance entry added.' };
+    }
+    return { content:`Unknown tool: ${name}`, is_error:true };
+  }catch(e){
+    return { content:`Tool ${name} failed: ${e.message||e}`, is_error:true };
+  }
+}
+
 onAuthStateChanged(auth, user => {
   if(user && user.uid !== ADMIN_UID){
     signOut(auth);
@@ -584,7 +909,7 @@ onAuthStateChanged(auth, user => {
     if(unsubProducts){ unsubProducts(); unsubProducts = null; }
     if(unsubBroadcasts){ unsubBroadcasts(); unsubBroadcasts = null; }
     if(unsubMaintenance){ unsubMaintenance(); unsubMaintenance = null; }
-    orders = []; products = []; broadcasts = []; maintenance = []; tab = 'orders';
+    orders = []; products = []; broadcasts = []; maintenance = []; asstChat = []; asstBusy = false; tab = 'orders';
     renderLogin();
   }
 });
