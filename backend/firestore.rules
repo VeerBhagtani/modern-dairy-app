@@ -53,11 +53,15 @@ service cloud.firestore {
     // only the per-item price to be checked out-of-band by
     // backend/scripts/verify-order-prices.js. 1-rupee slack absorbs the
     // client's GST rounding.
+    // `platform` (flat platform fee, e.g. ₹2) is OPTIONAL via get(...,0) so
+    // orders from older app builds that don't send it still validate; when
+    // present it must be a small non-negative number and is included in the sum.
     function totalsAddUp(d) {
       return d.subtotal is number && d.subtotal > 0 && d.subtotal <= 500000
              && d.gst is number && d.gst >= 0 && d.gst <= 500000
              && d.delivery is number && d.delivery >= 0 && d.delivery <= 100000
-             && math.abs(d.total - (d.subtotal + d.gst + d.delivery)) <= 1;
+             && d.get('platform', 0) is number && d.get('platform', 0) >= 0 && d.get('platform', 0) <= 1000
+             && math.abs(d.total - (d.subtotal + d.gst + d.delivery + d.get('platform', 0))) <= 1;
     }
     // Optional free-text field: absent/null, or a string within a length cap
     // (stops a forged write from stuffing megabytes of junk into an order).
@@ -74,7 +78,7 @@ service cloud.firestore {
       // real lifecycle; the out-of-band cron then price-checks it.
       allow create: if request.auth != null
                     && request.resource.data.keys().hasAll(['orderNo', 'items', 'subtotal', 'gst', 'delivery', 'total', 'status', 'placedAt', 'createdByUid'])
-                    && request.resource.data.keys().hasOnly(['orderNo', 'items', 'subtotal', 'gst', 'delivery', 'total', 'payment', 'customerType', 'company', 'gstin', 'name', 'phone', 'address', 'status', 'createdByUid', 'placedAt'])
+                    && request.resource.data.keys().hasOnly(['orderNo', 'items', 'subtotal', 'gst', 'delivery', 'platform', 'total', 'payment', 'customerType', 'company', 'gstin', 'name', 'phone', 'address', 'status', 'createdByUid', 'placedAt'])
                     && request.resource.data.createdByUid == request.auth.uid
                     && request.resource.data.status == 'placed'
                     && request.resource.data.customerType in ['b2b', 'b2c']

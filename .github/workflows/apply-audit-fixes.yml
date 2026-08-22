@@ -1,0 +1,42 @@
+name: Apply Audit Fixes
+
+# Backs the admin panel's "Apply latest audit fixes & publish" button. It only
+# acts when the admin has clicked that button (deploy_control/request.requested).
+# Then it checks out the newest audit fix PR, RE-RUNS THE TESTS, and only if they
+# pass does it merge (which auto-triggers the APK build) and — if a FIREBASE_TOKEN
+# secret is set — deploy the website + Firestore rules. If the tests fail it
+# merges/deploys nothing and reports back. Runs on a short schedule so a click is
+# picked up within ~10-15 min (GitHub's scheduler can add delay), plus manual
+# dispatch.
+#
+# One-time setup: FIREBASE_TOKEN repo secret (`firebase login:ci`) for web
+# publishing. FCM_SERVICE_ACCOUNT_JSON is already set; GITHUB_TOKEN is automatic.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Apply latest audit fixes if the admin requested it
+        env:
+          FCM_SERVICE_ACCOUNT_JSON: ${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: node backend/scripts/apply-audit-fixes.js

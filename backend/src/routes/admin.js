@@ -50,7 +50,7 @@ router.get('/config', async (req, res) => {
 // every customer's app then fetches on every boot.
 const CONFIG_FIELDS = new Set([
   'businessName', 'logo', 'supportPhone', 'whatsapp', 'email', 'instagram', 'linkedin',
-  'address', 'minOrderValue', 'freeDeliveryAbove', 'deliveryFee', 'gstRate', 'orderCutoff',
+  'address', 'minOrderValue', 'freeDeliveryAbove', 'deliveryFee', 'platformFee', 'gstRate', 'orderCutoff',
   'businessHours', 'announcement', 'walletEnabled',
 ]);
 

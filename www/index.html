@@ -543,7 +543,7 @@ async function ensureSignedIn() {
 function buildOrderDoc(order, uid) {
   return {
     orderNo: order.orderNo, items: order.items, subtotal: order.subtotal,
-    gst: order.gst, delivery: order.delivery, total: order.total,
+    gst: order.gst, delivery: order.delivery, platform: order.platform ?? 0, total: order.total,
     payment: order.payment, customerType: order.customerType,
     company: order.company || null, gstin: order.gstin || null,
     name: order.name || null, phone: order.phone || null, address: order.address || null,
@@ -871,6 +871,7 @@ let APPCFG = {
   minOrderValue:2000,
   freeDeliveryAbove:0,
   deliveryFee:0,
+  platformFee:2,
   gstRate:0.05,
   orderCutoff:'6:00 PM',
   businessHours:'Mon–Sat 8:00 AM – 9:00 PM · Sun 8:00 AM – 2:00 PM',
@@ -1290,7 +1291,10 @@ function cartTotals(){
   const sub = S.cart.reduce((s,i)=>s+i.price*i.qty,0);
   const gst = Math.round(sub*APPCFG.gstRate*100)/100;
   const del = (isB2B()||sub>=APPCFG.freeDeliveryAbove) ? 0 : APPCFG.deliveryFee;
-  return {sub, gst, del, total: sub+gst+del, count: S.cart.reduce((s,i)=>s+i.qty,0)};
+  // Flat platform fee on every order that has items. Configurable via
+  // APPCFG.platformFee (admin Settings); defaults to ₹2.
+  const plat = S.cart.length ? (Number(APPCFG.platformFee)||0) : 0;
+  return {sub, gst, del, plat, total: sub+gst+del+plat, count: S.cart.reduce((s,i)=>s+i.qty,0)};
 }
 function movMet(){ return cartTotals().sub >= (isB2B()?APPCFG.minOrderValue:0); }
 function clearCart(){ S.cart=[]; persist(); renderTabBadge(); renderOrderBar(); paintCart(); }
@@ -2330,6 +2334,7 @@ function cartBody(){
       <div class="tot"><span class="muted">GST @ ${Math.round(APPCFG.gstRate*100)}%</span><span class="num">${money2(t.gst)}</span></div>
       <div class="tot"><span class="muted">Delivery</span>
         <span class="num" style="${t.del?'':'color:var(--fresh);font-weight:600;'}">${t.del?money2(t.del):'Free'}</span></div>
+      ${t.plat?`<div class="tot"><span class="muted">Platform fee</span><span class="num">${money2(t.plat)}</span></div>`:''}
       <div class="tot grand"><span>Total payable</span><span class="num">${money2(t.total)}</span></div>
     </div>
     <div style="padding:0 16px calc(24px + var(--safe-b));">
@@ -2430,6 +2435,7 @@ function scrCheckout(){
         <div class="tot" style="border-top:1px solid var(--line-2);margin-top:8px;padding-top:10px;">
           <span class="muted">GST @ ${Math.round(APPCFG.gstRate*100)}%</span><span class="num">${money2(t.gst)}</span></div>
         <div class="tot"><span class="muted">Delivery</span><span class="num" style="color:var(--fresh);font-weight:600;">Free</span></div>
+        ${t.plat?`<div class="tot"><span class="muted">Platform fee</span><span class="num">${money2(t.plat)}</span></div>`:''}
         <div class="tot grand"><span>Total payable</span><span class="num">${money2(t.total)}</span></div>
         ${isB2B()&&S.user?.gstin?`<div class="t-xs muted-2 mt-12">Tax invoice will be raised against GSTIN ${esc(S.user.gstin)}</div>`:''}
       </div>
@@ -2453,7 +2459,7 @@ async function placeOrder(){
   busy('btn-place',true,'Placing order');
   const payload={
     items:S.cart.map(i=>({pk:i.pk,vid:i.vid,name:i.name,label:i.label,unit:i.unit,qty:i.qty,price:i.price})),
-    subtotal:t.sub, gst:t.gst, delivery:t.del, total:t.total,
+    subtotal:t.sub, gst:t.gst, delivery:t.del, platform:t.plat, total:t.total,
     payment:PAY, customerType:S.user?.customerType||'b2c',
     company:S.user?.company||null, gstin:S.user?.gstin||null,
     name:S.user?.name, phone:S.user?.phone, address:S.user?.address||null,
@@ -2683,6 +2689,7 @@ function scrOrder(){
           <span class="num">${money(i.price*i.qty)}</span></div>`).join('')}
         <div class="tot" style="border-top:1px solid var(--line-2);margin-top:8px;padding-top:10px;">
           <span class="muted">GST</span><span class="num">${money2(o.gst||0)}</span></div>
+        ${o.platform?`<div class="tot"><span class="muted">Platform fee</span><span class="num">${money2(o.platform)}</span></div>`:''}
         <div class="tot grand"><span>Total</span><span class="num">${money2(o.total)}</span></div>
       </div>
       <div class="divider"></div>
@@ -2771,9 +2778,10 @@ function scrInvoiceDetail(){
         ${o.items.map(i=>`<div class="tot"><span class="muted truncate" style="max-width:60%;">${esc(i.name)} ${esc(i.label)} × ${esc(i.qty)}</span>
           <span class="num">${money(i.price*i.qty)}</span></div>`).join('')}
         <div class="tot" style="border-top:1px solid var(--line-2);margin-top:8px;padding-top:10px;">
-          <span class="muted">Subtotal</span><span class="num">${money2(o.subtotal ?? (o.total-(o.gst||0)-(o.delivery||0)))}</span></div>
+          <span class="muted">Subtotal</span><span class="num">${money2(o.subtotal ?? (o.total-(o.gst||0)-(o.delivery||0)-(o.platform||0)))}</span></div>
         <div class="tot"><span class="muted">GST</span><span class="num">${money2(o.gst||0)}</span></div>
         ${o.delivery?`<div class="tot"><span class="muted">Delivery</span><span class="num">${money2(o.delivery)}</span></div>`:''}
+        ${o.platform?`<div class="tot"><span class="muted">Platform fee</span><span class="num">${money2(o.platform)}</span></div>`:''}
         <div class="tot grand" style="border-top:1px solid var(--line-2);margin-top:8px;padding-top:10px;"><span>Total</span><span class="num">${money2(o.total)}</span></div>
 
         <div class="divider" style="margin:16px -20px;"></div>
@@ -3641,7 +3649,7 @@ function fromFirestoreDoc(fields){
 const APPCFG_FIELDS = {
   businessName:'str', logo:'url', supportPhone:'str', whatsapp:'str', email:'str',
   instagram:'url', linkedin:'url', address:'str', minOrderValue:'num', freeDeliveryAbove:'num',
-  deliveryFee:'num', gstRate:'num', orderCutoff:'str', businessHours:'str',
+  deliveryFee:'num', platformFee:'num', gstRate:'num', orderCutoff:'str', businessHours:'str',
   announcement:'str', walletEnabled:'bool',
   // Maintenance mode — set by the admin (manually, or automatically by the
   // nightly-audit job while it runs). When on, the whole app is locked behind

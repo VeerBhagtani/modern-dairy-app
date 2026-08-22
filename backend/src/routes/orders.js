@@ -94,7 +94,8 @@ router.post('/', writeLimiter, async (req, res) => {
       const gstRate = Number(appConfig.gstRate ?? 0.05);
       const gstAmount = Math.round(subtotal * gstRate);
       const deliveryFee = Number(appConfig.deliveryFee ?? 0);
-      const total = subtotal + gstAmount + deliveryFee;
+      const platformFee = Number(appConfig.platformFee ?? 2);
+      const total = subtotal + gstAmount + deliveryFee + platformFee;
 
       const minOrderValue = Number(appConfig.minOrderValue ?? 0);
       if (subtotal < minOrderValue) {
@@ -105,7 +106,7 @@ router.post('/', writeLimiter, async (req, res) => {
       const orderRef = col.orders().doc(uuid());
       const orderData = {
         customerId: req.userId, orderNo, items: lineItems,
-        subtotal, gstAmount, deliveryFee, total,
+        subtotal, gstAmount, deliveryFee, platformFee, total,
         status: 'placed', idempotencyKey: key,
         placedAt: FieldValue.serverTimestamp(),
       };

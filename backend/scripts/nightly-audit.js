@@ -118,6 +118,25 @@ async function getDoc(token, docPath) {
   const d = await res.json();
   return Object.fromEntries(Object.entries(d.fields || {}).map(([k, v]) => [k, fromValue(v)]));
 }
+async function listCollection(token, name) {
+  const out = [];
+  let pageToken = '';
+  for (let page = 0; page < 20; page++) {
+    const url = `${FIRESTORE_BASE}/${encodeURIComponent(name)}?pageSize=100` + (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.status === 404) return out;
+    if (!res.ok) throw new Error(`list ${name} failed (${res.status})`);
+    const data = await res.json();
+    for (const d of (data.documents || [])) {
+      const obj = { _id: d.name.split('/').pop() };
+      for (const [k, v] of Object.entries(d.fields || {})) obj[k] = fromValue(v);
+      out.push(obj);
+    }
+    pageToken = data.nextPageToken || '';
+    if (!pageToken) break;
+  }
+  return out;
+}
 async function patchDoc(token, docPath, fields) {
   const mask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
   const body = { fields: Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, toValue(v)])) };
@@ -181,16 +200,30 @@ function gatherSource(auditType) {
 }
 
 /* ── Claude Opus review ── */
-async function runAiReview(apiKey, area, checks) {
+async function runAiReview(apiKey, area, checks, prevAudit) {
   const checkSummary = checks.map(c => `- ${c.label}: ${c.passed ? 'PASS' : 'FAIL'}${c.passed ? '' : '\n  ' + c.output.split('\n').slice(-6).join('\n  ')}`).join('\n');
+  // From the 2nd audit onward, carry the previous audit's findings forward so
+  // this run VERIFIES whether each was actually resolved and re-reports the
+  // ones that are still present.
+  let prevBlock = '';
+  if (prevAudit && Array.isArray(prevAudit.findings) && prevAudit.findings.length) {
+    prevBlock = `\n\nPREVIOUS AUDIT (${prevAudit.areaLabel || prevAudit.area || 'n/a'}, ${prevAudit.date || ''}) reported these findings and suggested these fixes${prevAudit.prOpened ? ' (a draft PR was opened — it may or may not have been merged, so the fix may NOT be in the code yet)' : ''}:\n`
+      + prevAudit.findings.map((f, i) => `${i + 1}. [${f.severity}] ${f.title} — ${f.area}\n   Problem: ${f.problem}\n   Suggested fix: ${f.fix}`).join('\n');
+  }
   const system = `You are a senior application security engineer and code reviewer auditing "Modern Dairy", a Capacitor (vanilla-JS) Android ordering app for a dairy business in Pune, with an admin website and Firestore-rules backend (no server deployed yet). This is an automated nightly audit; tonight's focus area is "${area.label}": ${area.focus}
 
-You are given the deterministic check results and a (clipped) slice of the source. Produce a precise, honest bug list for a human to review — real defects only, no filler, no style nitpicks unless they cause bugs. Prefer fewer high-confidence findings over many speculative ones. For anything you cannot verify from the clipped source, say so rather than guessing.
+You are given the deterministic check results, a (clipped) slice of the current source, and — from the second audit onward — the PREVIOUS audit's findings.
+
+Do TWO things:
+1. REGRESSION CHECK: for each previous finding, determine from the CURRENT source whether it is now fixed or still present. Re-report any that are STILL present (mark carriedOver=true and keep/upgrade the fix suggestion). Do not re-report ones that are genuinely fixed.
+2. NEW REVIEW: review tonight's focus area for additional real defects.
+
+Produce a precise, honest bug list for a human to review — real defects only, no filler, no style nitpicks unless they cause bugs. Prefer fewer high-confidence findings over many speculative ones. For anything you cannot verify from the clipped source, say so rather than guessing.
 
 Respond with ONLY a JSON object (no markdown fence) of this exact shape:
-{"summary":"one or two sentences on the app's health in this area tonight","findings":[{"title":"short title","severity":"critical|high|medium|low","area":"file or feature","problem":"what is wrong and why it matters","fix":"concrete suggested fix","confidence":"high|medium|low"}]}
-If you find nothing material, return an empty findings array with a summary saying so.`;
-  const user = `Deterministic check results:\n${checkSummary}\n\nSource under review:\n${gatherSource(area.id)}`;
+{"summary":"1-2 sentences incl. how many previous issues are now fixed vs still open","findings":[{"title":"short title","severity":"critical|high|medium|low","area":"file or feature","problem":"what is wrong and why it matters","fix":"concrete suggested fix","confidence":"high|medium|low","carriedOver":true|false}]}
+If you find nothing material and all previous issues are fixed, return an empty findings array with a summary saying so.`;
+  const user = `Deterministic check results:\n${checkSummary}${prevBlock}\n\nCurrent source under review:\n${gatherSource(area.id)}`;
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -291,6 +324,17 @@ async function main() {
   const runId = new Date().toISOString().replace(/[:.]/g, '-') + '-' + area.id;
   console.log(`Audit armed. Focus tonight: ${area.label} (${area.id}). runId=${runId}`);
 
+  // Load the most recent previous audit (2nd audit onward) so this run can
+  // verify whether those bugs were actually fixed and re-report the open ones.
+  let prevAudit = null;
+  try {
+    const prior = await listCollection(token, 'audits');
+    prior.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    prevAudit = prior[0] || null;
+    if (prevAudit) console.log(`Referring to previous audit: ${prevAudit._id} (${prevAudit.findingsCount || 0} findings).`);
+    else console.log('No previous audit found — this is the first one.');
+  } catch (e) { console.warn('Could not load previous audits:', e.message); }
+
   const maintMsg = 'We are running our nightly checks to keep things running smoothly. The app will be back in a few minutes.';
   await setMaintenance(token, true, maintMsg);
   console.log('Maintenance mode ON.');
@@ -303,7 +347,7 @@ async function main() {
     let ai = { summary: '', findings: [] };
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (apiKey) {
-      try { ai = await runAiReview(apiKey, area, checks); console.log(`AI review: ${ai.findings.length} finding(s).`); }
+      try { ai = await runAiReview(apiKey, area, checks, prevAudit); console.log(`AI review: ${ai.findings.length} finding(s).`); }
       catch (e) { console.warn('AI review failed:', e.message); ai = { summary: 'AI review failed: ' + e.message, findings: [] }; }
     } else {
       ai = { summary: 'ANTHROPIC_API_KEY not set — deterministic checks only, no AI code review.', findings: [] };
@@ -340,7 +384,7 @@ async function main() {
       findingsCount: report.findingsCount,
       findings: report.findings.map(f => ({ title: String(f.title || '').slice(0, 300), severity: String(f.severity || 'low'),
         area: String(f.area || '').slice(0, 200), problem: String(f.problem || '').slice(0, 2000),
-        fix: String(f.fix || '').slice(0, 2000), confidence: String(f.confidence || '') })),
+        fix: String(f.fix || '').slice(0, 2000), confidence: String(f.confidence || ''), carriedOver: !!f.carriedOver })),
       checks: report.checks, date: new Date().toISOString(), status: 'for-review',
       prOpened: !!prResult.opened, prUrl: prResult.opened ? prResult.prUrl : '', prNote: prResult.opened ? '' : prResult.reason,
     });

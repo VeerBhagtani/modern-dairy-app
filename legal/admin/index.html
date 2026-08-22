@@ -312,6 +312,7 @@ function openModal(id){
     <div style="border-top:1px solid var(--line);margin:10px 0;padding-top:10px;">
       ${(o.items||[]).map(i=>`<div class="row"><span>${esc(i.name)} (${esc(i.label||'')}) × ${esc(i.qty)}</span><span>${money(Number(i.price)*Number(i.qty))}</span></div>`).join('')}
     </div>
+    ${o.platform?`<div class="row"><span class="muted">Platform fee</span><span>${money(o.platform)}</span></div>`:''}
     <div class="row" style="border-top:1px solid var(--line);padding-top:10px;font-weight:700;"><span>Total</span><span>${money(o.total)}</span></div>
     ${o.status==='cancelled' ? `
     <div class="muted" style="margin:14px 0 4px;font-weight:600;font-size:.85rem;">STATUS</div>
@@ -510,6 +511,8 @@ let auditState = {};   // audit_control/schedule doc
 async function loadAuditState(){
   try{ const s = await getDoc(doc(db,'audit_control','schedule')); auditState = s.exists()?s.data():{}; }
   catch(e){ auditState = {}; }
+  try{ const d = await getDoc(doc(db,'deploy_control','request')); if(d.exists()){ auditState.deployResult = d.data().lastResult||''; auditState.deployRequested = !!d.data().requested; } }
+  catch(e){}
   if(tab==='maintenance') render();
 }
 
@@ -553,6 +556,25 @@ function maintenanceControlsHtml(){
         The audit reports bugs for your review; with the box above it can also draft fixes as a PR — it
         never deploys to the live app on its own.
       </div>
+    </div>
+
+    <div class="card">
+      <div class="m-head"><h3 class="m-title">Apply fixes &amp; publish</h3>
+        ${auditState.deployResult?`<span class="pill ${/applied|deployed/i.test(auditState.deployResult)?'delivered':'action-needed'}">${esc(String(auditState.deployResult).slice(0,40))}</span>`:''}</div>
+      <div class="muted" style="font-size:.85rem;line-height:1.6;margin:6px 0 12px;">
+        Take the latest audit's draft-PR fixes live. When you click this, an automated job checks out the
+        newest audit fix PR, <b>re-runs the tests, and only if they pass</b> merges it and publishes:
+        the admin site &amp; security rules update on the web within minutes, and a fresh app build is
+        produced (customers get it on their next app update). Nothing is applied if the tests fail.
+      </div>
+      <button class="btn-primary" id="btn-apply-fixes">Apply latest audit fixes &amp; publish</button>
+      <span class="ok-msg" id="apply-req" style="display:none;margin-left:10px;">Requested — the job will pick this up shortly.</span>
+      <div class="muted" style="font-size:.78rem;margin-top:10px;">
+        One-time setup for web publishing: a <code>FIREBASE_TOKEN</code> repo secret
+        (<code>firebase login:ci</code>). Without it, fixes still merge and a new app build is made, but the
+        website isn't auto-deployed. This is the only place changes go live automatically — and only after
+        the tests pass.
+      </div>
     </div>`;
 }
 function wireMaintenanceEvents(){
@@ -591,6 +613,17 @@ function wireMaintenanceEvents(){
   if(c) c.onclick = async () => {
     try{ await setDoc(doc(db,'audit_control','schedule'), { requested:false }, { merge:true }); auditState.requested=false; render(); }
     catch(e){ alert('Could not cancel: '+e.message); }
+  };
+  const ap = document.getElementById('btn-apply-fixes');
+  if(ap) ap.onclick = async () => {
+    if(!confirm('Apply the latest audit fix PR and publish?\n\nThe job will re-run the tests and only merge + deploy if they pass. The website updates within minutes; customers get the app change on their next update.')) return;
+    ap.disabled = true;
+    try{
+      await setDoc(doc(db,'deploy_control','request'), {
+        requested:true, requestedAt:serverTimestamp(), requestedBy:(auth.currentUser&&auth.currentUser.email)||'admin',
+      }, { merge:true });
+      const m=document.getElementById('apply-req'); if(m) m.style.display='inline';
+    }catch(e){ alert('Could not request apply: '+e.message); ap.disabled=false; }
   };
 }
 
@@ -645,6 +678,7 @@ function settingsBody(){
       <div class="grid2">
         <div><label>Minimum order value (₹)</label><input id="s-minOrderValue" type="number" value="${cfg.minOrderValue||0}"></div>
         <div><label>Delivery fee (₹)</label><input id="s-deliveryFee" type="number" value="${cfg.deliveryFee||0}"></div>
+        <div><label>Platform fee (₹, per order)</label><input id="s-platformFee" type="number" value="${cfg.platformFee??2}"></div>
         <div><label>GST rate (e.g. 0.05 = 5%)</label><input id="s-gstRate" type="number" step="0.01" value="${cfg.gstRate??0.05}"></div>
         <div><label>Order cutoff time</label><input id="s-orderCutoff" value="${esc(cfg.orderCutoff||'')}"></div>
       </div>
@@ -662,7 +696,7 @@ async function saveSettings(){
   const patch = {
     businessName: val('s-businessName'), supportPhone: val('s-supportPhone'), whatsapp: val('s-whatsapp'),
     email: val('s-email'), address: val('s-address'), businessHours: val('s-businessHours'),
-    minOrderValue: Number(val('s-minOrderValue'))||0, deliveryFee: Number(val('s-deliveryFee'))||0,
+    minOrderValue: Number(val('s-minOrderValue'))||0, deliveryFee: Number(val('s-deliveryFee'))||0, platformFee: Number(val('s-platformFee'))||0,
     gstRate: Number(val('s-gstRate'))||0, orderCutoff: val('s-orderCutoff'), announcement: val('s-announcement'),
   };
   try{

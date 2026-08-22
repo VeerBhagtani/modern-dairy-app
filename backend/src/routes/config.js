@@ -8,7 +8,7 @@ const { col } = require('../services/firestore');
 // have published it to the internet by accident. Allowlist it at the edge.
 const PUBLIC_CONFIG_FIELDS = [
   'businessName', 'logo', 'supportPhone', 'whatsapp', 'email', 'instagram', 'linkedin',
-  'address', 'minOrderValue', 'freeDeliveryAbove', 'deliveryFee', 'gstRate', 'orderCutoff',
+  'address', 'minOrderValue', 'freeDeliveryAbove', 'deliveryFee', 'platformFee', 'gstRate', 'orderCutoff',
   'businessHours', 'announcement', 'walletEnabled',
 ];
 
