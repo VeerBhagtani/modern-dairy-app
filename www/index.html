@@ -1353,6 +1353,7 @@ function savingPct(v){ return Math.round((1 - v.b2b/v.mrp)*100); }
 function filtered(){
   const q = S.query.trim().toLowerCase();
   return Object.entries(CATALOGUE).filter(([k,p])=>{
+    if(p.disabled) return false;   // admin-disabled products are hidden from the app
     if(S.cat!=='all' && p.cat!==S.cat) return false;
     if(q && !p.name.toLowerCase().includes(q) && !p.cat.includes(q)) return false;
     return true;
@@ -2464,6 +2465,9 @@ function scrCheckout(){
   const t=cartTotals();
   const bal=S.wallet.balance;
   const enough=bal>=t.total;
+  // Respect the admin kill switches — fall back to a still-allowed method.
+  if(PAY==='credit' && (APPCFG.creditDisabled || !APPCFG.walletEnabled)) PAY='cod';
+  if(PAY==='online' && APPCFG.paymentsDisabled) PAY='cod';
   if(!S.cart.length) return `<div class="screen on">${navBar('Checkout')}
     ${stateBlock('cart','Nothing to check out','Your order is empty.',
     `<button class="btn" style="max-width:200px;" onclick="switchTab('catalogue')">Browse catalogue</button>`)}</div>`;
@@ -2489,7 +2493,7 @@ function scrCheckout(){
       <div class="divider"></div>
       <div class="section">
         <div class="eyebrow mb-8">Payment</div>
-        ${APPCFG.walletEnabled?`
+        ${(APPCFG.walletEnabled && !APPCFG.creditDisabled)?`
         <button class="card mb-8" style="width:100%;text-align:left;padding:14px;${PAY==='credit'?'border-color:var(--brand);background:var(--brand-tint);':''}"
                 onclick="PAY='credit';paint()">
           <div class="row gap-12">
@@ -2512,14 +2516,14 @@ function scrCheckout(){
             <button class="btn btn-sm btn-ghost mt-8" style="width:100%;" onclick="event.stopPropagation();go('wallet')">Top up wallet</button>`):''}
         </button>`:''}
 
-        <button class="card mb-8" style="width:100%;text-align:left;padding:14px;${PAY==='online'?'border-color:var(--brand);background:var(--brand-tint);':''}"
+        ${!APPCFG.paymentsDisabled?`<button class="card mb-8" style="width:100%;text-align:left;padding:14px;${PAY==='online'?'border-color:var(--brand);background:var(--brand-tint);':''}"
                 onclick="PAY='online';paint()">
           <div class="row gap-12">
             <div class="lrow-ic" style="${PAY==='online'?'background:var(--brand);color:#fff;':''}">${icon('shield',18)}</div>
             <div class="grow"><div class="row between"><span class="t-base" style="font-weight:600;">Pay online</span>${radio(PAY==='online')}</div>
               <div class="t-sm muted mt-4">UPI, card or net banking</div></div>
           </div>
-        </button>
+        </button>`:''}
 
         <button class="card" style="width:100%;text-align:left;padding:14px;${PAY==='cod'?'border-color:var(--brand);background:var(--brand-tint);':''}"
                 onclick="PAY='cod';paint()">
@@ -2557,6 +2561,7 @@ function radio(on){
 }
 
 async function placeOrder(){
+  if(APPCFG.ordersDisabled){ toast('Ordering is temporarily paused. Please try again a little later.','alert'); return; }
   if(!S.user?.address){ toast('Add a delivery address before placing your order','alert'); editDeliveryAddressSheet(); return; }
   const t=cartTotals();
   const btn=document.getElementById('btn-place'); btn.dataset.lbl=`Place order · ${money(t.total)}`;
@@ -3765,8 +3770,10 @@ const APPCFG_FIELDS = {
   // nightly-audit job while it runs). When on, the whole app is locked behind
   // a maintenance screen and nothing is usable until it clears.
   maintenanceMode:'bool', maintenanceMessage:'str',
+  // Emergency kill switches (admin Controls tab).
+  ordersDisabled:'bool', paymentsDisabled:'bool', creditDisabled:'bool', b2cDisabled:'bool', b2bDisabled:'bool',
 };
-const PRODUCT_FIELDS = { name:'str', cat:'str', img:'url', unit:'str', desc:'str', storage:'str', freshness:'str', variants:'variants' };
+const PRODUCT_FIELDS = { name:'str', cat:'str', img:'url', unit:'str', desc:'str', storage:'str', freshness:'str', variants:'variants', disabled:'bool' };
 const MAX_REMOTE_STR = 2000;
 function coerce(kind, v){
   switch(kind){
@@ -3867,10 +3874,11 @@ async function boot(){
     await loadLiveCatalogueAndConfig();
   }
   applyAdminOverrides();
-  // Maintenance gate — if the store is under maintenance, lock the app here
-  // before rendering anything else, and keep polling so it unlocks on its own.
+  // Block gate — maintenance, or a per-segment (b2c/b2b) disable from the admin
+  // Controls tab. Lock the app here before rendering anything else, and keep
+  // polling so it unlocks on its own when the admin flips it back.
   startMaintenancePolling();
-  if(APPCFG.maintenanceMode){ showMaintenanceScreen(); return; }
+  if(evaluateAppBlock()) return;
   if(!S.user){ S.screen='login'; paint(); return; }
   S.screen='home'; S.tab='home'; paint();
   await Promise.all([loadWallet(), loadOrders(), loadBroadcasts()]);
@@ -3885,24 +3893,45 @@ async function boot(){
    maintenance" toggle and automatically by the nightly audit job,
    which flips it on before it starts and off when it finishes.
    ═══════════════════════════════════════════════════════════ */
-let MAINTENANCE_LOCKED = false;
-function showMaintenanceScreen(){
+let MAINTENANCE_LOCKED = false;   // true whenever the app is blocked (maintenance OR a segment disable)
+// Why is the app blocked right now, if at all? Maintenance wins over segment
+// disables. Segment disables only apply once we know the signed-in user's type.
+function appBlockReason(){
+  if(APPCFG.maintenanceMode) return 'maintenance';
+  const t = S.user && S.user.customerType;
+  if(t==='b2c' && APPCFG.b2cDisabled) return 'b2c';
+  if(t==='b2b' && APPCFG.b2bDisabled) return 'b2b';
+  return null;
+}
+function blockScreen(title, msg){
   MAINTENANCE_LOCKED = true;
   const app = APP(); if(!app) return;
-  const msg = APPCFG.maintenanceMessage || 'We are giving the app a quick tune-up and will be back shortly. Please check again in a little while.';
   app.innerHTML = `<div class="screen on" style="display:flex;align-items:center;justify-content:center;padding:32px 24px;text-align:center;background:var(--brand);">
     <div style="max-width:360px;color:#fff;">
       <div style="width:76px;height:76px;border-radius:50%;background:rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center;margin:0 auto 22px;">
         ${icon('shield',38)}</div>
-      <div class="t-2xl" style="color:#fff;margin-bottom:10px;">Under maintenance</div>
+      <div class="t-2xl" style="color:#fff;margin-bottom:10px;">${esc(title)}</div>
       <div class="t-md" style="color:rgba(255,255,255,.85);line-height:1.6;">${esc(msg)}</div>
       <button class="btn mt-24" style="max-width:220px;margin:24px auto 0;background:#fff;color:var(--brand);" onclick="recheckMaintenance()">${icon('refresh',18)} Check again</button>
     </div></div>`;
 }
+function showMaintenanceScreen(){
+  blockScreen('Under maintenance', APPCFG.maintenanceMessage || 'We are giving the app a quick tune-up and will be back shortly. Please check again in a little while.');
+}
+function showDisabledScreen(who){
+  blockScreen('Temporarily unavailable',
+    `The app is temporarily unavailable for ${who==='b2b'?'business':'personal'} customers right now. Please check back a little later, or call us if it’s urgent.`);
+}
+// Shows the right block screen if the app is currently blocked; returns true if so.
+function evaluateAppBlock(){
+  const r = appBlockReason();
+  if(!r){ return false; }
+  if(r==='maintenance') showMaintenanceScreen(); else showDisabledScreen(r);
+  return true;
+}
 async function recheckMaintenance(){
   await loadLiveCatalogueAndConfig();
-  if(!APPCFG.maintenanceMode){ MAINTENANCE_LOCKED = false; boot(); }
-  else showMaintenanceScreen();
+  if(!evaluateAppBlock()){ MAINTENANCE_LOCKED = false; boot(); }
 }
 /* ═══════════════════════════════════════════════════════════
    LIVE-STATE POLLING
@@ -3921,15 +3950,23 @@ function broadcastSig(){
   return b ? b.id : '';
 }
 async function pollLiveState(){
-  // 1) Maintenance flag (from app_config).
+  // 1) App-block flags (maintenance + per-segment disables) from app_config.
   try{
     const res = await fetch('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/app_config/singleton');
     if(res.ok){
       const doc = await res.json();
-      const on = !!(doc.fields && doc.fields.maintenanceMode && doc.fields.maintenanceMode.booleanValue);
-      const newMsg = doc.fields && doc.fields.maintenanceMessage && doc.fields.maintenanceMessage.stringValue;
-      if(on && !MAINTENANCE_LOCKED){ APPCFG.maintenanceMode = true; if(newMsg) APPCFG.maintenanceMessage = newMsg; showMaintenanceScreen(); return; }
-      if(!on && MAINTENANCE_LOCKED){ APPCFG.maintenanceMode = false; MAINTENANCE_LOCKED = false; boot(); return; }
+      const f = doc.fields || {};
+      const bool = k => !!(f[k] && f[k].booleanValue);
+      APPCFG.maintenanceMode = bool('maintenanceMode');
+      if(f.maintenanceMessage && f.maintenanceMessage.stringValue) APPCFG.maintenanceMessage = f.maintenanceMessage.stringValue;
+      APPCFG.b2cDisabled = bool('b2cDisabled');
+      APPCFG.b2bDisabled = bool('b2bDisabled');
+      APPCFG.ordersDisabled = bool('ordersDisabled');
+      APPCFG.paymentsDisabled = bool('paymentsDisabled');
+      APPCFG.creditDisabled = bool('creditDisabled');
+      const blocked = !!appBlockReason();
+      if(blocked && !MAINTENANCE_LOCKED){ evaluateAppBlock(); return; }
+      if(!blocked && MAINTENANCE_LOCKED){ MAINTENANCE_LOCKED = false; boot(); return; }
     }
   }catch(e){ /* offline — keep current state */ }
   if(MAINTENANCE_LOCKED) return;

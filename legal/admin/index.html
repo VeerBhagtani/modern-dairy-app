@@ -87,6 +87,28 @@
   .asst-head-row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;}
   .asst-model{font-size:.82rem;padding:6px 8px;width:auto;margin:0;}
   .chip-btn{background:var(--bg);border:1px solid var(--line);color:var(--ink-2);font-size:.8rem;padding:6px 10px;border-radius:8px;}
+  /* ── Dashboard stat tiles ─────────────────────────────── */
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px;}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
+  .stat .n{font-size:1.8rem;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.02em;}
+  .stat .l{font-size:.75rem;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);margin-top:7px;font-weight:600;}
+  .stat.good .n{color:var(--fresh);} .stat.bad .n{color:var(--bad);} .stat.warn .n{color:var(--warn);} .stat.brand .n{color:var(--brand);}
+  .period-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;}
+  .period-btn{background:var(--bg);border:1px solid var(--line);color:var(--ink-2);font-size:.85rem;padding:8px 14px;border-radius:20px;font-weight:600;}
+  .period-btn.on{background:var(--brand);color:#fff;border-color:var(--brand);}
+  /* ── Emergency-control switches ───────────────────────── */
+  .ctrl-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 0;border-bottom:1px solid var(--line-2);}
+  .ctrl-row:last-child{border-bottom:none;}
+  .ctrl-info{flex:1;} .ctrl-info .t{font-weight:600;font-size:.95rem;} .ctrl-info .d{font-size:.82rem;color:var(--ink-2);margin-top:2px;line-height:1.45;}
+  .switch{position:relative;width:52px;height:30px;flex-shrink:0;cursor:pointer;}
+  .switch input{opacity:0;width:0;height:0;position:absolute;}
+  .switch .track{position:absolute;inset:0;background:var(--line);border-radius:30px;transition:background .15s;}
+  .switch .knob{position:absolute;top:3px;left:3px;width:24px;height:24px;background:#fff;border-radius:50%;transition:transform .15s;box-shadow:0 1px 3px rgba(0,0,0,.25);}
+  .switch input:checked + .track{background:var(--bad);}
+  .switch input:checked + .track + .knob{transform:translateX(22px);}
+  .switch.ok input:checked + .track{background:var(--fresh);}
+  .ctrl-banner{background:#fbe4e2;color:var(--bad);border:1px solid #f2c4c0;border-radius:10px;padding:11px 14px;font-size:.85rem;font-weight:600;margin-bottom:14px;display:none;}
+  .ctrl-banner.on{display:block;}
 </style>
 </head>
 <body>
@@ -96,7 +118,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFirestore, collection, query, orderBy, limit, onSnapshot, doc, updateDoc, setDoc, getDoc, addDoc, deleteDoc, serverTimestamp }
+import { getFirestore, collection, query, orderBy, limit, onSnapshot, doc, updateDoc, setDoc, getDoc, getDocs, addDoc, deleteDoc, serverTimestamp }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 const firebaseConfig = {
@@ -181,9 +203,11 @@ function renderShell(bodyHtml){
         <button class="signout" id="btn-signout">Sign out</button>
       </header>
       <div class="tabs">
+        <button class="tab ${tab==='dashboard'?'on':''}" data-tab="dashboard">Dashboard</button>
         <button class="tab ${tab==='orders'?'on':''}" data-tab="orders">Orders</button>
         <button class="tab ${tab==='products'?'on':''}" data-tab="products">Products</button>
         <button class="tab ${tab==='broadcasts'?'on':''}" data-tab="broadcasts">Broadcasts</button>
+        <button class="tab ${tab==='controls'?'on':''}" data-tab="controls" style="color:var(--bad);">Controls</button>
         <button class="tab ${tab==='settings'?'on':''}" data-tab="settings">Settings</button>
         <button class="tab ${tab==='maintenance'?'on':''}" data-tab="maintenance">Maintenance</button>
         <button class="tab ${tab==='assistant'?'on':''}" data-tab="assistant">Assistant</button>
@@ -197,7 +221,9 @@ function renderShell(bodyHtml){
 }
 
 function render(){
-  if(tab==='orders'){ renderShell(ordersBody()); wireOrdersEvents(); }
+  if(tab==='dashboard'){ renderShell(dashboardBody()); wireDashboardEvents(); }
+  else if(tab==='controls'){ renderShell(controlsBody()); wireControlsEvents(); }
+  else if(tab==='orders'){ renderShell(ordersBody()); wireOrdersEvents(); }
   else if(tab==='products'){ renderShell(productsBody()); wireProductsEvents(); }
   else if(tab==='broadcasts'){ renderShell(broadcastsBody()); wireBroadcastsEvents(); }
   else if(tab==='maintenance'){ renderShell(maintenanceBody()); wireMaintenanceEvents(); }
@@ -727,6 +753,140 @@ async function loadSettings(){
    is not the admin now gets signed out and returned to the login screen. */
 const ADMIN_UID = '63cH4Dduh4WS7okdV0s0DcJtD7q2';
 /* ═══════════════════════════════════════════════════════════
+   DASHBOARD (analytics)
+   All computed live from the `orders` snapshot already in memory, plus a
+   one-time count of registered push devices. Real Play Store / App Store
+   DOWNLOAD numbers aren't available here — those live in the Play Console —
+   so "customers" is shown as honest proxies (devices registered for
+   notifications, and distinct people who've ordered), clearly labelled.
+   ═══════════════════════════════════════════════════════════ */
+let dashPeriod = 'today';
+let deviceCount = null;   // registered push devices (loaded once)
+async function loadDeviceCount(){
+  try{
+    const snap = await getDocs(collection(db, 'device_tokens'));
+    deviceCount = snap.size;
+  }catch(e){ deviceCount = null; }
+  if(tab==='dashboard') render();
+}
+function orderDate(o){ const d=o.placedAt; return d&&d.toDate ? d.toDate() : (d ? new Date(d) : null); }
+function inPeriod(date, period){
+  if(!date) return false;
+  const now = new Date();
+  if(period==='today') return date.toDateString() === now.toDateString();
+  if(period==='week'){ const w=new Date(now); w.setDate(now.getDate()-now.getDay()); w.setHours(0,0,0,0); return date >= w; }
+  if(period==='month') return date.getMonth()===now.getMonth() && date.getFullYear()===now.getFullYear();
+  if(period==='year') return date.getFullYear()===now.getFullYear();
+  return true; // all-time
+}
+function periodStats(period){
+  const os = orders.filter(o => period==='all' || inPeriod(orderDate(o), period));
+  const s = { total:os.length, delivered:0, cancelled:0, notDelivered:0, revenue:0 };
+  for(const o of os){
+    if(o.status==='delivered'){ s.delivered++; s.revenue += Number(o.total)||0; }
+    else if(o.status==='cancelled' || o.status==='denied') s.cancelled++;
+    else s.notDelivered++;   // placed / confirmed / pending / packed / out for delivery
+  }
+  return s;
+}
+function distinctCustomers(){
+  const set = new Set();
+  for(const o of orders){ const k = o.phone || o.createdByUid; if(k) set.add(String(k)); }
+  return set.size;
+}
+const PERIOD_LABELS = { today:'Today', week:'This week', month:'This month', year:'This year', all:'All time' };
+function dashboardBody(){
+  const s = periodStats(dashPeriod);
+  return `
+    <div class="period-row">
+      ${Object.keys(PERIOD_LABELS).map(p=>`<button class="period-btn ${dashPeriod===p?'on':''}" data-period="${p}">${PERIOD_LABELS[p]}</button>`).join('')}
+    </div>
+    <div class="stat-grid">
+      <div class="stat brand"><div class="n">${s.total}</div><div class="l">Total orders</div></div>
+      <div class="stat good"><div class="n">${s.delivered}</div><div class="l">Delivered</div></div>
+      <div class="stat warn"><div class="n">${s.notDelivered}</div><div class="l">Not delivered yet</div></div>
+      <div class="stat bad"><div class="n">${s.cancelled}</div><div class="l">Cancelled / denied</div></div>
+      <div class="stat"><div class="n">${money(s.revenue)}</div><div class="l">Delivered sales</div></div>
+    </div>
+    <div class="muted" style="font-size:.8rem;margin:-4px 0 20px;">${esc(PERIOD_LABELS[dashPeriod])} · “Not delivered yet” = orders still in progress (placed → out for delivery).</div>
+
+    <div class="section-head" style="margin:8px 0 10px;"><span class="eyebrow" style="font-size:.78rem;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em;">Customers</span></div>
+    <div class="stat-grid">
+      <div class="stat"><div class="n">${deviceCount==null?'—':deviceCount}</div><div class="l">Devices with notifications</div></div>
+      <div class="stat"><div class="n">${distinctCustomers()}</div><div class="l">Customers who ordered</div></div>
+    </div>
+    <div class="muted" style="font-size:.8rem;line-height:1.55;">
+      These are what the app can measure. <b>Exact Play Store / App Store download counts aren’t available here</b> —
+      those live in your Google Play Console / App Store Connect. When the backend is live we can pull install
+      stats via the Play Developer API and show the real total here.
+    </div>`;
+}
+function wireDashboardEvents(){
+  document.querySelectorAll('.period-btn').forEach(b => b.onclick = () => { dashPeriod = b.dataset.period; render(); });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   EMERGENCY CONTROLS (Controls tab)
+   Instant kill switches, stored as flags on app_config/singleton. The
+   customer app reads them (public read) and enforces them, and — thanks to
+   the app's 20s live-poll — a flip takes effect on open apps within seconds.
+   ═══════════════════════════════════════════════════════════ */
+const EMERGENCY_CONTROLS = [
+  { key:'ordersDisabled',   t:'Disable new orders',            d:'Customers can browse but cannot place any new order.' },
+  { key:'paymentsDisabled', t:'Disable online payments',       d:'Hides online payment; orders can still go through as cash/other.' },
+  { key:'creditDisabled',   t:'Disable credit / wallet purchases', d:'Blocks paying from wallet balance or on credit.' },
+  { key:'b2cDisabled',      t:'Disable the customer (personal) app', d:'Personal (B2C) customers see an “unavailable” screen and cannot use the app.' },
+  { key:'b2bDisabled',      t:'Disable the business app',       d:'Business (B2B) customers see an “unavailable” screen and cannot use the app.' },
+  { key:'maintenanceMode',  t:'Put the whole app into maintenance', d:'Everyone — personal and business — sees the maintenance screen. Nothing is usable.' },
+];
+function controlsBody(){
+  const anyOn = EMERGENCY_CONTROLS.some(c => !!cfg[c.key]) || Object.values(products||[]).some(p=>p.disabled);
+  const disabledProducts = (products||[]).filter(p=>p.disabled).map(p=>p.name);
+  return `
+    <div class="ctrl-banner ${anyOn?'on':''}" id="ctrl-banner">⚠ One or more emergency controls are ACTIVE right now — customers are affected.</div>
+    <div class="muted" style="font-size:.85rem;line-height:1.55;margin-bottom:14px;">
+      Instant kill switches. Flip one and it takes effect on customers’ open apps within seconds (and on next open otherwise).
+      Turn it back off to restore. Red = the control is ON (restricting something).
+    </div>
+    <div class="card">
+      ${EMERGENCY_CONTROLS.map(c=>`
+        <div class="ctrl-row">
+          <div class="ctrl-info"><div class="t">${esc(c.t)}</div><div class="d">${esc(c.d)}</div></div>
+          <label class="switch"><input type="checkbox" data-ctrl="${c.key}" ${cfg[c.key]?'checked':''}><span class="track"></span><span class="knob"></span></label>
+        </div>`).join('')}
+    </div>
+
+    <div class="section-head" style="margin:20px 0 10px;"><span class="eyebrow" style="font-size:.78rem;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em;">Disable a product</span></div>
+    <div class="muted" style="font-size:.82rem;margin-bottom:10px;">Hide a specific item from the catalogue instantly. ${disabledProducts.length?`Currently hidden: <b>${esc(disabledProducts.join(', '))}</b>.`:''}</div>
+    <div class="card">
+      ${(products||[]).length ? products.map(p=>`
+        <div class="ctrl-row">
+          <div class="ctrl-info"><div class="t">${esc(p.name||p.id)}</div><div class="d">${p.disabled?'Hidden from the app':'Visible to customers'}</div></div>
+          <label class="switch"><input type="checkbox" data-product-disable="${esc(p.id)}" ${p.disabled?'checked':''}><span class="track"></span><span class="knob"></span></label>
+        </div>`).join('') : '<div class="muted">No products loaded.</div>'}
+    </div>`;
+}
+async function setControl(key, on){
+  await setDoc(doc(db,'app_config','singleton'), { [key]: on }, { merge:true });
+  cfg[key] = on;
+}
+function wireControlsEvents(){
+  document.querySelectorAll('[data-ctrl]').forEach(inp => inp.onchange = async () => {
+    const key = inp.dataset.ctrl;
+    if(inp.checked && !confirm(`Turn ON "${EMERGENCY_CONTROLS.find(c=>c.key===key).t}"? This affects live customers immediately.`)){ inp.checked = false; return; }
+    inp.disabled = true;
+    try{ await setControl(key, inp.checked); render(); }
+    catch(e){ alert('Could not change that control: '+e.message); inp.checked = !inp.checked; inp.disabled = false; }
+  });
+  document.querySelectorAll('[data-product-disable]').forEach(inp => inp.onchange = async () => {
+    const id = inp.dataset.productDisable;
+    inp.disabled = true;
+    try{ await updateDoc(doc(db,'products',id), { disabled: inp.checked }); const p=(products||[]).find(x=>x.id===id); if(p) p.disabled=inp.checked; render(); }
+    catch(e){ alert('Could not update that product: '+e.message); inp.checked = !inp.checked; inp.disabled = false; }
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
    ADMIN AI ASSISTANT (Assistant tab)
    An operations assistant for the store owner. Chats with Claude
    using the owner's OWN API key, entered here and stored ONLY in
@@ -1037,6 +1197,7 @@ onAuthStateChanged(auth, user => {
     startMaintenanceListener();
     loadSettings();
     loadAuditState();
+    loadDeviceCount();
     render();
   }else{
     if(unsubOrders){ unsubOrders(); unsubOrders = null; }
