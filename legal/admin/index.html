@@ -538,13 +538,20 @@ function maintenanceControlsHtml(){
         a <b>different area</b> than the last. Tonight's focus would be: <b>${esc(next.label)}</b>.
         <br>Last audit: ${lastRun}${auditState.lastAuditType?` (${esc((AUDIT_TYPES.find(t=>t.id===auditState.lastAuditType)||{}).label||auditState.lastAuditType)})`:''}.
       </div>
+      <label style="display:flex;align-items:flex-start;gap:9px;font-weight:400;margin:2px 0 12px;cursor:pointer;">
+        <input type="checkbox" id="chk-autofix" ${auditState.autoFixPR?'checked':''} style="width:auto;margin:3px 0 0;">
+        <span style="font-size:.85rem;line-height:1.5;">Also open a <b>draft pull request</b> with proposed fixes.
+          Fixes are applied to a new branch and only kept if the tests still pass — nothing goes live until
+          <b>you review and merge the PR</b>.</span>
+      </label>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn-primary" id="btn-schedule-audit" ${scheduled?'disabled':''}>${scheduled?'Audit armed for tonight':'Schedule audit tonight'}</button>
         ${scheduled?`<button class="btn-quiet" id="btn-cancel-audit">Cancel</button>`:''}
       </div>
       <div class="muted" style="font-size:.78rem;margin-top:10px;">
         Needs the one-time setup: an <code>ANTHROPIC_API_KEY</code> repo secret for the audit runner.
-        The audit reports bugs/fixes for your review — it does not deploy code changes on its own.
+        The audit reports bugs for your review; with the box above it can also draft fixes as a PR — it
+        never deploys to the live app on its own.
       </div>
     </div>`;
 }
@@ -564,12 +571,18 @@ function wireMaintenanceEvents(){
       render();
     }catch(e){ alert('Could not change maintenance mode: '+e.message); t.disabled=false; }
   };
+  const fix = document.getElementById('chk-autofix');
+  if(fix) fix.onchange = async () => {
+    try{ await setDoc(doc(db,'audit_control','schedule'), { autoFixPR: fix.checked }, { merge:true }); auditState.autoFixPR = fix.checked; }
+    catch(e){ alert('Could not save that setting: '+e.message); fix.checked = !fix.checked; }
+  };
   const s = document.getElementById('btn-schedule-audit');
   if(s) s.onclick = async () => {
     s.disabled = true;
     try{
       await setDoc(doc(db,'audit_control','schedule'), {
         requested: true, requestedAt: serverTimestamp(), requestedBy: (auth.currentUser&&auth.currentUser.email)||'admin',
+        autoFixPR: !!(document.getElementById('chk-autofix')||{}).checked,
       }, { merge:true });
       auditState.requested = true; render();
     }catch(e){ alert('Could not schedule the audit: '+e.message); s.disabled=false; }

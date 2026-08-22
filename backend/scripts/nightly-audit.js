@@ -205,6 +205,79 @@ If you find nothing material, return an empty findings array with a summary sayi
   catch (e) { return { summary: 'AI review returned unparseable output; raw text stored.', findings: [], raw: text.slice(0, 4000) }; }
 }
 
+/* ── Optional: draft a PR with proposed fixes ──────────────────────────────
+ * Opt-in (audit_control/schedule.autoFixPR). Asks Opus for concrete, minimal
+ * edits for the highest-confidence findings, applies them by EXACT string
+ * replacement (an edit that doesn't match uniquely is skipped, never guessed),
+ * re-runs the deterministic checks, and only opens a *draft* PR if they still
+ * pass. If nothing applied or the checks regress, it reverts and opens no PR —
+ * so a bad AI patch can never reach even a branch that looks green. A draft PR
+ * changes nothing in the live app until a human reviews and merges it.
+ */
+function sh(cmd, opts = {}) {
+  return execSync(cmd, { cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts });
+}
+async function requestFixEdits(apiKey, area, findings) {
+  const fixable = findings.filter(f => (f.confidence === 'high' || f.confidence === 'medium') && ['critical', 'high', 'medium'].includes(f.severity)).slice(0, 6);
+  if (!fixable.length) return [];
+  const system = `You are fixing bugs in the "Modern Dairy" repo. You are given specific findings and the current content of the relevant files. Produce MINIMAL, exact edits that fix them. Output ONLY JSON:
+{"edits":[{"file":"repo/relative/path","description":"what this fixes","old_string":"exact snippet currently in the file (unique, enough context to be unambiguous)","new_string":"replacement"}]}
+Rules: old_string must appear VERBATIM and EXACTLY ONCE in the given file content (include enough surrounding context). Keep each edit small and self-contained. Do not reformat unrelated code. If you cannot fix something safely with a precise edit, omit it. Prefer correctness and safety over completeness.`;
+  const fileset = [...new Set(fixable.map(f => f.area).filter(a => a && fs.existsSync(path.join(REPO_ROOT, a))))].slice(0, 6);
+  const fileBlocks = fileset.map(f => `\n===== FILE: ${f} =====\n${readClipped(f, 30000)}`).join('\n');
+  const user = `Findings to fix:\n${fixable.map((f, i) => `${i + 1}. [${f.severity}] ${f.title} (${f.area})\n   Problem: ${f.problem}\n   Suggested: ${f.fix}`).join('\n')}\n\nCurrent file contents:\n${fileBlocks || '(no matching files could be loaded — you may still propose edits to files you are confident about)'}`;
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model: MODEL, max_tokens: 4096, system, messages: [{ role: 'user', content: user }] }),
+  });
+  if (!res.ok) throw new Error(`Claude fix call failed (${res.status})`);
+  const data = await res.json();
+  const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  const jsonStr = text.startsWith('{') ? text : text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1);
+  try { return (JSON.parse(jsonStr).edits) || []; } catch (e) { return []; }
+}
+function applyEdit(edit) {
+  const abs = path.join(REPO_ROOT, edit.file);
+  if (!abs.startsWith(REPO_ROOT) || !fs.existsSync(abs)) return false;   // no path escape, must exist
+  const cur = fs.readFileSync(abs, 'utf8');
+  if (typeof edit.old_string !== 'string' || !edit.old_string) return false;
+  const first = cur.indexOf(edit.old_string);
+  if (first === -1 || cur.indexOf(edit.old_string, first + 1) !== -1) return false;  // must match exactly once
+  fs.writeFileSync(abs, cur.slice(0, first) + edit.new_string + cur.slice(first + edit.old_string.length), 'utf8');
+  return true;
+}
+async function tryDraftFixPR(apiKey, area, runId, findings) {
+  const applied = [];
+  try {
+    const edits = await requestFixEdits(apiKey, area, findings);
+    if (!edits.length) return { opened: false, reason: 'no precise edits proposed' };
+    for (const e of edits) { if (applyEdit(e)) applied.push(e); }
+    if (!applied.length) return { opened: false, reason: 'no proposed edit applied cleanly' };
+
+    // Gate: the same deterministic checks must still pass after the edits.
+    const recheck = runDeterministicChecks();
+    const failed = recheck.filter(c => !c.passed);
+    if (failed.length) { sh('git checkout -- .'); return { opened: false, reason: 'proposed fixes regressed checks: ' + failed.map(f => f.label).join(', ') }; }
+
+    // Commit to a new branch and open a DRAFT PR (never touches master).
+    const branch = `nightly-audit/${runId}`;
+    sh('git config user.email "audit-bot@users.noreply.github.com"');
+    sh('git config user.name "Nightly Audit Bot"');
+    sh(`git checkout -b ${branch}`);
+    sh('git add -A');
+    sh(`git commit -m ${JSON.stringify(`Nightly audit (${area.label}): proposed fixes [needs review]`)}`);
+    sh(`git push -u origin ${branch}`);
+    const body = `Automated draft from the nightly audit (focus: **${area.label}**, run \`${runId}\`).\n\n`
+      + `**Unreviewed — do not merge without reading the diff.** ${applied.length} edit(s) applied by Claude Opus, kept only because the security/audit checks still passed afterward. They may still be wrong or incomplete.\n\n`
+      + applied.map((e, i) => `${i + 1}. \`${e.file}\` — ${e.description || 'fix'}`).join('\n');
+    const prUrl = sh(`gh pr create --draft --base master --head ${branch} --title ${JSON.stringify(`Nightly audit fixes: ${area.label}`)} --body ${JSON.stringify(body)}`, { env: { ...process.env } }).trim();
+    return { opened: true, prUrl, count: applied.length };
+  } catch (e) {
+    try { sh('git checkout -- .'); } catch (_) {}
+    return { opened: false, reason: 'error: ' + (e.message || e).slice(0, 300) };
+  }
+}
+
 /* ── Main ── */
 async function main() {
   const saRaw = process.env.FCM_SERVICE_ACCOUNT_JSON;
@@ -243,6 +316,14 @@ async function main() {
     }));
     const findings = [...checkFindings, ...(ai.findings || [])];
 
+    // Optional: draft a PR with proposed fixes (opt-in, and only if we have a key + findings).
+    let prResult = { opened: false, reason: 'not requested' };
+    if (schedule.autoFixPR && apiKey && findings.length) {
+      console.log('autoFixPR is on — attempting a draft PR with proposed fixes…');
+      prResult = await tryDraftFixPR(apiKey, area, runId, findings);
+      console.log('Draft PR:', prResult.opened ? `opened ${prResult.prUrl}` : `not opened (${prResult.reason})`);
+    }
+
     report = {
       runId, area: area.id, areaLabel: area.label,
       summary: ai.summary || 'Audit complete.',
@@ -261,6 +342,7 @@ async function main() {
         area: String(f.area || '').slice(0, 200), problem: String(f.problem || '').slice(0, 2000),
         fix: String(f.fix || '').slice(0, 2000), confidence: String(f.confidence || '') })),
       checks: report.checks, date: new Date().toISOString(), status: 'for-review',
+      prOpened: !!prResult.opened, prUrl: prResult.opened ? prResult.prUrl : '', prNote: prResult.opened ? '' : prResult.reason,
     });
 
     // One maintenance-log summary entry so it surfaces in the admin tab.
@@ -270,7 +352,8 @@ async function main() {
       title: `Nightly audit — ${area.label}`, category: 'improvement', status: 'action-needed',
       area: area.label,
       problem: `${report.findingsCount} finding(s): ${sevLine}. ${report.summary}`.slice(0, 1800),
-      fix: report.findingsCount ? 'See the Audits detail (audits/' + runId + '). Review and apply fixes as needed.' : 'No action needed this run.',
+      fix: (prResult.opened ? `Draft PR with proposed fixes: ${prResult.prUrl} — review & merge if good. ` : '')
+           + (report.findingsCount ? 'See the Audits detail (audits/' + runId + '). Review and apply fixes as needed.' : 'No action needed this run.'),
       verified: 'Automated checks: ' + report.checks.map(c => `${c.label} ${c.passed ? 'OK' : 'FAIL'}`).join(', '),
       date: new Date().toISOString(),
     });

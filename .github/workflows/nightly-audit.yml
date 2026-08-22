@@ -17,12 +17,20 @@ on:
     - cron: '30 21 * * *'   # 21:30 UTC = 03:00 IST
   workflow_dispatch: {}      # allow a manual "run it now" from the Actions tab
 
+# Needed only for the opt-in "draft PR with proposed fixes" step. The audit
+# never pushes to master — it only ever creates a branch + a DRAFT pull request.
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   audit:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -37,4 +45,5 @@ jobs:
         env:
           FCM_SERVICE_ACCOUNT_JSON: ${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ github.token }}   # lets `gh pr create` open the draft PR
         run: node backend/scripts/nightly-audit.js
