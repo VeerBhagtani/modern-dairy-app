@@ -836,16 +836,20 @@ function setLocStatus(msg, kind){
   el.textContent = msg || '';
   el.style.color = kind==='err' ? 'var(--crimson)' : kind==='ok' ? 'var(--fresh)' : 'var(--ink-3)';
 }
-async function useMyLocation(){
+// Most recently detected GPS pin, so whichever save path runs next (signup or
+// the edit-address sheet) can persist it. `targetId` is the textarea to fill.
+let LAST_DETECTED_COORDS = null;
+async function useMyLocation(targetId){
+  targetId = targetId || 'f-address';
   const btn = document.getElementById('btn-detect-loc');
   if(btn){ btn.disabled = true; btn.dataset.lbl = btn.textContent; btn.innerHTML = `<span class="spin"></span> Detecting…`; }
   setLocStatus('Getting your location…');
   try{
     const { lat, lng } = await detectDeviceCoords();
-    LOGIN.lat = lat; LOGIN.lng = lng;
+    LOGIN.lat = lat; LOGIN.lng = lng; LAST_DETECTED_COORDS = { lat, lng };
     let detected = '';
     try{ detected = (await reverseGeocode(lat, lng)).text; }catch(e){ /* keep coords even if geocode fails */ }
-    const ta = document.getElementById('f-address');
+    const ta = document.getElementById(targetId);
     if(ta){
       // Pre-fill the detected area and leave the cursor ready for the specifics.
       ta.value = detected ? (detected + ' — ') : ta.value;
@@ -3608,6 +3612,8 @@ function editDeliveryAddressSheet(){
     <button class="iconbtn" onclick="closeSheet()">${icon('close',20)}</button></div>
     <div class="section">
       <div class="field"><label class="label">Address</label>
+        <button type="button" class="btn btn-quiet mb-8" id="btn-detect-loc" onclick="useMyLocation('f-checkout-address')" style="justify-content:center;">${icon('pin',17)} Use my current location</button>
+        <div class="hint" id="h-loc-status" style="margin:-4px 0 8px;"></div>
         <textarea class="input" id="f-checkout-address" rows="3" placeholder="House/shop, area, landmark, Pune - PIN code">${esc(S.user?.address||'')}</textarea></div>
       <button class="btn" onclick="saveDeliveryAddress()">Save address</button>
     </div>`);
@@ -3615,9 +3621,13 @@ function editDeliveryAddressSheet(){
 function saveDeliveryAddress(){
   const addr=document.getElementById('f-checkout-address').value.trim();
   if(!addr){ toast('Enter a delivery address','alert'); return; }
-  S.user={...S.user, address:addr};
+  // If they just detected a fresh GPS pin in this sheet, save it with the
+  // updated address; otherwise keep whatever pin was already on file.
+  const coords = LAST_DETECTED_COORDS;
+  S.user={...S.user, address:addr, ...(coords?{lat:coords.lat, lng:coords.lng}:{})};
   localStorage.setItem('mda_user',JSON.stringify(S.user));
-  if(S.user.phone) saveCustomerAccount(S.user.phone, {address:addr});
+  if(S.user.phone) saveCustomerAccount(S.user.phone, {address:addr, ...(coords?{lat:coords.lat, lng:coords.lng}:{})});
+  LAST_DETECTED_COORDS = null;
   closeSheet(); paint();
   toast('Delivery address updated','check');
 }
