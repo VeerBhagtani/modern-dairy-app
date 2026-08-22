@@ -27,7 +27,7 @@
   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
   font-src 'self' data: https://fonts.gstatic.com;
   img-src 'self' data: blob: https://res.cloudinary.com https://*.googleapis.com https://*.razorpay.com;
-  connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://cpaas.messagecentral.com https://api.sandbox.co.in https://*.razorpay.com https://fonts.googleapis.com https://fonts.gstatic.com https://api.bigdatacloud.net;
+  connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://cpaas.messagecentral.com https://api.sandbox.co.in https://*.razorpay.com https://fonts.googleapis.com https://fonts.gstatic.com https://api.bigdatacloud.net https://nominatim.openstreetmap.org;
   frame-src https://*.razorpay.com https://modern-dairy-pune.firebaseapp.com;
   media-src 'self';
   object-src 'none';
@@ -822,14 +822,34 @@ async function detectDeviceCoords(){
   }
   throw new Error('Location is not available on this device.');
 }
+function dedupeJoin(parts){
+  const seen = new Set();
+  return parts.filter(Boolean).filter(x => { const k=String(x).toLowerCase().trim(); if(!k || seen.has(k)) return false; seen.add(k); return true; }).join(', ');
+}
 async function reverseGeocode(lat, lng){
-  const res = await withTimeout(fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`),
-    12000, 'Could not look up the address.');
-  if(!res.ok) throw new Error('Could not look up the address.');
-  const d = await res.json();
-  const parts = [d.locality, d.city, d.principalSubdivision, d.postcode].filter(Boolean);
-  const seen = new Set(); const uniq = parts.filter(x => { const k=String(x).toLowerCase(); if(seen.has(k)) return false; seen.add(k); return true; });
-  return { text: uniq.join(', '), postcode: d.postcode || '', city: d.city || d.locality || '' };
+  // Primary: Nominatim (OpenStreetMap) — resolves down to road / neighbourhood /
+  // suburb / PIN, not just city+state, so the prefilled address is genuinely
+  // useful. It reflects the real coordinates — nothing is hardcoded.
+  try{
+    const res = await withTimeout(fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=jsonv2&addressdetails=1&zoom=18`,
+      { headers: { 'Accept': 'application/json' } }), 12000, 'geocode-timeout');
+    if(res.ok){
+      const d = await res.json();
+      const a = d.address || {};
+      const road = a.road || a.pedestrian || a.footway || a.residential || '';
+      const spot = a.neighbourhood || a.suburb || a.quarter || a.city_district || '';
+      const city = a.city || a.town || a.village || a.county || '';
+      const text = dedupeJoin([road, spot, city, a.state, a.postcode]);
+      if(text) return { text, postcode: a.postcode || '', city };
+    }
+  }catch(e){ /* fall through to the coarse fallback */ }
+  // Fallback: BigDataCloud's key-less endpoint (area/city only) if OSM is down.
+  const res2 = await withTimeout(fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`),
+    10000, 'Could not look up the address.');
+  if(!res2.ok) throw new Error('Could not look up the address.');
+  const d = await res2.json();
+  return { text: dedupeJoin([d.locality, d.city, d.principalSubdivision, d.postcode]), postcode: d.postcode || '', city: d.city || d.locality || '' };
 }
 function setLocStatus(msg, kind){
   const el = document.getElementById('h-loc-status'); if(!el) return;
