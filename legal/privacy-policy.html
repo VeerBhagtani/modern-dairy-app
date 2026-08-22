@@ -18,7 +18,7 @@
 </head>
 <body>
 <h1>Privacy Policy</h1>
-<p class="muted">Modern Dairy — Business &amp; Personal Ordering App<br>Last updated: 15 August 2026</p>
+<p class="muted">Modern Dairy — Business &amp; Personal Ordering App<br>Last updated: 22 August 2026</p>
 
 <p>Modern Dairy ("we", "us", "our") operates the Modern Dairy mobile application
 (the "App") for ordering dairy, frozen, and beverage products for business and
@@ -28,10 +28,12 @@ collect through the App, how we use it, and who we share it with.</p>
 <h2>1. Information we collect</h2>
 <table>
 <tr><th>Category</th><th>What</th><th>Why</th></tr>
-<tr><td>Account details</td><td>Name, mobile number, password (stored as a hash, never in plain text)</td><td>To create and secure your account and identify you when you sign in</td></tr>
+<tr><td>Account details</td><td>Name, mobile number, password (stored only as a secure hash, never in plain text)</td><td>To create and secure your account and identify you when you sign in</td></tr>
 <tr><td>Business details (Business accounts only)</td><td>GSTIN, registered business name, address on GST records</td><td>To verify eligibility for wholesale pricing and issue correct tax invoices</td></tr>
 <tr><td>Order &amp; delivery information</td><td>Items ordered, quantities, delivery address, order history</td><td>To fulfil and track your orders, and let you reorder easily</td></tr>
+<tr><td>Location information (optional)</td><td>Your device's approximate or precise GPS coordinates — collected <b>only</b> when you tap "Use my current location"</td><td>To auto-fill and refine your delivery address so you type less. You can always skip this and enter the address manually</td></tr>
 <tr><td>Payment &amp; wallet information</td><td>Wallet balance, transaction history, payment confirmation from our payment processor</td><td>To process top-ups and deduct order payments. We do not store your card, UPI, or bank details ourselves — these are handled directly by our payment processor (Razorpay)</td></tr>
+<tr><td>Device &amp; notification information</td><td>A push-notification token for your device, and app-account type</td><td>To send you order updates and announcements (only if you allow notifications; you can turn them off any time in your device settings)</td></tr>
 <tr><td>Communications</td><td>Support messages you send us (phone, WhatsApp, email)</td><td>To respond to your questions or complaints</td></tr>
 </table>
 
@@ -40,46 +42,74 @@ collect through the App, how we use it, and who we share it with.</p>
 mobile number through our SMS verification partner. We only use this to
 confirm the number belongs to you — we do not use it for any other purpose.</p>
 
-<h2>3. Third parties we share information with</h2>
+<h2>3. Location information</h2>
+<p>Location detection is entirely <b>optional</b> and is used for one thing only:
+helping you fill in your delivery address. It runs only when you tap the
+"Use my current location" button at sign-up or when editing your address —
+never in the background, and never while you are not using that feature.</p>
+<p>When you use it, the App reads your device's GPS coordinates (with your
+permission) and sends those coordinates to a mapping service to convert them
+into a readable address (for example, a road, area, and PIN code), which is
+pre-filled for you to review, complete, or correct. We may store the
+coordinates together with your saved address so we can deliver to the right
+place. If you decline the location permission, the App simply lets you type
+your address as normal — nothing is lost.</p>
+
+<h2>4. Push notifications</h2>
+<p>If you allow notifications, we register a notification token for your device
+so we can send order updates and occasional announcements (for example, a new
+product or a delivery notice). You can turn notifications off at any time in
+your device settings, and we will stop sending them.</p>
+
+<h2>5. Third parties we share information with</h2>
 <p>We use the following service providers to operate the App. Each only
 receives the information it needs to perform its specific function:</p>
 <ul>
 <li><b>SMS/OTP verification provider</b> — receives your mobile number to send and verify the OTP code.</li>
 <li><b>GST verification provider</b> — receives the GSTIN you enter (Business accounts) to confirm it against government GST records.</li>
+<li><b>Mapping / geocoding provider</b> — receives the GPS coordinates from your device <b>only</b> when you use "Use my current location", in order to return a readable address. It does not receive your name, phone number, or account details.</li>
 <li><b>Payment processor (Razorpay)</b> — receives payment details you enter directly with them to process wallet top-ups; we never see or store your raw payment credentials.</li>
-<li><b>Cloud infrastructure providers (Google Cloud / Firebase)</b> — host our backend systems and databases.</li>
+<li><b>Push-notification &amp; cloud infrastructure providers (Google / Firebase)</b> — deliver notifications and host our databases and systems.</li>
 </ul>
 <p>We do not sell your personal information to anyone. We do not share it
 with advertisers.</p>
 
-<h2>4. Data retention</h2>
+<h2>6. Where your information is stored</h2>
+<p>Order and delivery information is stored in our secure cloud database
+(Google Firebase). Some information, such as your account credentials, is kept
+protected on your own device. All connections between the App and our services
+use encrypted (HTTPS) connections, and passwords are stored only as secure
+hashes — never in plain text.</p>
+
+<h2>7. Data retention</h2>
 <p>We keep your account and order information for as long as your account is
 active, and for a reasonable period afterward as required for tax, accounting,
 and legal record-keeping (typically up to 8 years for financial records, in
 line with Indian tax law).</p>
 
-<h2>5. Your rights</h2>
+<h2>8. Your rights</h2>
 <p>You can:</p>
 <ul>
-<li>Review and update your account details in the App (Account tab).</li>
+<li>Review and update your account details and delivery address in the App (Account tab).</li>
+<li>Turn location and notification permissions on or off at any time in your device settings.</li>
 <li>Ask us to correct inaccurate information.</li>
 <li>Ask us to delete your account and associated personal data, subject to
 records we're legally required to retain (e.g. completed order/tax records).</li>
 </ul>
-<p>To exercise any of these, contact us using the details in Section 8.</p>
+<p>To exercise any of these, contact us using the details in Section 11.</p>
 
-<h2>6. Data security</h2>
+<h2>9. Data security</h2>
 <p>We use industry-standard measures to protect your information, including
 encrypted connections (HTTPS) for all data in transit, hashed password
-storage, and rate limiting to prevent abuse of our systems. No method of
-transmission or storage is 100% secure, but we work to protect your
-information appropriately.</p>
+storage, access controls, and rate limiting to prevent abuse of our systems.
+No method of transmission or storage is 100% secure, but we work to protect
+your information appropriately.</p>
 
-<h2>7. Children's privacy</h2>
+<h2>10. Children's privacy</h2>
 <p>The App is intended for business owners and adult personal customers. We
 do not knowingly collect information from children under 18.</p>
 
-<h2>8. Grievance Officer &amp; Contact</h2>
+<h2>11. Grievance Officer &amp; Contact</h2>
 <p>If you have questions, concerns, or a complaint about how your information
 is handled, please contact:</p>
 <p>
@@ -89,10 +119,12 @@ Phone: +91 98812 32966<br>
 Email: <a href="mailto:info@moderndairy.in">info@moderndairy.in</a>
 </p>
 
-<h2>9. Changes to this policy</h2>
+<h2>12. Changes to this policy</h2>
 <p>We may update this policy from time to time. We'll update the "Last
 updated" date above when we do. Continued use of the App after a change
 means you accept the updated policy.</p>
+
+<p style="margin-top:2em;"><a href="./terms.html">See our Terms &amp; Conditions →</a></p>
 
 </body>
 </html>
