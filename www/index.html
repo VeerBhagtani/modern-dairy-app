@@ -3643,6 +3643,10 @@ const APPCFG_FIELDS = {
   instagram:'url', linkedin:'url', address:'str', minOrderValue:'num', freeDeliveryAbove:'num',
   deliveryFee:'num', gstRate:'num', orderCutoff:'str', businessHours:'str',
   announcement:'str', walletEnabled:'bool',
+  // Maintenance mode — set by the admin (manually, or automatically by the
+  // nightly-audit job while it runs). When on, the whole app is locked behind
+  // a maintenance screen and nothing is usable until it clears.
+  maintenanceMode:'bool', maintenanceMessage:'str',
 };
 const PRODUCT_FIELDS = { name:'str', cat:'str', img:'url', unit:'str', desc:'str', storage:'str', freshness:'str', variants:'variants' };
 const MAX_REMOTE_STR = 2000;
@@ -3745,11 +3749,59 @@ async function boot(){
     await loadLiveCatalogueAndConfig();
   }
   applyAdminOverrides();
+  // Maintenance gate — if the store is under maintenance, lock the app here
+  // before rendering anything else, and keep polling so it unlocks on its own.
+  startMaintenancePolling();
+  if(APPCFG.maintenanceMode){ showMaintenanceScreen(); return; }
   if(!S.user){ S.screen='login'; paint(); return; }
   S.screen='home'; S.tab='home'; paint();
   await Promise.all([loadWallet(), loadOrders(), loadBroadcasts()]);
   paint();
   initPushNotifications();
+}
+
+/* ═══════════════════════════════════════════════════════════
+   MAINTENANCE MODE
+   A single full-screen lock. When APPCFG.maintenanceMode is true the
+   app is not usable — used both for a manual "put the app under
+   maintenance" toggle and automatically by the nightly audit job,
+   which flips it on before it starts and off when it finishes.
+   ═══════════════════════════════════════════════════════════ */
+let MAINTENANCE_LOCKED = false;
+function showMaintenanceScreen(){
+  MAINTENANCE_LOCKED = true;
+  const app = APP(); if(!app) return;
+  const msg = APPCFG.maintenanceMessage || 'We are giving the app a quick tune-up and will be back shortly. Please check again in a little while.';
+  app.innerHTML = `<div class="screen on" style="display:flex;align-items:center;justify-content:center;padding:32px 24px;text-align:center;background:var(--brand);">
+    <div style="max-width:360px;color:#fff;">
+      <div style="width:76px;height:76px;border-radius:50%;background:rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center;margin:0 auto 22px;">
+        ${icon('shield',38)}</div>
+      <div class="t-2xl" style="color:#fff;margin-bottom:10px;">Under maintenance</div>
+      <div class="t-md" style="color:rgba(255,255,255,.85);line-height:1.6;">${esc(msg)}</div>
+      <button class="btn mt-24" style="max-width:220px;margin:24px auto 0;background:#fff;color:var(--brand);" onclick="recheckMaintenance()">${icon('refresh',18)} Check again</button>
+    </div></div>`;
+}
+async function recheckMaintenance(){
+  await loadLiveCatalogueAndConfig();
+  if(!APPCFG.maintenanceMode){ MAINTENANCE_LOCKED = false; boot(); }
+  else showMaintenanceScreen();
+}
+let MAINTENANCE_TIMER = null;
+function startMaintenancePolling(){
+  if(MAINTENANCE_TIMER) return;
+  // Poll only the maintenance flag every 45s, so an app that's already open
+  // locks (or unlocks) on its own within a minute of the admin/audit flipping it.
+  MAINTENANCE_TIMER = setInterval(async ()=>{
+    try{
+      const res = await fetch('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/app_config/singleton');
+      if(!res.ok) return;
+      const doc = await res.json();
+      const on = !!(doc.fields && doc.fields.maintenanceMode && doc.fields.maintenanceMode.booleanValue);
+      const newMsg = doc.fields && doc.fields.maintenanceMessage && doc.fields.maintenanceMessage.stringValue;
+      if(on && !MAINTENANCE_LOCKED){ APPCFG.maintenanceMode = true; if(newMsg) APPCFG.maintenanceMessage = newMsg; showMaintenanceScreen(); }
+      else if(!on && MAINTENANCE_LOCKED){ APPCFG.maintenanceMode = false; MAINTENANCE_LOCKED = false; boot(); }
+    }catch(e){ /* offline — leave current state */ }
+  }, 45000);
 }
 boot();
 

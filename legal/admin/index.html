@@ -200,7 +200,7 @@ function render(){
   if(tab==='orders'){ renderShell(ordersBody()); wireOrdersEvents(); }
   else if(tab==='products'){ renderShell(productsBody()); wireProductsEvents(); }
   else if(tab==='broadcasts'){ renderShell(broadcastsBody()); wireBroadcastsEvents(); }
-  else if(tab==='maintenance'){ renderShell(maintenanceBody()); }
+  else if(tab==='maintenance'){ renderShell(maintenanceBody()); wireMaintenanceEvents(); }
   else if(tab==='assistant'){ renderShell(assistantBody()); wireAssistantEvents(); }
   else { renderShell(settingsBody()); wireSettingsEvents(); }
 }
@@ -489,12 +489,106 @@ function startBroadcastsListener(){
    Firestore collection (admin-only); newest first. */
 const CAT_LABEL = { security: 'Security', bugfix: 'Bug fix', improvement: 'Improvement' };
 function mEntryDate(e){ const d = e.date?.toDate ? e.date.toDate() : (e.date ? new Date(e.date) : null); return d ? d.getTime() : 0; }
+// Rotating audit focuses — each nightly run does the NEXT one after the last,
+// so successive audits look at the app from a different angle rather than
+// repeating the same checks. Must match AUDIT_TYPES in
+// backend/scripts/nightly-audit.js.
+const AUDIT_TYPES = [
+  { id:'security',       label:'Security & auth' },
+  { id:'functionality',  label:'Features & flows' },
+  { id:'data-integrity', label:'Data & money integrity' },
+  { id:'performance',    label:'Performance & size' },
+  { id:'ui-ux',          label:'UI / UX & accessibility' },
+  { id:'code-quality',   label:'Code quality & robustness' },
+  { id:'config-deps',    label:'Config, deps & CI' },
+];
+function nextAuditType(lastId){
+  const i = AUDIT_TYPES.findIndex(t=>t.id===lastId);
+  return AUDIT_TYPES[(i+1) % AUDIT_TYPES.length];
+}
+let auditState = {};   // audit_control/schedule doc
+async function loadAuditState(){
+  try{ const s = await getDoc(doc(db,'audit_control','schedule')); auditState = s.exists()?s.data():{}; }
+  catch(e){ auditState = {}; }
+  if(tab==='maintenance') render();
+}
+
+function maintenanceControlsHtml(){
+  const underMaint = !!cfg.maintenanceMode;
+  const next = nextAuditType(auditState.lastAuditType);
+  const scheduled = !!auditState.requested;
+  const lastRun = auditState.lastAuditAt ? fmtDate(auditState.lastAuditAt) : 'never';
+  return `
+    <div class="card" style="border-left:4px solid ${underMaint?'var(--bad)':'var(--fresh)'};">
+      <div class="m-head"><h3 class="m-title">App status</h3>
+        <span class="pill ${underMaint?'cancelled':'delivered'}">${underMaint?'UNDER MAINTENANCE':'LIVE'}</span></div>
+      <div class="muted" style="font-size:.85rem;margin:6px 0 12px;">
+        ${underMaint ? 'Customers see a maintenance screen and cannot use the app right now.' : 'The app is live and usable by customers.'}</div>
+      <button class="${underMaint?'btn-primary':''}" id="btn-maint-toggle" style="${underMaint?'':'background:var(--warn-tint);color:var(--warn);'}">
+        ${underMaint ? 'End maintenance — put app back live' : 'Put app under maintenance now'}</button>
+      <span class="ok-msg" id="maint-saved" style="display:none;margin-left:10px;">Done ✓</span>
+    </div>
+
+    <div class="card">
+      <div class="m-head"><h3 class="m-title">Nightly audit</h3>
+        <span class="pill ${scheduled?'action-needed':'info'}">${scheduled?'SCHEDULED FOR TONIGHT':'Not scheduled'}</span></div>
+      <div class="muted" style="font-size:.85rem;line-height:1.6;margin:6px 0 12px;">
+        Arm a full automated audit to run tonight at ~3&nbsp;AM. It puts the app under maintenance,
+        runs the checks, writes what it found here, then puts the app back live. Each audit looks at
+        a <b>different area</b> than the last. Tonight's focus would be: <b>${esc(next.label)}</b>.
+        <br>Last audit: ${lastRun}${auditState.lastAuditType?` (${esc((AUDIT_TYPES.find(t=>t.id===auditState.lastAuditType)||{}).label||auditState.lastAuditType)})`:''}.
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn-primary" id="btn-schedule-audit" ${scheduled?'disabled':''}>${scheduled?'Audit armed for tonight':'Schedule audit tonight'}</button>
+        ${scheduled?`<button class="btn-quiet" id="btn-cancel-audit">Cancel</button>`:''}
+      </div>
+      <div class="muted" style="font-size:.78rem;margin-top:10px;">
+        Needs the one-time setup: an <code>ANTHROPIC_API_KEY</code> repo secret for the audit runner.
+        The audit reports bugs/fixes for your review — it does not deploy code changes on its own.
+      </div>
+    </div>`;
+}
+function wireMaintenanceEvents(){
+  const t = document.getElementById('btn-maint-toggle');
+  if(t) t.onclick = async () => {
+    const turningOn = !cfg.maintenanceMode;
+    if(turningOn && !confirm('Put the app under maintenance now? Customers will not be able to use it until you end maintenance.')) return;
+    t.disabled = true;
+    try{
+      await setDoc(doc(db,'app_config','singleton'), {
+        maintenanceMode: turningOn,
+        maintenanceMessage: cfg.maintenanceMessage || 'We are giving the app a quick tune-up and will be back shortly. Please check again in a little while.',
+      }, { merge:true });
+      cfg.maintenanceMode = turningOn;
+      const m=document.getElementById('maint-saved'); if(m){ m.style.display='inline'; }
+      render();
+    }catch(e){ alert('Could not change maintenance mode: '+e.message); t.disabled=false; }
+  };
+  const s = document.getElementById('btn-schedule-audit');
+  if(s) s.onclick = async () => {
+    s.disabled = true;
+    try{
+      await setDoc(doc(db,'audit_control','schedule'), {
+        requested: true, requestedAt: serverTimestamp(), requestedBy: (auth.currentUser&&auth.currentUser.email)||'admin',
+      }, { merge:true });
+      auditState.requested = true; render();
+    }catch(e){ alert('Could not schedule the audit: '+e.message); s.disabled=false; }
+  };
+  const c = document.getElementById('btn-cancel-audit');
+  if(c) c.onclick = async () => {
+    try{ await setDoc(doc(db,'audit_control','schedule'), { requested:false }, { merge:true }); auditState.requested=false; render(); }
+    catch(e){ alert('Could not cancel: '+e.message); }
+  };
+}
+
 function maintenanceBody(){
   const items = [...maintenance].sort((a,b) => mEntryDate(b) - mEntryDate(a));
   const counts = items.reduce((m,e)=>{ m[e.category]=(m[e.category]||0)+1; return m; }, {});
   const summary = ['security','bugfix','improvement']
     .filter(c=>counts[c]).map(c=>`${counts[c]} ${CAT_LABEL[c].toLowerCase()}${counts[c]>1?'s':''}`).join(' · ');
   return `
+    ${maintenanceControlsHtml()}
+    <div class="section-head" style="margin:20px 0 10px;"><span class="eyebrow" style="font-size:.78rem;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em;">Audit &amp; fix history</span></div>
     <div class="muted" style="margin-bottom:12px;">
       ${items.length ? `${items.length} update${items.length===1?'':'s'} logged${summary?` — ${summary}`:''}` :
         'No maintenance entries yet. Fixes and security updates will appear here automatically.'}
@@ -599,17 +693,15 @@ const ADMIN_UID = '63cH4Dduh4WS7okdV0s0DcJtD7q2';
    it's an operator's assistant, not a self-editing system.
    ═══════════════════════════════════════════════════════════ */
 const ASST_KEY_LS = 'mda_admin_ai_key';
-const ASST_MODEL_LS = 'mda_admin_ai_model';
-const ASST_MODELS = [
-  { id:'claude-sonnet-5', label:'Sonnet 5 — balanced (recommended)' },
-  { id:'claude-opus-5', label:'Opus 5 — most capable, pricier' },
-  { id:'claude-haiku-4-5-20251001', label:'Haiku 4.5 — fastest, cheapest' },
-];
+// Opus 5 is the one and only model for the assistant and the nightly audit —
+// the most capable Claude model, chosen deliberately so the audit doesn't miss
+// things a smaller model would.
+const ASST_MODEL = 'claude-opus-5';
 let asstChat = [];       // Anthropic message array: {role, content:string|blocks[]}
 let asstBusy = false;
 
 function asstGetKey(){ try{ return localStorage.getItem(ASST_KEY_LS)||''; }catch(e){ return ''; } }
-function asstGetModel(){ try{ return localStorage.getItem(ASST_MODEL_LS)||'claude-sonnet-5'; }catch(e){ return 'claude-sonnet-5'; } }
+function asstGetModel(){ return ASST_MODEL; }
 
 function asstSetupBody(){
   return `<div style="max-width:560px;">
@@ -626,9 +718,7 @@ function asstSetupBody(){
     </div>
     <label>Your Claude API key</label>
     <input id="asst-key-in" type="password" autocomplete="off" placeholder="sk-ant-…">
-    <label>Model</label>
-    <select id="asst-model-in">${ASST_MODELS.map(m=>`<option value="${m.id}" ${m.id===asstGetModel()?'selected':''}>${esc(m.label)}</option>`).join('')}</select>
-    <div class="muted" style="font-size:.82rem;margin:-6px 0 14px;">Get a key at console.anthropic.com → API keys. Usage is billed to that account.</div>
+    <div class="muted" style="font-size:.82rem;margin:-6px 0 14px;">Model: <b>Claude Opus 5</b> (the most capable model — used for both the assistant and the nightly audit). Get a key at console.anthropic.com → API keys; usage is billed to that account.</div>
     <button class="btn-primary" id="asst-save-key" style="width:100%;">Save &amp; start</button>
     <div class="err" id="asst-key-err" style="display:none;"></div>
   </div>`;
@@ -638,9 +728,8 @@ function asstBody(){
   if(!asstGetKey()) return asstSetupBody();
   return `<div class="asst-wrap">
     <div class="asst-head-row">
-      <div class="muted" style="font-size:.85rem;">Operations assistant · reads live store data · asks before it sends anything</div>
+      <div class="muted" style="font-size:.85rem;">Opus 5 · reads live store data · asks before it sends anything</div>
       <div style="display:flex;gap:6px;">
-        <select id="asst-model" class="asst-model">${ASST_MODELS.map(m=>`<option value="${m.id}" ${m.id===asstGetModel()?'selected':''}>${esc(m.label)}</option>`).join('')}</select>
         <button class="chip-btn" id="asst-clear">Clear</button>
         <button class="chip-btn" id="asst-key">Key</button>
       </div>
@@ -690,10 +779,9 @@ function wireAssistantEvents(){
   if(saveKeyBtn){
     saveKeyBtn.onclick = () => {
       const k = document.getElementById('asst-key-in').value.trim();
-      const mdl = document.getElementById('asst-model-in').value;
       const errEl = document.getElementById('asst-key-err');
       if(!k.startsWith('sk-ant-')){ errEl.textContent='That does not look like a Claude API key (they start with sk-ant-).'; errEl.style.display='block'; return; }
-      try{ localStorage.setItem(ASST_KEY_LS,k); localStorage.setItem(ASST_MODEL_LS,mdl); }catch(e){}
+      try{ localStorage.setItem(ASST_KEY_LS,k); }catch(e){}
       render();
     };
     return;
@@ -707,8 +795,6 @@ function wireAssistantEvents(){
     input.onkeydown = (e) => { if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); asstSend(); } };
   }
   if(send) send.onclick = asstSend;
-  const modelSel = document.getElementById('asst-model');
-  if(modelSel) modelSel.onchange = () => { try{ localStorage.setItem(ASST_MODEL_LS, modelSel.value); }catch(e){} };
   const clearBtn = document.getElementById('asst-clear');
   if(clearBtn) clearBtn.onclick = () => { asstChat=[]; render(); };
   const keyBtn = document.getElementById('asst-key');
@@ -903,6 +989,7 @@ onAuthStateChanged(auth, user => {
     startBroadcastsListener();
     startMaintenanceListener();
     loadSettings();
+    loadAuditState();
     render();
   }else{
     if(unsubOrders){ unsubOrders(); unsubOrders = null; }

@@ -1,0 +1,40 @@
+name: Nightly Audit
+
+# Runs every night at ~03:00 IST (21:30 UTC). It only does real work when the
+# admin has armed it via the admin panel ("Schedule audit tonight"); otherwise
+# it checks the flag, finds nothing armed, and exits. When armed it puts the app
+# under maintenance, runs a rotating full audit (a different focus each time),
+# writes the bug list to Firestore for review in the admin Maintenance/Audits
+# view, and puts the app back live. It reports findings for a human to fix — it
+# does NOT deploy code changes on its own.
+#
+# One-time setup: add an ANTHROPIC_API_KEY repo secret (the Opus review is
+# skipped without it; the deterministic checks still run). FCM_SERVICE_ACCOUNT_JSON
+# is already configured and is reused here to read/write Firestore.
+
+on:
+  schedule:
+    - cron: '30 21 * * *'   # 21:30 UTC = 03:00 IST
+  workflow_dispatch: {}      # allow a manual "run it now" from the Actions tab
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies (needed for the deterministic checks)
+        run: |
+          npm ci --ignore-scripts
+          cd backend && npm ci --ignore-scripts
+
+      - name: Run the nightly audit
+        env:
+          FCM_SERVICE_ACCOUNT_JSON: ${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node backend/scripts/nightly-audit.js
