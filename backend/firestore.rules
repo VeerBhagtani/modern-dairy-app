@@ -31,8 +31,33 @@ service cloud.firestore {
     // prices don't match products/{id} for admin review. This is
     // defense-in-depth against obviously-garbage writes, not a substitute.
     function isValidOrderItem(item) {
-      return item.price is number && item.price > 0 && item.price <= 100000
-             && item.qty is number && item.qty > 0 && item.qty <= 1000;
+      return item.keys().hasAll(['pk', 'vid', 'qty', 'price'])
+             && item.price is number && item.price > 0 && item.price <= 100000
+             && item.qty is number && item.qty > 0 && item.qty <= 1000
+             && item.pk is string && item.pk.size() > 0 && item.pk.size() <= 128
+             && item.vid is string && item.vid.size() > 0 && item.vid.size() <= 64;
+    }
+    // Rules can't iterate a list, so sample the ends plus the second entry —
+    // enough that a forged write can't hide junk behind one well-formed item.
+    function itemsSampled(items) {
+      return isValidOrderItem(items[0])
+             && isValidOrderItem(items[items.size() - 1])
+             && (items.size() < 2 || isValidOrderItem(items[1]));
+    }
+    // The money must add up. This is the check that actually closes the
+    // "real item prices, total: 1" forgery: previously `total` was bounded
+    // (0 < total <= 500000) but never tied to anything, so a direct
+    // Firestore write could keep genuine line items and simply declare a
+    // ₹1 total. Rules can't sum a variable-length item list, but they CAN
+    // require the declared parts to be internally consistent, which leaves
+    // only the per-item price to be checked out-of-band by
+    // backend/scripts/verify-order-prices.js. 1-rupee slack absorbs the
+    // client's GST rounding.
+    function totalsAddUp(d) {
+      return d.subtotal is number && d.subtotal > 0 && d.subtotal <= 500000
+             && d.gst is number && d.gst >= 0 && d.gst <= 500000
+             && d.delivery is number && d.delivery >= 0 && d.delivery <= 100000
+             && math.abs(d.total - (d.subtotal + d.gst + d.delivery)) <= 1;
     }
     // Optional free-text field: absent/null, or a string within a length cap
     // (stops a forged write from stuffing megabytes of junk into an order).
@@ -48,19 +73,24 @@ service cloud.firestore {
       // later status. status is pinned to 'placed' so every order enters the
       // real lifecycle; the out-of-band cron then price-checks it.
       allow create: if request.auth != null
-                    && request.resource.data.keys().hasAll(['orderNo', 'items', 'total', 'status', 'placedAt', 'createdByUid'])
+                    && request.resource.data.keys().hasAll(['orderNo', 'items', 'subtotal', 'gst', 'delivery', 'total', 'status', 'placedAt', 'createdByUid'])
                     && request.resource.data.keys().hasOnly(['orderNo', 'items', 'subtotal', 'gst', 'delivery', 'total', 'payment', 'customerType', 'company', 'gstin', 'name', 'phone', 'address', 'status', 'createdByUid', 'placedAt'])
                     && request.resource.data.createdByUid == request.auth.uid
                     && request.resource.data.status == 'placed'
                     && request.resource.data.customerType in ['b2b', 'b2c']
                     && request.resource.data.total is number
                     && request.resource.data.total > 0 && request.resource.data.total <= 500000
+                    && totalsAddUp(request.resource.data)
                     && request.resource.data.items is list
                     && request.resource.data.items.size() > 0 && request.resource.data.items.size() <= 50
-                    && request.resource.data.items[0].keys().hasAll(['pk', 'vid', 'qty', 'price'])
-                    && isValidOrderItem(request.resource.data.items[0])
-                    && isValidOrderItem(request.resource.data.items[request.resource.data.items.size() - 1])
-                    && strOk(request.resource.data.orderNo, 60)
+                    && itemsSampled(request.resource.data.items)
+                    // placedAt: serverTimestamp() on the SDK path, an ISO
+                    // string on the plain-REST fallback path. Both are fine;
+                    // anything else (a number, a map) is not.
+                    && (request.resource.data.placedAt is timestamp
+                        || (request.resource.data.placedAt is string && request.resource.data.placedAt.size() <= 40))
+                    && request.resource.data.orderNo is string
+                    && request.resource.data.orderNo.size() > 0 && request.resource.data.orderNo.size() <= 60
                     && strOk(request.resource.data.name, 120)
                     && strOk(request.resource.data.phone, 20)
                     && strOk(request.resource.data.company, 200)

@@ -15,7 +15,13 @@ router.get('/', async (req, res) => {
     success: true,
     data: {
       balance: Number(custDoc.data().balance || 0),
-      txns: ledgerSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+      // Projected, not spread: ledger documents also carry settledBy (the
+      // internal admin id that approved a deposit), which is operational
+      // detail the customer has no reason to receive.
+      txns: ledgerSnap.docs.map(d => {
+        const t = d.data();
+        return { id: d.id, type: t.type, amount: t.amount, note: t.note || '', status: t.status, at: t.at || null };
+      }),
     },
   });
 });

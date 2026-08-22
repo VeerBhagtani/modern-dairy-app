@@ -1,6 +1,48 @@
 # Modern Dairy App — Progress
 
-Last updated: 2026-08-16
+Last updated: 2026-08-21
+
+## Security hardening pass (2026-08-21) — READ THIS FIRST
+A full audit + fix + pen-test pass ran this session. What changed, and the
+two things you MUST do by hand:
+
+- **ROTATE these now — they were committed to a PUBLIC repo and are in git
+  history forever** (removing them from the working tree does not un-leak
+  them): the sandbox.co.in GST **API key + secret**, the Message Central OTP
+  **auth token** (+ customer ID), and the old super-admin password
+  `moderndairy` / (the value formerly in code). Assume all are compromised.
+- **Set the new CI secrets** so real builds are configured: in GitHub repo
+  Settings → Secrets → Actions add `OTP_CUSTOMER_ID`, `OTP_AUTH_TOKEN`,
+  `GST_API_KEY`, `GST_API_SECRET` (use the *rotated* values). Builds inject
+  them into `www/secrets.js` at build time; the committed copy stays empty.
+  With them unset, CI still builds a working DEMO app (test number/GSTIN).
+- The **hardcoded-credential auth bypass is closed**: `OTP_TESTING_MODE` is
+  no longer a hand-set `true`. It is now derived from `OTP_HAS_CREDENTIAL` —
+  testing mode (any number + code `0000`) only exists in a build with no real
+  OTP credential injected. A real build (secrets set) always demands a real
+  SMS code and disables the `0000` bypass. No way to ship the bypass on by
+  accident. (Verified end-to-end for both demo and real builds after a
+  mid-session regression in this exact area was caught and fixed — an earlier
+  version of the fix broke `0000` login in demo builds; the send/verify path
+  now stays active regardless of credential presence.)
+- Passwords (customer + admin) are now stored as **salted PBKDF2-SHA256
+  hashes**, never plaintext; legacy plaintext accounts auto-upgrade on first
+  correct login. Client-side **rate limiting** now guards login / OTP send +
+  verify / GST lookup / admin login / password reset.
+- Frontend/admin XSS sinks hardened (`safeUrl`/`jsStr`/escaping on all
+  remote-config, catalogue and customer-order fields); remote config +
+  product data are now allowlisted (no mass assignment / prototype
+  pollution). Firestore order-create rule now enforces the totals add up
+  (kills the "real items, total ₹1" forgery at the rules layer). Admin
+  website now rejects any non-admin Firebase session. Security headers/CSP
+  added (Hosting + the app). Android `allowBackup` off; WebView remote
+  debugging off. Dependency audits clean (`npm audit --omit=dev` = 0).
+- Regression tests live in `tests/` (`npm run test:security`, 64 checks);
+  a committed-secret scanner (`npm run check:secrets`) + a CI workflow
+  (`.github/workflows/secret-scan.yml`) stop this regressing.
+- Full write-up: `SECURITY_HARDENING_2026-08-21.md`.
+
+## (previous) Last updated: 2026-08-16
 
 ## What this is
 A B2B + personal bulk-ordering Android app for Modern Dairy (Pune). Single-file
@@ -11,8 +53,14 @@ A real Node.js backend exists in the repo but is still not deployed.
 ## Where everything lives
 - **GitHub repo (source of truth):** https://github.com/VeerBhagtani/modern-dairy-app
 - **This folder** is a local copy for reference — the repo is what's actually current if they ever diverge.
-- **Latest APK:** `index.apk` in this folder (also as a GitHub Release: check
-  https://github.com/VeerBhagtani/modern-dairy-app/releases — currently `v4.8.0-debug`).
+- **Latest APK:** `index.apk` in this folder — rebuilt 2026-08-21 with all the
+  security fixes (debug-signed, built locally with the BlueJ-bundled JDK 21).
+  **This is a DEMO-mode build:** no real OTP/GST credentials were injected, so
+  OTP runs in test mode (any number + `0000`) and only the test GSTIN verifies.
+  For a launch build with real SMS/GST, set the four CI secrets (see above) and
+  let GitHub Actions build it, or inject them locally before `cap sync`. The
+  earlier public GitHub Release APK is now stale — rebuild/republish it after
+  rotating secrets.
 - **Admin website (live):** https://modern-dairy-pune.web.app/admin/ — sign in
   with Name `Modern_Dairy` (password is NOT written down here on purpose —
   it must be rotated and kept out of the repo; the old one was committed in
@@ -21,17 +69,27 @@ A real Node.js backend exists in the repo but is still not deployed.
 - **Firebase/GCP project:** `modern-dairy-pune` — console at
   https://console.firebase.google.com/project/modern-dairy-pune/overview
   (logged in as veerstarsky@gmail.com). Still on the free Spark plan.
-- **Real OTP provider:** Message Central (VerifyNow) — customer ID and a
-  long-lived auth token are in `www/index.html` (search `OTP_CUSTOMER_ID`).
-  **`OTP_TESTING_MODE = true`** right now (same file, search it) — while on,
-  *every* phone number accepts code **0000** with no real SMS sent, not just
-  the dedicated test number. **Flip this to `false` before real launch**,
-  or every login is bypassable with a known code.
-- **Real GST verification provider:** sandbox.co.in — API key/secret are in
-  `www/index.html` (search `GST_API_KEY`). Real/live credentials — real cost
-  per lookup. Free test GSTIN for development: **27AAPFM1234A1ZV**.
-- **Super admin account (in-app):** username `moderndairy`. Reached by
-  tapping the app logo 5 times within 2 seconds on the login screen.
+- **Real OTP provider:** Message Central (VerifyNow). As of 2026-08-21 the
+  customer ID + auth token are **no longer in `www/index.html`** — they come
+  from `window.APP_SECRETS` (`www/secrets.js`), injected by CI from GitHub
+  secrets at build time (`OTP_CUSTOMER_ID`, `OTP_AUTH_TOKEN`). Testing mode is
+  now **derived, not hand-set**: with no credential injected the build is DEMO
+  (every number accepts `0000`); with the credential injected it's a real build
+  that always demands a real SMS code and disables the `0000` bypass. The old
+  committed token is compromised → **rotate it** (see the banner up top).
+- **Real GST verification provider:** sandbox.co.in — key/secret also moved out
+  of `www/index.html` into `www/secrets.js` / CI secrets (`GST_API_KEY`,
+  `GST_API_SECRET`). Real/live credentials, real cost per lookup; the old
+  committed pair is compromised → **rotate it**. Free test GSTIN (works with no
+  credential, bypasses the paid lookup): **27AAPFM1234A1ZV**.
+- **Super admin account (in-app):** reached by tapping the app logo 5 times
+  within 2 seconds on the login screen. As of 2026-08-21 there is **no default
+  password** — the old hardcoded `moderndairy` / `Moderndairy@2026` credential
+  was removed (it shipped in the public APK). The panel now shows a one-time
+  **first-run setup** on each device; you choose a username + password and only
+  a salted PBKDF2 hash of it is stored locally. Existing installs that used the
+  old default will be prompted to set one. (This is the local demo admin only —
+  distinct from the real admin *website* above.)
 - **Firebase service account key** used for server-side FCM/Firestore access
   lives only as the GitHub Actions secret `FCM_SERVICE_ACCOUNT_JSON` — not
   checked into the repo anywhere.
@@ -155,12 +213,16 @@ A real Node.js backend exists in the repo but is still not deployed.
   the meantime and has covered everything tried so far except things that
   need a real running process (see above for how that was worked around for
   push notifications specifically).
-- **Client-side rate limiting on login** — discussed, not yet built. Real
-  server-enforced rate limiting needs the backend (Sept 11); a basic
-  client-side lockout-after-N-attempts was offered as a stopgap but not
-  actioned yet.
-- **`OTP_TESTING_MODE` must be flipped off before real launch** — flagged
-  above and in the code, easy to forget.
+- ~~**Client-side rate limiting on login**~~ — **DONE 2026-08-21.** A
+  persistent per-subject throttle now guards login / OTP send / OTP verify /
+  GST lookup / admin login / password reset (see `throttle*` in
+  `www/index.html`). It's device-local and clearable, so real server-enforced
+  limiting still wants the backend (Sept 11), but the online-guessing / SMS-and-
+  GST-abuse holes are closed.
+- ~~**`OTP_TESTING_MODE` must be flipped off before launch**~~ — **no longer a
+  manual step (2026-08-21).** It's derived from whether a real OTP credential
+  was injected, so a real build can't ship with the bypass on. Just set the CI
+  secrets and the bypass is off automatically.
 - **Uber Direct integration** — real customer ID/client ID/client secret were
   received and live-tested (2026-08-17): OAuth `client_credentials` auth
   succeeds (credentials are valid), but the `eats.deliveries` scope is
@@ -173,23 +235,31 @@ A real Node.js backend exists in the repo but is still not deployed.
   or once the scope issue is resolved and a quick recheck is wanted sooner.
   Quote + delivery-fee helper (`backend/src/services/uberDirectClient.js`)
   is written and ready, not wired to checkout.
-- **Two secrets still ship inside the public APK/repo**: the Message Central
-  auth token and the sandbox.co.in API key+secret. Should move server-side
-  once the backend is deployed.
+- **Two secrets still ship inside the APK** (Message Central auth token,
+  sandbox.co.in key+secret) — but **no longer in the public repo** as of
+  2026-08-21: they're CI-injected at build time, not committed. They remain
+  extractable by decompiling the APK, so the real fix is still to move them
+  server-side once the backend is deployed. The previously-committed values are
+  in git history → **rotate them.**
 - Razorpay/WhatsApp Business/GoFrugal real credentials — not started.
 
 ## Next steps, in order
-1. Add the client-side login-attempt lockout (quick, still pending).
+1. **Rotate the leaked credentials and set the CI secrets** (see the banner at
+   the top) — the single most important launch blocker now. Until then any
+   local/CI build is DEMO-mode. Then deploy the updated `firestore.rules`
+   (`firebase deploy --only firestore:rules`) so the order-forgery hardening
+   goes live.
 2. When Sept 11 arrives and a payment method is added: upgrade to Blaze,
-   deploy `backend/`, move the two exposed secrets server-side, and consider
-   moving the push-notification relay from the free GitHub Actions cron to
-   a proper Cloud Function (not required, just cleaner once available).
+   deploy `backend/`, move the two APK-embedded secrets server-side, and
+   consider moving the push-notification relay from the free GitHub Actions
+   cron to a proper Cloud Function (not required, just cleaner once available).
 3. Resolve the Uber Direct `invalid_scope` issue (enable/approve the Direct
    API product for this app on Uber's developer dashboard), then re-supply
    the credentials for a live auth+quote recheck, then decide whether/how to
    wire the delivery-fee helper into checkout.
-4. Remember to flip `OTP_TESTING_MODE` to `false` before real users touch it.
-5. Razorpay/WhatsApp/GoFrugal only if/when actually needed.
+4. Razorpay/WhatsApp/GoFrugal only if/when actually needed.
+
+Before every release: `npm run test:security` and `npm run check:secrets`.
 
 ## How to pick this back up
 Just continue the conversation in Claude Code from the same project folder —

@@ -34,3 +34,7 @@ DerivedData/
 *.keystore
 serviceAccountKey*.json
 firebase-adminsdk*.json
+
+# Local-only secret overrides for www/ (never committed; CI injects the
+# real values into www/secrets.js at build time from GitHub Secrets).
+www/secrets.local.js

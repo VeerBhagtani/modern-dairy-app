@@ -291,7 +291,7 @@ function openModal(id){
     ${o.gstin?`<div class="row"><span class="muted">GSTIN</span><span>${esc(o.gstin)}</span></div>`:''}
     ${o.address?`<div class="row" style="align-items:flex-start;"><span class="muted">Deliver to</span><span style="text-align:right;max-width:70%;">${esc(o.address)}</span></div>`:''}
     <div style="border-top:1px solid var(--line);margin:10px 0;padding-top:10px;">
-      ${(o.items||[]).map(i=>`<div class="row"><span>${esc(i.name)} (${esc(i.label||'')}) × ${i.qty}</span><span>${money(i.price*i.qty)}</span></div>`).join('')}
+      ${(o.items||[]).map(i=>`<div class="row"><span>${esc(i.name)} (${esc(i.label||'')}) × ${esc(i.qty)}</span><span>${money(Number(i.price)*Number(i.qty))}</span></div>`).join('')}
     </div>
     <div class="row" style="border-top:1px solid var(--line);padding-top:10px;font-weight:700;"><span>Total</span><span>${money(o.total)}</span></div>
     ${o.status==='cancelled' ? `
@@ -554,7 +554,24 @@ async function loadSettings(){
   }catch(e){ console.error(e); }
 }
 
+/* The one uid Firestore rules actually trust — must stay identical to
+   isAdmin() in backend/firestore.rules. Firestore is still the real
+   boundary (every privileged read/write is checked there regardless of
+   what this page believes), but the check below matters anyway:
+   `if(user)` was true for ANY Firebase identity on this project, including
+   an anonymous session created from the browser console with the public
+   web API key. That rendered the whole admin shell — tabs, controls,
+   Settings form — to a stranger. Every listener behind it failed with
+   permission-denied, so no data leaked, but it told an attacker exactly
+   what exists and invited them to hunt for one unguarded call. Anyone who
+   is not the admin now gets signed out and returned to the login screen. */
+const ADMIN_UID = '63cH4Dduh4WS7okdV0s0DcJtD7q2';
 onAuthStateChanged(auth, user => {
+  if(user && user.uid !== ADMIN_UID){
+    signOut(auth);
+    renderLogin('That account is not an administrator.');
+    return;
+  }
   if(user){
     startOrdersListener();
     startProductsListener();

@@ -19,9 +19,13 @@
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "express-rate-limit": "^7.5.1",
-    "firebase-admin": "^12.3.1",
+    "firebase-admin": "^12.7.0",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
-    "uuid": "^9.0.1"
-  }
+    "uuid": "^11.1.1"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
+  },
+  "_comment_overrides": "uuid <11.1.1 (GHSA-w5hq-g745-h8pq) reaches us only transitively, via gaxios / google-gax / teeny-request inside firebase-admin. Those callers use uuid.v4() with no buf argument so the advisory is not reachable here, but pinning the whole tree to a patched uuid clears it rather than relying on that staying true. firebase-admin itself is held at v12 on purpose: v13/v14 are breaking majors and this service is not deployed yet, so there is no environment to integration-test an upgrade against."
 }

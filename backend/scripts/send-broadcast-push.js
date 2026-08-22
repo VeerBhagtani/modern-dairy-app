@@ -61,13 +61,29 @@ function docToObj(doc) {
   return out;
 }
 
+// Pages through the WHOLE collection. This used to be a single
+// `?pageSize=300` request with no pageToken follow-up, which was a real
+// bypass rather than a scaling nit: Firestore returns documents in document-
+// id order, so once the collection passed 300 docs an attacker could place a
+// forged order and have a good chance of it sitting outside page one — never
+// price-checked, never flagged, and (because priceVerified was never set) it
+// would not even be retried on the next run. MAX_PAGES is a runaway guard.
+const MAX_PAGES = 50;
 async function firestoreList(token, collection) {
-  const res = await fetch(`${FIRESTORE_BASE}/${collection}?pageSize=300`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`Firestore list ${collection} failed (${res.status}): ${await res.text()}`);
-  const data = await res.json();
-  return (data.documents || []).map(docToObj);
+  const out = [];
+  let pageToken = '';
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const url = `${FIRESTORE_BASE}/${encodeURIComponent(collection)}?pageSize=300`
+      + (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`Firestore list ${collection} failed (${res.status}): ${await res.text()}`);
+    const data = await res.json();
+    out.push(...(data.documents || []).map(docToObj));
+    pageToken = data.nextPageToken || '';
+    if (!pageToken) return out;
+  }
+  console.warn(`Stopped paging ${collection} at ${MAX_PAGES} pages (${out.length} docs) — raise MAX_PAGES if this is legitimate.`);
+  return out;
 }
 
 async function firestorePatch(token, collection, id, fields) {
@@ -76,7 +92,14 @@ async function firestorePatch(token, collection, id, fields) {
   for (const [k, v] of Object.entries(fields)) {
     body.fields[k] = typeof v === 'boolean' ? { booleanValue: v } : { stringValue: String(v) };
   }
-  const res = await fetch(`${FIRESTORE_BASE}/${collection}/${id}?${mask}`, {
+  // encodeURIComponent on the doc id is load-bearing, not cosmetic: these ids
+  // are attacker-controlled. A device_tokens doc id IS the FCM token the
+  // client chose, and an order can be created at a client-chosen id via the
+  // Firestore REST createDocument?documentId= parameter. Firestore ids may
+  // legally contain `?` and `&`, so an unescaped id let a caller append their
+  // own query parameters to this PATCH — including extra
+  // updateMask.fieldPaths entries, which delete fields absent from the body.
+  const res = await fetch(`${FIRESTORE_BASE}/${encodeURIComponent(collection)}/${encodeURIComponent(id)}?${mask}`, {
     method: 'PATCH',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

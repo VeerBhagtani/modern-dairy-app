@@ -36,6 +36,20 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      # SECURITY: the OTP and GST credentials used to be hardcoded literals in
+      # www/index.html, a file committed to a PUBLIC repo. They now live only
+      # in GitHub Actions secrets and are written into www/secrets.js here, at
+      # build time, right before the app bundle is assembled. The copy of
+      # www/secrets.js committed to the repo stays empty. See the header of
+      # scripts/inject-secrets.js for what this does and does not achieve.
+      - name: Inject build-time secrets into www/secrets.js
+        env:
+          OTP_CUSTOMER_ID: ${{ secrets.OTP_CUSTOMER_ID }}
+          OTP_AUTH_TOKEN: ${{ secrets.OTP_AUTH_TOKEN }}
+          GST_API_KEY: ${{ secrets.GST_API_KEY }}
+          GST_API_SECRET: ${{ secrets.GST_API_SECRET }}
+        run: node scripts/inject-secrets.js
+
       - name: Add iOS platform
         run: |
           npx cap add ios

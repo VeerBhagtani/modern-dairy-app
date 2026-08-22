@@ -1,7 +1,16 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- SECURITY: allowBackup was true. With it on, `adb backup` (and
+         cloud / device-to-device transfer) can lift the app's private data
+         off the device without root - here that means the WebView
+         localStorage holding the session token, the customer account
+         records and the admin credential hash. Nothing in this app needs
+         backing up; it all rebuilds from the server or a fresh sign-in.
+         dataExtractionRules is the Android 12+ equivalent. -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"

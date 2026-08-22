@@ -3,7 +3,7 @@ const { col, db, FieldValue } = require('../services/firestore');
 const { writeAuditLog } = require('../services/firestore');
 const { requireAdmin, verifyAdminLogin, issueAdminToken } = require('../middleware/adminAuth');
 const { adminLoginLimiter, writeLimiter, generalLimiter } = require('../middleware/rateLimit');
-const { isBoundedString, isValidId } = require('../middleware/validate');
+const { isBoundedString, isValidId, pickAllowed, hasForbiddenKeys } = require('../middleware/validate');
 const secretManager = require('../services/secretManager');
 
 // POST /admin/login { username, password } — no auth required (this IS the login).
@@ -61,6 +61,14 @@ router.put('/config', writeLimiter, async (req, res) => {
   if (keys.length === 0) return res.status(400).json({ success: false, message: 'Request body is empty' });
   const unknown = keys.filter(k => !CONFIG_FIELDS.has(k));
   if (unknown.length) return res.status(400).json({ success: false, message: `Unknown config field(s): ${unknown.join(', ')}` });
+  // The key allowlist alone didn't bound the VALUES. app_config is public and
+  // every customer app merges it into its own runtime config on boot, so an
+  // unbounded string here is pushed to every device.
+  for (const [k, v] of Object.entries(patch)) {
+    if (typeof v === 'string' && v.length > 2000) return res.status(400).json({ success: false, message: `${k} is too long (max 2000 characters)` });
+    if (typeof v === 'number' && (!Number.isFinite(v) || v < 0 || v > 10000000)) return res.status(400).json({ success: false, message: `${k} is out of range` });
+    if (v !== null && !['string', 'number', 'boolean'].includes(typeof v)) return res.status(400).json({ success: false, message: `${k} must be a string, number or boolean` });
+  }
 
   const before = (await col.appConfig().get()).data() || {};
   await col.appConfig().set(patch, { merge: true });
@@ -74,16 +82,63 @@ router.get('/products', async (req, res) => {
   res.json({ success: true, data: snap.docs.map(d => ({ id: d.id, ...d.data() })) });
 });
 
-// PUT /admin/products/:id — full or partial product document update.
+// Fields a product document may carry. Same reasoning as CONFIG_FIELDS
+// above: this endpoint used to `set(req.body, {merge:true})` verbatim, so any
+// key in the body became a field on a PUBLICLY READABLE document — unbounded
+// junk, or an unexpected field that client code then trusts. Everything is
+// allowlisted and type-checked before it is written.
+const PRODUCT_FIELDS = ['name', 'cat', 'img', 'unit', 'desc', 'storage', 'freshness', 'variants', 'active'];
+const VARIANT_FIELDS = ['id', 'label', 'mrp', 'b2b', 'moq', 'case', 'stock', 'lowStock'];
+const MAX_FIELD_LEN = 2000;
+
+function cleanProductPatch(body) {
+  const patch = pickAllowed(body, PRODUCT_FIELDS);
+  for (const k of ['name', 'cat', 'img', 'unit', 'desc', 'storage', 'freshness']) {
+    if (k in patch) {
+      if (typeof patch[k] !== 'string' || patch[k].length > MAX_FIELD_LEN) return { error: `${k} must be a string of at most ${MAX_FIELD_LEN} characters` };
+    }
+  }
+  if ('active' in patch && typeof patch.active !== 'boolean') return { error: 'active must be a boolean' };
+  if ('variants' in patch) {
+    if (!Array.isArray(patch.variants) || patch.variants.length > 50) return { error: 'variants must be an array of at most 50 entries' };
+    const cleaned = [];
+    for (const v of patch.variants) {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return { error: 'each variant must be an object' };
+      const cv = pickAllowed(v, VARIANT_FIELDS);
+      if (!isValidId(cv.id)) return { error: 'each variant needs a valid id' };
+      if (typeof cv.label !== 'string' || cv.label.length > 120) return { error: 'each variant needs a label of at most 120 characters' };
+      for (const n of ['mrp', 'b2b', 'moq', 'case', 'lowStock']) {
+        if (n in cv) {
+          const num = Number(cv[n]);
+          if (!Number.isFinite(num) || num < 0 || num > 1000000) return { error: `variant ${n} must be a number between 0 and 1000000` };
+          cv[n] = num;
+        }
+      }
+      if ('stock' in cv && !(['in', 'low', 'out'].includes(cv.stock) || (Number.isFinite(Number(cv.stock)) && Number(cv.stock) >= 0))) {
+        return { error: "variant stock must be 'in' | 'low' | 'out' or a non-negative number" };
+      }
+      cleaned.push(cv);
+    }
+    patch.variants = cleaned;
+  }
+  return { patch };
+}
+
+// PUT /admin/products/:id — partial product document update (allowlisted).
 router.put('/products/:id', writeLimiter, async (req, res) => {
   if (!isValidId(req.params.id)) return res.status(400).json({ success: false, message: 'Invalid product id' });
   if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
     return res.status(400).json({ success: false, message: 'Request body must be an object' });
   }
+  if (hasForbiddenKeys(req.body)) return res.status(400).json({ success: false, message: 'Request body contains a disallowed field name' });
+  const { patch, error } = cleanProductPatch(req.body);
+  if (error) return res.status(400).json({ success: false, message: error });
+  if (!Object.keys(patch).length) return res.status(400).json({ success: false, message: 'No updatable product fields in request body' });
+
   const ref = col.products().doc(req.params.id);
   const before = (await ref.get()).data() || null;
-  await ref.set(req.body, { merge: true });
-  await writeAuditLog({ adminId: req.adminId, action: 'product_updated', target: req.params.id, before, after: req.body });
+  await ref.set(patch, { merge: true });
+  await writeAuditLog({ adminId: req.adminId, action: 'product_updated', target: req.params.id, before, after: patch });
   res.json({ success: true });
 });
 

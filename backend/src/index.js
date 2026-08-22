@@ -16,7 +16,32 @@ const app = express();
 // limit collapse onto a single shared counter.
 app.set('trust proxy', 1);
 
-app.use(helmet());
+app.disable('x-powered-by');
+app.use(helmet({
+  // A JSON API serves no HTML, so the strictest possible CSP costs nothing
+  // and neutralises anything that ever does get reflected into a response.
+  contentSecurityPolicy: {
+    useDefaults: false,
+    directives: { 'default-src': ["'none'"], 'frame-ancestors': ["'none'"], 'base-uri': ["'none'"], 'form-action': ["'none'"] },
+  },
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+  referrerPolicy: { policy: 'no-referrer' },
+  crossOriginResourcePolicy: { policy: 'same-site' },
+}));
+
+// Force HTTPS in production. Cloud Run terminates TLS at the load balancer
+// and forwards the original scheme in x-forwarded-proto, so a plain-HTTP
+// request reaching this process means credentials and bearer tokens crossed
+// the network in the clear — redirect it rather than serving it. Skipped
+// when NODE_ENV !== 'production' so localhost development still works.
+app.use((req, res, next) => {
+  if (process.env.NODE_ENV !== 'production') return next();
+  const proto = req.headers['x-forwarded-proto'];
+  if (proto && proto.split(',')[0].trim() !== 'https') {
+    return res.redirect(308, `https://${req.headers.host}${req.originalUrl}`);
+  }
+  next();
+});
 
 // Allowlist-based CORS. ALLOWED_ORIGINS is a comma-separated list (set in
 // Cloud Run env config); requests with no Origin header (native app clients,

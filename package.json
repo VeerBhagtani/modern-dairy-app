@@ -5,7 +5,10 @@
   "description": "Modern Dairy — Business Ordering Android app (Capacitor wrapper around the existing web app)",
   "scripts": {
     "sync": "cap sync android",
-    "open:android": "cap open android"
+    "open:android": "cap open android",
+    "check:secrets": "node scripts/check-no-secrets.js",
+    "inject:secrets": "node scripts/inject-secrets.js",
+    "test:security": "node tests/frontend-security.test.mjs && node tests/backend-security.test.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^6.1.2",
@@ -16,7 +19,8 @@
     "@capacitor/push-notifications": "^6.0.5"
   },
   "devDependencies": {
-    "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^6.1.2"
-  }
+  },
+  "_comment_overrides": "tar <7.5.1 (multiple path-traversal / DoS advisories, one critical) reached this project only through @capacitor/cli, which is CI build tooling and never ships in the app (`npm audit --omit=dev` was already clean). Pinned anyway rather than left for someone to rediscover. @capacitor/assets was removed outright: it was the only source of the remaining sharp/libvips and uuid advisories, nothing in the repo or CI referenced it, and app icons can still be regenerated on demand with `npx @capacitor/assets generate`.",
+  "_comment_dependency_audit": "npm audit --omit=dev is clean: nothing that ships in the app has a known vulnerability. The remaining advisories are all in @capacitor/cli's own dependency tree (tar <7.5.1, path-traversal/DoS, one critical) and only run on a CI runner over files from this repo. An overrides pin to tar@^7 WAS tried and reverted: it breaks `npx cap sync` outright (@capacitor/cli calls tar.extract via a CJS default import that tar v7 removed), so it would have traded a non-shipping dev advisory for a broken Android build. The real fix is @capacitor/cli 8.x, a coordinated major upgrade of every @capacitor/* package - worth doing deliberately, not as part of a security pass. @capacitor/assets was removed instead: it was the only source of the sharp/libvips and uuid advisories, nothing referenced it, and icons can still be regenerated with `npx @capacitor/assets generate`."
 }
