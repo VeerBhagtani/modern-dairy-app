@@ -3794,22 +3794,58 @@ async function recheckMaintenance(){
   if(!APPCFG.maintenanceMode){ MAINTENANCE_LOCKED = false; boot(); }
   else showMaintenanceScreen();
 }
-let MAINTENANCE_TIMER = null;
-function startMaintenancePolling(){
-  if(MAINTENANCE_TIMER) return;
-  // Poll only the maintenance flag every 45s, so an app that's already open
-  // locks (or unlocks) on its own within a minute of the admin/audit flipping it.
-  MAINTENANCE_TIMER = setInterval(async ()=>{
-    try{
-      const res = await fetch('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/app_config/singleton');
-      if(!res.ok) return;
+/* ═══════════════════════════════════════════════════════════
+   LIVE-STATE POLLING
+   Broadcasts and maintenance are driven by Firestore, but there's no
+   server pushing changes to an already-open app. So the app polls them
+   itself — every 20s AND immediately whenever it regains focus — so a
+   broadcast or a maintenance toggle shows up within seconds without the
+   customer reopening the app, and WITHOUT waiting on the (heavily
+   delayed) GitHub-Actions push relay. The push relay still exists for
+   apps that are fully closed; this makes the in-app experience instant.
+   ═══════════════════════════════════════════════════════════ */
+let LIVE_TIMER = null;
+let LAST_BROADCAST_SIG = '';
+function broadcastSig(){
+  const b = activeBroadcast();
+  return b ? b.id : '';
+}
+async function pollLiveState(){
+  // 1) Maintenance flag (from app_config).
+  try{
+    const res = await fetch('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/app_config/singleton');
+    if(res.ok){
       const doc = await res.json();
       const on = !!(doc.fields && doc.fields.maintenanceMode && doc.fields.maintenanceMode.booleanValue);
       const newMsg = doc.fields && doc.fields.maintenanceMessage && doc.fields.maintenanceMessage.stringValue;
-      if(on && !MAINTENANCE_LOCKED){ APPCFG.maintenanceMode = true; if(newMsg) APPCFG.maintenanceMessage = newMsg; showMaintenanceScreen(); }
-      else if(!on && MAINTENANCE_LOCKED){ APPCFG.maintenanceMode = false; MAINTENANCE_LOCKED = false; boot(); }
-    }catch(e){ /* offline — leave current state */ }
-  }, 45000);
+      if(on && !MAINTENANCE_LOCKED){ APPCFG.maintenanceMode = true; if(newMsg) APPCFG.maintenanceMessage = newMsg; showMaintenanceScreen(); return; }
+      if(!on && MAINTENANCE_LOCKED){ APPCFG.maintenanceMode = false; MAINTENANCE_LOCKED = false; boot(); return; }
+    }
+  }catch(e){ /* offline — keep current state */ }
+  if(MAINTENANCE_LOCKED) return;
+  // 2) Broadcasts — refresh, and if the active one changed and the customer
+  //    is on a screen that shows it, repaint so the banner appears at once.
+  try{
+    const before = LAST_BROADCAST_SIG;
+    await loadBroadcasts();
+    const sig = broadcastSig();
+    if(sig !== before){
+      LAST_BROADCAST_SIG = sig;
+      if(S.user && (S.screen==='home' || S.tab==='home')) paint();
+    }
+  }catch(e){ /* offline */ }
+}
+function startMaintenancePolling(){
+  if(LIVE_TIMER) return;
+  LAST_BROADCAST_SIG = broadcastSig();
+  LIVE_TIMER = setInterval(pollLiveState, 20000);
+  // Instant check when the app is brought back to the foreground (or a tab
+  // becomes visible) — this is what makes it feel immediate in real use.
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') pollLiveState(); });
+  window.addEventListener('focus', pollLiveState);
+  if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App){
+    try{ window.Capacitor.Plugins.App.addListener('appStateChange', st=>{ if(st && st.isActive) pollLiveState(); }); }catch(e){}
+  }
 }
 boot();
 
