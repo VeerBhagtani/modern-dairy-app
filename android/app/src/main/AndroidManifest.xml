@@ -42,5 +42,10 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Location: used only when the customer taps "Use my current location"
+         at signup to pre-fill their delivery address. Coarse + fine so it works
+         whether they grant approximate or precise location. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

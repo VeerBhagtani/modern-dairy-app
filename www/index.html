@@ -27,7 +27,7 @@
   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
   font-src 'self' data: https://fonts.gstatic.com;
   img-src 'self' data: blob: https://res.cloudinary.com https://*.googleapis.com https://*.razorpay.com;
-  connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://cpaas.messagecentral.com https://api.sandbox.co.in https://*.razorpay.com https://fonts.googleapis.com https://fonts.gstatic.com;
+  connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://cpaas.messagecentral.com https://api.sandbox.co.in https://*.razorpay.com https://fonts.googleapis.com https://fonts.gstatic.com https://api.bigdatacloud.net;
   frame-src https://*.razorpay.com https://modern-dairy-pune.firebaseapp.com;
   media-src 'self';
   object-src 'none';
@@ -788,6 +788,82 @@ async function verifyGSTIN(gstin) {
   return { legalName: data.legalName, tradeName: data.tradeName || data.legalName, status: data.status, stateCode: data.stateCode };
 }
 
+/* ═══════════════════════════════════════════════════════════
+   LOCATION AUTO-DETECT (signup convenience)
+   Tapping "Use my current location" reads the device GPS and turns it
+   into a rough area/city/PIN to pre-fill the delivery address, which the
+   customer then completes (flat/shop no. + landmark) or corrects. The GPS
+   pin is saved alongside the address for delivery later. Entirely optional
+   — if permission is denied or GPS fails, the customer just types the
+   address as before.
+
+   Reverse geocoding uses BigDataCloud's free, key-less client endpoint —
+   no API key, no billing, fine for signup-volume use. It gives area/city/
+   state/PIN, not a full street address, which is exactly why the customer
+   adds the specifics. Swap for Google's geocoder later for a fuller address
+   once billing is on; the saved coordinates work with either.
+   ═══════════════════════════════════════════════════════════ */
+async function detectDeviceCoords(){
+  const Geo = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Geolocation;
+  if(Geo){
+    let perm = await Geo.checkPermissions().catch(()=>({location:'prompt'}));
+    if(perm.location !== 'granted'){ perm = await Geo.requestPermissions(); }
+    if(perm.location !== 'granted') { const e=new Error('permission-denied'); e.denied=true; throw e; }
+    const pos = await Geo.getCurrentPosition({ enableHighAccuracy:true, timeout:15000 });
+    return { lat: pos.coords.latitude, lng: pos.coords.longitude };
+  }
+  if(navigator.geolocation){
+    return new Promise((resolve, reject)=>{
+      navigator.geolocation.getCurrentPosition(
+        p => resolve({ lat:p.coords.latitude, lng:p.coords.longitude }),
+        err => { const e=new Error(err.message||'location-failed'); if(err.code===1) e.denied=true; reject(e); },
+        { enableHighAccuracy:true, timeout:15000, maximumAge:60000 });
+    });
+  }
+  throw new Error('Location is not available on this device.');
+}
+async function reverseGeocode(lat, lng){
+  const res = await withTimeout(fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`),
+    12000, 'Could not look up the address.');
+  if(!res.ok) throw new Error('Could not look up the address.');
+  const d = await res.json();
+  const parts = [d.locality, d.city, d.principalSubdivision, d.postcode].filter(Boolean);
+  const seen = new Set(); const uniq = parts.filter(x => { const k=String(x).toLowerCase(); if(seen.has(k)) return false; seen.add(k); return true; });
+  return { text: uniq.join(', '), postcode: d.postcode || '', city: d.city || d.locality || '' };
+}
+function setLocStatus(msg, kind){
+  const el = document.getElementById('h-loc-status'); if(!el) return;
+  el.textContent = msg || '';
+  el.style.color = kind==='err' ? 'var(--crimson)' : kind==='ok' ? 'var(--fresh)' : 'var(--ink-3)';
+}
+async function useMyLocation(){
+  const btn = document.getElementById('btn-detect-loc');
+  if(btn){ btn.disabled = true; btn.dataset.lbl = btn.textContent; btn.innerHTML = `<span class="spin"></span> Detecting…`; }
+  setLocStatus('Getting your location…');
+  try{
+    const { lat, lng } = await detectDeviceCoords();
+    LOGIN.lat = lat; LOGIN.lng = lng;
+    let detected = '';
+    try{ detected = (await reverseGeocode(lat, lng)).text; }catch(e){ /* keep coords even if geocode fails */ }
+    const ta = document.getElementById('f-address');
+    if(ta){
+      // Pre-fill the detected area and leave the cursor ready for the specifics.
+      ta.value = detected ? (detected + ' — ') : ta.value;
+      ta.focus();
+      try{ ta.setSelectionRange(ta.value.length, ta.value.length); }catch(e){}
+    }
+    setLocStatus(detected
+      ? '📍 We detected this area. Add your flat/shop number and a landmark, or correct it if it’s wrong.'
+      : '📍 Got your GPS location — type your address below; we’ve saved the pin for delivery.', 'ok');
+  }catch(e){
+    setLocStatus(e && e.denied
+      ? 'Location access was declined — no problem, just type your address below.'
+      : 'Couldn’t detect your location — please type your address below.', 'err');
+  }finally{
+    if(btn){ btn.disabled = false; btn.innerHTML = btn.dataset.lbl || 'Use my current location'; }
+  }
+}
+
 function withTimeout(promise, ms, timeoutMessage) {
   let timer;
   const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(timeoutMessage)), ms); });
@@ -1437,6 +1513,8 @@ function b2bForm(){
       <input id="f-phone" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit number" value="${esc(LOGIN.phone)}"></div>
       <div class="hint" id="h-phone">We'll send a one-time code to verify this number.</div></div>
     <div class="field"><label class="label">Delivery address</label>
+      <button type="button" class="btn btn-quiet mb-8" id="btn-detect-loc" onclick="useMyLocation()" style="justify-content:center;">${icon('pin',17)} Use my current location</button>
+      <div class="hint" id="h-loc-status" style="margin:-4px 0 8px;"></div>
       <textarea class="input" id="f-address" rows="2" placeholder="Shop/warehouse address, area, landmark, Pune - PIN code">${esc(LOGIN.address)}</textarea>
       <div class="hint" id="h-address">Where should we deliver your orders?</div></div>
     ${passwordField()}
@@ -1463,6 +1541,8 @@ function b2cForm(){
       <input id="f-phone" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit number" value="${esc(LOGIN.phone)}"></div>
       <div class="hint" id="h-phone">We'll send a one-time code to verify this number.</div></div>
     <div class="field"><label class="label">Delivery address</label>
+      <button type="button" class="btn btn-quiet mb-8" id="btn-detect-loc" onclick="useMyLocation()" style="justify-content:center;">${icon('pin',17)} Use my current location</button>
+      <div class="hint" id="h-loc-status" style="margin:-4px 0 8px;"></div>
       <textarea class="input" id="f-address" rows="2" placeholder="House/flat, area, landmark, Pune - PIN code">${esc(LOGIN.address)}</textarea>
       <div class="hint" id="h-address">Where should we deliver your orders?</div></div>
     ${passwordField()}
@@ -1657,7 +1737,7 @@ function getCustomerAccounts(){
    through here even by accident — it is stripped, and any legacy plaintext
    left on the record is dropped the moment the record is touched. Password
    changes go through setAccountPassword() below. */
-const ACCOUNT_FIELDS = ['name','company','gstin','type','address'];
+const ACCOUNT_FIELDS = ['name','company','gstin','type','address','lat','lng'];
 function saveCustomerAccount(phone, patch){
   const cur = getCustomerAccounts();
   const clean = {};
@@ -1862,7 +1942,7 @@ async function doVerifyOTP(){
   busy('btn-verify',false,'Verify and continue');
   if(!r.success){ setErr('f-otp','h-otp', r.message); return; }
   if(LOGIN.phone){
-    saveCustomerAccount(LOGIN.phone, {name:LOGIN.name, company:LOGIN.company||null, gstin:LOGIN.gstin||null, type:LOGIN.mode, address:LOGIN.address||null});
+    saveCustomerAccount(LOGIN.phone, {name:LOGIN.name, company:LOGIN.company||null, gstin:LOGIN.gstin||null, type:LOGIN.mode, address:LOGIN.address||null, lat:LOGIN.lat??null, lng:LOGIN.lng??null});
     // Only set/replace the stored credential when this flow actually
     // captured one (signup, or a signup on an existing number). Plain
     // sign-in clears LOGIN.password, so it never rewrites the hash.
