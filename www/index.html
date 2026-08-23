@@ -712,11 +712,19 @@ const TEST_OTP = '0000';
    that can actually send SMS always demands a real code. There is no way to
    ship a production APK with the bypass on by accident.
 
-   TEST_PHONE keeps its free 0000 shortcut for the same reason — and only in
-   a demo build. In a real build even TEST_PHONE goes through the provider,
-   so a real user who happens to own 9000000000 is not a backdoor. */
+   Two separate things:
+   - OTP_TESTING_MODE = EVERY number accepts 0000. This is the dangerous one,
+     so it is ONLY ever on in a demo build (no real credential). A real build
+     never lets every number use a fixed code.
+   - The dedicated TEST_PHONE (9000000000) shortcut stays available in ALL
+     builds (including real ones), so the app can be tested without burning
+     real SMS. That's a SINGLE known test number, not "every number", so it's
+     not a broad backdoor — only sign-ins to 9000000000 itself use 0000, and
+     every other number still gets a real SMS code. */
 const OTP_TESTING_MODE = !OTP_HAS_CREDENTIAL;
-const OTP_TEST_BYPASS_ALLOWED = !OTP_HAS_CREDENTIAL;
+// The test-number (9000000000 + 0000) path is always allowed; only the
+// all-numbers testing mode is gated to demo builds.
+const OTP_TEST_BYPASS_ALLOWED = true;
 
 /* ── Real GST verification via sandbox.co.in — called directly from the app,
    same reasoning as OTP: the backend that would normally own this isn't
