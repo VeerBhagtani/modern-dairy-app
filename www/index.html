@@ -2666,9 +2666,12 @@ function radio(on){
     ${on?'<span style="width:9px;height:9px;border-radius:50%;background:var(--brand);"></span>':''}</span>`;
 }
 
+let PLACING_ORDER = false;   // re-entry guard: never place the same order twice
 async function placeOrder(){
+  if(PLACING_ORDER) return;   // a place is already in flight (double-tap / retry)
   if(APPCFG.ordersDisabled){ toast('Ordering is temporarily paused. Please try again a little later.','alert'); return; }
   if(!S.user?.address){ toast('Add a delivery address before placing your order','alert'); editDeliveryAddressSheet(); return; }
+  PLACING_ORDER = true;
   const t=cartTotals();
   const btn=document.getElementById('btn-place'); btn.dataset.lbl=`Place order · ${money(t.total)}`;
   busy('btn-place',true,'Placing order');
@@ -2697,6 +2700,7 @@ async function placeOrder(){
   }
   busy('btn-place',false, payload.total?`Place order · ${money(t.total)}`:'Place order');
   if(!r.success){
+    PLACING_ORDER = false;   // failed — allow another attempt
     if(r.code==='INSUFFICIENT'){ toast(r.message,'alert'); return; }
     toast(r.message||'Could not place the order. Try again.','alert'); return;
   }
@@ -2721,6 +2725,7 @@ async function placeOrder(){
       if(oi!==-1) S.orders[oi] = {...S.orders[oi], firestoreId};
     });
   }
+  PLACING_ORDER = false;   // order placed and navigated away — ready for the next one
 }
 
 /* ═══════════════════════════════════════════════════════════

@@ -150,6 +150,13 @@ let unsubOrders = null, unsubProducts = null, unsubBroadcasts = null, unsubMaint
 let openOrderId = null;
 
 function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// Audit trail: record every privileged admin change to admin_audit_log
+// (admin-only collection) so there is a who/when/what for price, config and
+// kill-switch changes. Best-effort — never blocks the actual action.
+async function logAdmin(action, detail){
+  try{ await addDoc(collection(db,'admin_audit_log'), { action:String(action||'').slice(0,80), detail:String(detail||'').slice(0,400), by:(auth.currentUser&&auth.currentUser.email)||'admin', at:serverTimestamp() }); }
+  catch(e){ /* logging must never break the operation */ }
+}
 function money(n){ return '₹' + Math.round(Number(n)||0).toLocaleString('en-IN'); }
 function fmtDate(ts){
   const d = ts?.toDate ? ts.toDate() : (ts ? new Date(ts) : null);
@@ -438,6 +445,7 @@ async function saveProduct(id){
   });
   try{
     await updateDoc(doc(db, 'products', id), { variants });
+    logAdmin('product_pricing_updated', 'product '+id);
     const msg = document.getElementById(`saved-${id}`);
     if(msg){ msg.style.display='inline'; setTimeout(()=>msg.style.display='none', 2000); }
   }catch(e){ alert('Could not save: ' + e.message); }
@@ -494,6 +502,7 @@ async function sendBroadcast(){
   if(!message){ alert('Enter a message to send.'); return; }
   try{
     await addDoc(collection(db, 'broadcasts'), { message, audience, createdAt: serverTimestamp() });
+    logAdmin('broadcast_sent', audience+': '+String(message).slice(0,120));
   }catch(e){ alert('Could not send broadcast: ' + e.message); }
 }
 async function deleteBroadcast(id){
@@ -585,21 +594,19 @@ function maintenanceControlsHtml(){
     </div>
 
     <div class="card">
-      <div class="m-head"><h3 class="m-title">Apply fixes &amp; publish</h3>
-        ${auditState.deployResult?`<span class="pill ${/applied|deployed/i.test(auditState.deployResult)?'delivered':'action-needed'}">${esc(String(auditState.deployResult).slice(0,40))}</span>`:''}</div>
+      <div class="m-head"><h3 class="m-title">Validate audit fixes</h3>
+        ${auditState.deployResult?`<span class="pill ${/ready for your review/i.test(auditState.deployResult)?'delivered':'action-needed'}">${esc(String(auditState.deployResult).slice(0,40))}</span>`:''}</div>
       <div class="muted" style="font-size:.85rem;line-height:1.6;margin:6px 0 12px;">
-        Take the latest audit's draft-PR fixes live. When you click this, an automated job checks out the
-        newest audit fix PR, <b>re-runs the tests, and only if they pass</b> merges it and publishes:
-        the admin site &amp; security rules update on the web within minutes, and a fresh app build is
-        produced (customers get it on their next app update). Nothing is applied if the tests fail.
+        Check the latest audit fix PR. When you click this, a background job checks out the newest audit fix
+        PR and <b>re-runs the tests</b>, then reports whether it passed here. <b>It does not merge or deploy.</b>
+        If it passes, open the PR on GitHub, read the diff yourself, and merge it if it's good — AI-written
+        changes never reach the live app without you reviewing them.
       </div>
-      <button class="btn-primary" id="btn-apply-fixes">Apply latest audit fixes &amp; publish</button>
-      <span class="ok-msg" id="apply-req" style="display:none;margin-left:10px;">Requested — the job will pick this up shortly.</span>
+      <button class="btn-primary" id="btn-apply-fixes">Validate latest audit fix PR</button>
+      <span class="ok-msg" id="apply-req" style="display:none;margin-left:10px;">Requested — the job will check it shortly.</span>
       <div class="muted" style="font-size:.78rem;margin-top:10px;">
-        One-time setup for web publishing: a <code>FIREBASE_TOKEN</code> repo secret
-        (<code>firebase login:ci</code>). Without it, fixes still merge and a new app build is made, but the
-        website isn't auto-deployed. This is the only place changes go live automatically — and only after
-        the tests pass.
+        Deliberately review-only: merging and deploying are always a human decision. See the audit's
+        maintenance baseline for what automation may and may not do.
       </div>
     </div>`;
 }
@@ -618,7 +625,7 @@ function wireMaintenanceEvents(){
         maintenanceMode: turningOn,
         maintenanceMessage: cfg.maintenanceMessage || 'We are giving the app a quick tune-up and will be back shortly. Please check again in a little while.',
       }, { merge:true });
-      cfg.maintenanceMode = turningOn;
+      cfg.maintenanceMode = turningOn; logAdmin('maintenance_'+(turningOn?'on':'off'), 'maintenance tab');
       const m=document.getElementById('maint-saved'); if(m){ m.style.display='inline'; }
       render();
     }catch(e){ alert('Could not change maintenance mode: '+e.message); t.disabled=false; }
@@ -646,7 +653,7 @@ function wireMaintenanceEvents(){
   };
   const ap = document.getElementById('btn-apply-fixes');
   if(ap) ap.onclick = async () => {
-    if(!confirm('Apply the latest audit fix PR and publish?\n\nThe job will re-run the tests and only merge + deploy if they pass. The website updates within minutes; customers get the app change on their next update.')) return;
+    if(!confirm('Validate the latest audit fix PR?\n\nThe job re-runs the tests and reports whether it passed. It does NOT merge or deploy — you review and merge the PR on GitHub yourself.')) return;
     ap.disabled = true;
     try{
       await setDoc(doc(db,'deploy_control','request'), {
@@ -731,6 +738,7 @@ async function saveSettings(){
   };
   try{
     await setDoc(doc(db, 'app_config', 'singleton'), patch, { merge: true });
+    logAdmin('settings_updated', Object.keys(patch).join(', '));
     cfg = { ...cfg, ...patch };
     const msg = document.getElementById('saved-settings');
     if(msg){ msg.style.display='inline'; setTimeout(()=>msg.style.display='none', 2000); }
@@ -768,6 +776,12 @@ let dashPeriod = 'today';
 let deviceCount = null;   // registered push devices (loaded once)
 let reverifyReq = {};     // reverify_control/request
 let reverifyResult = {};  // reverify_control/result
+let adminActivity = [];   // recent admin_audit_log entries
+async function loadAdminActivity(){
+  try{ const snap=await getDocs(query(collection(db,'admin_audit_log'), orderBy('at','desc'), limit(25))); adminActivity=snap.docs.map(d=>d.data()); }
+  catch(e){ adminActivity=[]; }
+  if(tab==='dashboard') render();
+}
 async function loadReverifyState(){
   try{ const a=await getDoc(doc(db,'reverify_control','request')); reverifyReq = a.exists()?a.data():{}; }catch(e){ reverifyReq={}; }
   try{ const b=await getDoc(doc(db,'reverify_control','result')); reverifyResult = b.exists()?b.data():{}; }catch(e){ reverifyResult={}; }
@@ -841,7 +855,17 @@ function dashboardBody(){
       <button class="btn-primary" id="btn-reverify" ${reverifyReq.requested?'disabled':''}>${reverifyReq.requested?'Re-verifying… (runs shortly)':'Re-verify all business accounts'}</button>
       <span class="muted" style="font-size:.78rem;display:block;margin-top:8px;">GSTIN status only — the bank-account check can’t be re-run because account numbers are never stored (privacy).</span>
     </div>
-    ${reverifyResultHtml()}`;
+    ${reverifyResultHtml()}
+
+    <div class="section-head" style="margin:22px 0 10px;"><span class="eyebrow" style="font-size:.78rem;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em;">Recent admin activity</span></div>
+    ${adminActivity.length ? `<div class="tbl-scroll"><table>
+      <thead><tr><th>When</th><th>Action</th><th>Detail</th><th>By</th></tr></thead>
+      <tbody>${adminActivity.map(a=>`<tr>
+        <td class="muted" style="white-space:nowrap;">${fmtDate(a.at)}</td>
+        <td class="mono" style="font-size:.82rem;">${esc(a.action||'')}</td>
+        <td>${esc(a.detail||'')}</td>
+        <td class="muted">${esc(a.by||'')}</td></tr>`).join('')}</tbody></table></div>`
+      : `<div class="muted" style="font-size:.85rem;">No admin changes logged yet. Price, config, broadcast and control changes will appear here.</div>`}`;
 }
 function reverifyResultHtml(){
   const list = (reverifyResult.businesses)||[];
@@ -930,6 +954,7 @@ function controlsBody(){
 async function setControl(key, on){
   await setDoc(doc(db,'app_config','singleton'), { [key]: on }, { merge:true });
   cfg[key] = on;
+  logAdmin('control_'+(on?'enabled':'disabled'), key);
 }
 function wireControlsEvents(){
   // OTP-login toggle. OFF => also force maintenance ON. Can't be turned back
@@ -943,9 +968,11 @@ function wireControlsEvents(){
       if(turningOff){
         await setDoc(doc(db,'app_config','singleton'), { otpLoginDisabled:true, maintenanceMode:true }, { merge:true });
         cfg.otpLoginDisabled = true; cfg.maintenanceMode = true;
+        logAdmin('otp_login_disabled', 'also forced maintenance on');
       } else {
         await setDoc(doc(db,'app_config','singleton'), { otpLoginDisabled:false }, { merge:true });
         cfg.otpLoginDisabled = false;
+        logAdmin('otp_login_enabled', '');
       }
       render();
     }catch(e){ alert('Could not change OTP login: '+e.message); otp.checked = !otp.checked; otp.disabled = false; }
@@ -965,7 +992,7 @@ function wireControlsEvents(){
   document.querySelectorAll('[data-product-disable]').forEach(inp => inp.onchange = async () => {
     const id = inp.dataset.productDisable;
     inp.disabled = true;
-    try{ await updateDoc(doc(db,'products',id), { disabled: inp.checked }); const p=(products||[]).find(x=>x.id===id); if(p) p.disabled=inp.checked; render(); }
+    try{ await updateDoc(doc(db,'products',id), { disabled: inp.checked }); const p=(products||[]).find(x=>x.id===id); if(p) p.disabled=inp.checked; logAdmin('product_'+(inp.checked?'disabled':'enabled'), id); render(); }
     catch(e){ alert('Could not update that product: '+e.message); inp.checked = !inp.checked; inp.disabled = false; }
   });
 }
@@ -1283,6 +1310,7 @@ onAuthStateChanged(auth, user => {
     loadAuditState();
     loadDeviceCount();
     loadReverifyState();
+    loadAdminActivity();
     render();
   }else{
     if(unsubOrders){ unsubOrders(); unsubOrders = null; }

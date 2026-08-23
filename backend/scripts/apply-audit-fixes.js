@@ -9,22 +9,17 @@
  *   1. Find the newest OPEN pull request whose branch is `nightly-audit/*`
  *      (these are the audit's proposed-fix PRs).
  *   2. Check it out, install deps, and RE-RUN THE TESTS (npm run test:security
- *      + the committed-secret scan). If anything fails, stop — do NOT merge or
- *      deploy — and report "tests failed"; the PR stays open for a human.
- *   3. If the tests pass: merge the PR to master. That merge push auto-triggers
- *      the normal APK build, so a fresh app build is produced.
- *   4. If a FIREBASE_TOKEN secret is present, deploy hosting + Firestore rules,
- *      so the admin site and rules go live on the web within minutes. (The
- *      native app can't be hot-updated; customers get the change on their next
- *      app update — an inherent Android limitation, not a bug.)
- *   5. Record the result on deploy_control/request and clear `requested`.
+ *      + the committed-secret scan).
+ *   3. Record the outcome on deploy_control/request and clear `requested`, so
+ *      the admin panel shows whether the fix PR passed its tests.
  *
- * SAFETY: a human clicks the button (per-click authorization), and the tests
- * gate the merge. It only ever merges a pull request the audit already
- * produced; it never writes code itself here.
+ * IT DOES NOT MERGE AND DOES NOT DEPLOY. Per the maintenance baseline,
+ * automation must never merge its own PR or push AI-authored changes to
+ * production behind only a thin test gate. This job just validates the fix PR
+ * and hands it back for a human to review the diff and merge on GitHub.
  *
  * Secrets: FCM_SERVICE_ACCOUNT_JSON (Firestore, already set), GH_TOKEN
- * (automatic in Actions, for gh), and optionally FIREBASE_TOKEN (web deploy).
+ * (automatic in Actions, for gh). It does not merge or deploy, so no Firebase/deploy token is needed.
  */
 'use strict';
 const crypto = require('crypto');
@@ -117,24 +112,16 @@ async function main() {
   }
   console.log('Tests pass.');
 
-  // 3. Merge to master (auto-triggers the APK build via push).
-  sh('git config user.email "audit-bot@users.noreply.github.com"');
-  sh('git config user.name "Nightly Audit Bot"');
-  try { sh(`gh pr merge ${pr.number} --squash --delete-branch`); }
-  catch (e) { await finish(`merge failed on PR #${pr.number}: ${e.message.slice(0, 120)}`); return; }
-  console.log(`Merged PR #${pr.number}. APK build will run from the merge.`);
-
-  // 4. Deploy web (hosting + rules) if a Firebase token is configured.
-  let webNote = 'web deploy skipped (no FIREBASE_TOKEN)';
-  if (process.env.FIREBASE_TOKEN) {
-    sh('git checkout master && git pull --ff-only');
-    const ok = shOk(`npx --yes firebase-tools deploy --only hosting,firestore:rules --project ${PROJECT_ID} --token ${process.env.FIREBASE_TOKEN} --non-interactive`);
-    webNote = ok ? 'web (site + rules) deployed' : 'web deploy attempted but failed — check the run log';
-  }
-  console.log(webNote);
-
-  await finish(`applied PR #${pr.number}; ${webNote}; new app build triggered`);
-  console.log('Done.');
+  // 3. VALIDATE ONLY — never merge and never deploy automatically.
+  // The maintenance baseline is explicit: automation must not merge its own PR
+  // or push to production. AI-authored changes gated by a thin (security-only)
+  // test suite must not reach the live website/rules or an auto-merged master
+  // without a human reading the diff. So this job checks the tests pass, then
+  // hands the PR back to you to review + merge on GitHub. It touches nothing
+  // in production.
+  shOk('git checkout master');
+  await finish(`PR #${pr.number} passed the tests and is READY FOR YOUR REVIEW — open it on GitHub, read the diff, and merge it yourself if it's good. (Automation does not merge or deploy.)`);
+  console.log(`Validated PR #${pr.number}. Left for human review — nothing merged or deployed.`);
 }
 
 main().catch(async (e) => {
