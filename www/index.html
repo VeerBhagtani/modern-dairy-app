@@ -794,6 +794,95 @@ async function verifyGSTIN(gstin) {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   BANK-ACCOUNT OWNERSHIP CHECK (business anti-fraud)
+   GSTIN + business name + PAN are all public/derivable, so verifying them
+   only proves a business is REAL — not that the applicant OWNS it. The one
+   thing a fraudster using someone's public GSTIN cannot produce is that
+   business's BANK ACCOUNT. So a business signup must verify a bank account
+   whose holder name matches the GST legal name. Uses sandbox.co.in's
+   penny-less verification (no ₹1 deposit) with the same auth as GST.
+
+   NOTE: the account number is used only to run the check — we store only the
+   verified result (matched name + last 4 digits), never the full number. Like
+   GST, this call runs client-side until the backend ships; it's throttled to
+   limit abuse of the paid API and must move server-side on deploy. ── */
+function gstBankFetch(ifsc, accountNumber, token) {
+  return withTimeout(fetch(
+    `https://api.sandbox.co.in/bank/${encodeURIComponent(ifsc)}/accounts/${encodeURIComponent(accountNumber)}/penniless-verify`,
+    { headers: { authorization: token, 'x-api-key': GST_API_KEY, 'x-api-version': '1.0' } }),
+    25000, 'Could not reach the bank verification service. Check your connection and try again.');
+}
+async function verifyBankAccount(ifsc, accountNumber) {
+  if (!GST_READY) { const e = new Error('Bank verification is not configured in this build.'); e.code = 'NOT_CONFIGURED'; throw e; }
+  const blocked = throttleCheck('bankVerify', 'device');
+  if (blocked) throw new Error(blocked);
+  throttleFail('bankVerify', 'device');           // every metered check counts
+  let token = GST_ACCESS_TOKEN || await gstAuthenticate();
+  let res = await gstBankFetch(ifsc, accountNumber, token);
+  if (res.status === 401) { token = await gstAuthenticate(); res = await gstBankFetch(ifsc, accountNumber, token); }
+  let body = {};
+  try { body = await res.json(); } catch (e) { /* non-JSON — fall through with status only */ }
+  const data = body.data || {};
+  if (!res.ok || data.account_exists === false || !data.name_at_bank) {
+    throw new Error(body.message || 'That bank account could not be verified. Check the number and IFSC.');
+  }
+  return { name: String(data.name_at_bank), exists: true };
+}
+
+// Fuzzy name match between the bank account holder and the GST legal name.
+// Ignores common business suffixes and word order so legitimate variants
+// ("XYZ Enterprises" vs "XYZ") pass, while an unrelated name (a fraudster's
+// own account) scores ~0 and is rejected.
+const NAME_NOISE = new Set(['PRIVATE','LIMITED','PVT','LTD','LLP','AND','CO','COMPANY','CORPORATION','ENTERPRISES','ENTERPRISE','TRADERS','TRADING','INDUSTRIES','THE','MS','M','S','SONS','INDIA','STORE','STORES','SHOP','AGENCIES','AGENCY','DISTRIBUTORS','DISTRIBUTOR','FOODS','DAIRY','MILK','PROP','PROPRIETOR']);
+function nameTokens(s){ return String(s||'').toUpperCase().replace(/[^A-Z0-9 ]/g,' ').replace(/\s+/g,' ').trim().split(' ').filter(t=>t && !NAME_NOISE.has(t)); }
+function nameMatchScore(a, b){
+  const ta=nameTokens(a), tb=nameTokens(b);
+  if(!ta.length || !tb.length) return 0;
+  const setB=new Set(tb);
+  const common=ta.filter(t=>setB.has(t)).length;
+  return common / Math.min(ta.length, tb.length);
+}
+function bankNameMatches(bankName, gstName){ return nameMatchScore(bankName, gstName) >= 0.6; }
+
+function bankForm(){
+  const legal = LOGIN.gstData?.legalName || LOGIN.company || 'your business';
+  return `
+    <div class="banner ok mb-16">${icon('check',17)}<div><b>GSTIN verified</b><br>${esc(legal)}</div></div>
+    <div class="banner info mb-16">${icon('shield',17)}<div>To confirm you represent this business, verify a bank account in the business's name. We check the account holder's name matches — we don't store your account number.</div></div>
+    <div class="field"><label class="label">Bank account number</label>
+      <input class="input" id="f-acct" inputmode="numeric" autocomplete="off" placeholder="Business account number" value="${esc(LOGIN.acctNo||'')}"></div>
+    <div class="field"><label class="label">IFSC code</label>
+      <input class="input" id="f-ifsc" maxlength="11" placeholder="e.g. HDFC0001234" value="${esc(LOGIN.ifsc||'')}" style="text-transform:uppercase;" oninput="this.value=this.value.toUpperCase()">
+      <div class="hint" id="h-ifsc">The account should be in the name registered under this GSTIN.</div></div>
+    <button class="btn" id="btn-bank" onclick="doVerifyBank()">Verify business account</button>
+    <button class="btn btn-quiet mt-8" onclick="LOGIN.step='entry';paint()">Back</button>`;
+}
+async function doVerifyBank(){
+  const acct=(document.getElementById('f-acct').value||'').replace(/\s/g,'');
+  const ifsc=(document.getElementById('f-ifsc').value||'').trim().toUpperCase();
+  setErr('f-ifsc','h-ifsc','');
+  if(!/^\d{6,20}$/.test(acct)){ toast('Enter a valid bank account number','alert'); return; }
+  if(!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)){ setErr('f-ifsc','h-ifsc','Enter a valid 11-character IFSC code.'); return; }
+  LOGIN.acctNo=acct; LOGIN.ifsc=ifsc;
+  const btn=document.getElementById('btn-bank'); btn.dataset.lbl='Verify business account';
+  busy('btn-bank',true,'Verifying account');
+  let result;
+  try{ result = await verifyBankAccount(ifsc, acct); }
+  catch(e){ busy('btn-bank',false,'Verify business account'); setErr('f-ifsc','h-ifsc', e.message||'Could not verify that account.'); return; }
+  busy('btn-bank',false,'Verify business account');
+  const gstName = LOGIN.gstData?.legalName || LOGIN.company || '';
+  if(!bankNameMatches(result.name, gstName)){
+    setErr('f-ifsc','h-ifsc', `That account is in the name "${result.name}", which doesn't match this GSTIN's registered business. Use the business's own bank account.`);
+    return;
+  }
+  // Passed — record only the result, never the full account number.
+  LOGIN.bankVerified = true; LOGIN.bankName = result.name; LOGIN.acctLast4 = acct.slice(-4);
+  LOGIN.acctNo = '';   // drop the number from memory
+  toast('Business account verified','check');
+  LOGIN.step='contact'; paint();
+}
+
+/* ═══════════════════════════════════════════════════════════
    LOCATION AUTO-DETECT (signup convenience)
    Tapping "Use my current location" reads the device GPS and turns it
    into a rough area/city/PIN to pre-fill the delivery address, which the
@@ -1149,6 +1238,7 @@ const THROTTLE_RULES = {
   gstLookup: { max: 10, windowMs: 60*60*1000, lockMs: 30*60*1000 },
   adminLogin:{ max: 5,  windowMs: 15*60*1000, lockMs: 30*60*1000 },
   pwReset:   { max: 5,  windowMs: 15*60*1000, lockMs: 15*60*1000 },
+  bankVerify:{ max: 8,  windowMs: 60*60*1000, lockMs: 30*60*1000 },
 };
 function throttleAll(){
   try{ return JSON.parse(localStorage.getItem(THROTTLE_KEY)||'{}'); }catch(e){ return {}; }
@@ -1534,6 +1624,7 @@ function tapLogo(){
 function b2bForm(){
   if(LOGIN.step==='otp') return otpForm();
   if(LOGIN.authMode==='signin') return signInForm();
+  if(LOGIN.step==='bank') return bankForm();
   if(LOGIN.step==='contact') return `
     <div class="banner ok mb-16">${icon('check',17)}<div><b>GSTIN verified</b><br>${esc(LOGIN.gstData?.legalName||LOGIN.company)}</div></div>
     <div class="field"><label class="label">Contact person</label>
@@ -1757,7 +1848,7 @@ async function doVerifyGSTIN(){
   try{ data = await verifyGSTIN(g); }
   catch(e){ busy('btn-gst',false,'Verify business'); setErr('f-gstin','h-gstin', e.message||'GSTIN not found or invalid.'); return; }
   busy('btn-gst',false,'Verify business');
-  LOGIN.gstin=g; LOGIN.company=c; LOGIN.gstData=data; LOGIN.step='contact'; paint();
+  LOGIN.gstin=g; LOGIN.company=c; LOGIN.gstData=data; LOGIN.step='bank'; paint();
 }
 function getCustomerAccounts(){
   try{ return JSON.parse(localStorage.getItem('mda_customer_accounts')||'{}'); }
@@ -1767,7 +1858,7 @@ function getCustomerAccounts(){
    through here even by accident — it is stripped, and any legacy plaintext
    left on the record is dropped the moment the record is touched. Password
    changes go through setAccountPassword() below. */
-const ACCOUNT_FIELDS = ['name','company','gstin','type','address','lat','lng'];
+const ACCOUNT_FIELDS = ['name','company','gstin','type','address','lat','lng','bankVerified','bankName','acctLast4'];
 function saveCustomerAccount(phone, patch){
   const cur = getCustomerAccounts();
   const clean = {};
@@ -1841,6 +1932,7 @@ function isStrongEnough(pw){
   return s.length >= PW_MIN_LENGTH && /[A-Za-z]/.test(s) && /\d/.test(s);
 }
 async function doB2BRegister(){
+  if(!LOGIN.bankVerified){ toast('Please verify your business bank account first','alert'); LOGIN.step='bank'; paint(); return; }
   const n=document.getElementById('f-name').value.trim();
   const p=document.getElementById('f-phone').value.trim();
   const addr=document.getElementById('f-address').value.trim();
@@ -1972,7 +2064,7 @@ async function doVerifyOTP(){
   busy('btn-verify',false,'Verify and continue');
   if(!r.success){ setErr('f-otp','h-otp', r.message); return; }
   if(LOGIN.phone){
-    saveCustomerAccount(LOGIN.phone, {name:LOGIN.name, company:LOGIN.company||null, gstin:LOGIN.gstin||null, type:LOGIN.mode, address:LOGIN.address||null, lat:LOGIN.lat??null, lng:LOGIN.lng??null});
+    saveCustomerAccount(LOGIN.phone, {name:LOGIN.name, company:LOGIN.company||null, gstin:LOGIN.gstin||null, type:LOGIN.mode, address:LOGIN.address||null, lat:LOGIN.lat??null, lng:LOGIN.lng??null, bankVerified:LOGIN.bankVerified||false, bankName:LOGIN.bankName||null, acctLast4:LOGIN.acctLast4||null});
     // Only set/replace the stored credential when this flow actually
     // captured one (signup, or a signup on an existing number). Plain
     // sign-in clears LOGIN.password, so it never rewrites the hash.
