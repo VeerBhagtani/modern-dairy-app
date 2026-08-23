@@ -607,6 +607,10 @@ function wireMaintenanceEvents(){
   const t = document.getElementById('btn-maint-toggle');
   if(t) t.onclick = async () => {
     const turningOn = !cfg.maintenanceMode;
+    if(!turningOn && cfg.otpLoginDisabled){
+      alert('Since OTP login is OFF, the app can\'t leave maintenance mode — customers wouldn\'t be able to sign in. Turn OTP login back ON (Controls tab) first.');
+      return;
+    }
     if(turningOn && !confirm('Put the app under maintenance now? Customers will not be able to use it until you end maintenance.')) return;
     t.disabled = true;
     try{
@@ -894,6 +898,17 @@ function controlsBody(){
       Instant kill switches. Flip one and it takes effect on customers’ open apps within seconds (and on next open otherwise).
       Turn it back off to restore. Red = the control is ON (restricting something).
     </div>
+
+    <div class="card" style="border-left:4px solid ${cfg.otpLoginDisabled?'var(--bad)':'var(--fresh)'};">
+      <div class="ctrl-row" style="border-bottom:none;">
+        <div class="ctrl-info">
+          <div class="t">OTP login ${cfg.otpLoginDisabled?'<span style="color:var(--bad)">— OFF</span>':'<span style="color:var(--fresh)">— ON</span>'}</div>
+          <div class="d">When OTP login is turned OFF, customers can’t sign in, so the app is automatically put into <b>maintenance mode</b>. You can’t leave maintenance until OTP login is switched back ON.</div>
+        </div>
+        <label class="switch ok"><input type="checkbox" id="otp-login-toggle" ${cfg.otpLoginDisabled?'':'checked'}><span class="track"></span><span class="knob"></span></label>
+      </div>
+    </div>
+
     <div class="card">
       ${EMERGENCY_CONTROLS.map(c=>`
         <div class="ctrl-row">
@@ -917,8 +932,31 @@ async function setControl(key, on){
   cfg[key] = on;
 }
 function wireControlsEvents(){
+  // OTP-login toggle. OFF => also force maintenance ON. Can't be turned back
+  // ON without consequence, but turning it ON is what unlocks leaving maintenance.
+  const otp = document.getElementById('otp-login-toggle');
+  if(otp) otp.onchange = async () => {
+    const turningOff = !otp.checked;   // checkbox checked = OTP enabled
+    if(turningOff && !confirm('Turn OFF OTP login? Customers won\'t be able to sign in, and the app will be put into maintenance mode until you turn OTP login back on.')) { otp.checked = true; return; }
+    otp.disabled = true;
+    try{
+      if(turningOff){
+        await setDoc(doc(db,'app_config','singleton'), { otpLoginDisabled:true, maintenanceMode:true }, { merge:true });
+        cfg.otpLoginDisabled = true; cfg.maintenanceMode = true;
+      } else {
+        await setDoc(doc(db,'app_config','singleton'), { otpLoginDisabled:false }, { merge:true });
+        cfg.otpLoginDisabled = false;
+      }
+      render();
+    }catch(e){ alert('Could not change OTP login: '+e.message); otp.checked = !otp.checked; otp.disabled = false; }
+  };
   document.querySelectorAll('[data-ctrl]').forEach(inp => inp.onchange = async () => {
     const key = inp.dataset.ctrl;
+    // Guard: can't turn maintenance OFF while OTP login is OFF.
+    if(key==='maintenanceMode' && !inp.checked && cfg.otpLoginDisabled){
+      alert('Since OTP login is OFF, the app can\'t leave maintenance mode — customers wouldn\'t be able to sign in. Turn OTP login back ON first.');
+      inp.checked = true; return;
+    }
     if(inp.checked && !confirm(`Turn ON "${EMERGENCY_CONTROLS.find(c=>c.key===key).t}"? This affects live customers immediately.`)){ inp.checked = false; return; }
     inp.disabled = true;
     try{ await setControl(key, inp.checked); render(); }

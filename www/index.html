@@ -1009,6 +1009,7 @@ async function otpSend(identifier) {
   const mobileNumber = String(identifier).replace(/^91/, '');
   // Per-number send throttle: without this the app is a free SMS-bombing
   // tool aimed at any number the attacker types, on our paid account.
+  if (APPCFG.otpLoginDisabled) throw new Error('Login is temporarily unavailable. Please try again later.');
   const blocked = throttleCheck('otpSend', mobileNumber);
   if (blocked) throw new Error(blocked);
   throttleFail('otpSend', mobileNumber); // every send counts, success or not
@@ -3868,7 +3869,7 @@ const APPCFG_FIELDS = {
   // a maintenance screen and nothing is usable until it clears.
   maintenanceMode:'bool', maintenanceMessage:'str',
   // Emergency kill switches (admin Controls tab).
-  ordersDisabled:'bool', paymentsDisabled:'bool', creditDisabled:'bool', b2cDisabled:'bool', b2bDisabled:'bool',
+  ordersDisabled:'bool', paymentsDisabled:'bool', creditDisabled:'bool', b2cDisabled:'bool', b2bDisabled:'bool', otpLoginDisabled:'bool',
 };
 const PRODUCT_FIELDS = { name:'str', cat:'str', img:'url', unit:'str', desc:'str', storage:'str', freshness:'str', variants:'variants', disabled:'bool' };
 const MAX_REMOTE_STR = 2000;
@@ -4061,6 +4062,7 @@ async function pollLiveState(){
       APPCFG.ordersDisabled = bool('ordersDisabled');
       APPCFG.paymentsDisabled = bool('paymentsDisabled');
       APPCFG.creditDisabled = bool('creditDisabled');
+      APPCFG.otpLoginDisabled = bool('otpLoginDisabled');
       const blocked = !!appBlockReason();
       if(blocked && !MAINTENANCE_LOCKED){ evaluateAppBlock(); return; }
       if(!blocked && MAINTENANCE_LOCKED){ MAINTENANCE_LOCKED = false; boot(); return; }
