@@ -68,6 +68,17 @@ service cloud.firestore {
     function strOk(v, max) {
       return v == null || (v is string && v.size() <= max);
     }
+    // Credit hold / block list. The admin can stop a specific customer (by
+    // phone) from placing orders — e.g. over their credit limit. This is
+    // enforced HERE, at the rules layer, so it is authoritative: a blocked
+    // customer's order write is denied on the server, not just hidden in the
+    // app. The block list (order_blocks/list.blockedPhones) is an admin-only
+    // doc, but rules get()/exists() can still read it. Absent list => nobody
+    // blocked (fail-open on the list's existence, never on a real block).
+    function notBlocked(d) {
+      return !exists(/databases/$(database)/documents/order_blocks/list)
+             || !(d.phone in get(/databases/$(database)/documents/order_blocks/list).data.get('blockedPhones', []));
+    }
     match /orders/{orderId} {
       // Any authenticated (including anonymous) client can create an order,
       // tagged with their own uid as the owner. The field set is LOCKED with
@@ -100,7 +111,18 @@ service cloud.firestore {
                     && strOk(request.resource.data.company, 200)
                     && strOk(request.resource.data.gstin, 20)
                     && strOk(request.resource.data.address, 500)
-                    && strOk(request.resource.data.payment, 40);
+                    && strOk(request.resource.data.payment, 40)
+                    && notBlocked(request.resource.data);
+
+    // Admin-only credit-hold / block list (read via get() by the order rule
+    // above; never exposed to customers). Public hash list lives separately.
+    match /order_blocks/{docId} {
+      allow read, write: if isAdmin();
+    }
+    match /order_blocks_public/{docId} {
+      allow read: if true;          // opaque phone hashes only — for app UX
+      allow write: if isAdmin();
+    }
 
       // Owner can read their own order (powers live status sync back to the
       // phone) and can self-cancel it — but ONLY while still cancellable,

@@ -157,6 +157,40 @@ async function logAdmin(action, detail){
   try{ await addDoc(collection(db,'admin_audit_log'), { action:String(action||'').slice(0,80), detail:String(detail||'').slice(0,400), by:(auth.currentUser&&auth.currentUser.email)||'admin', at:serverTimestamp() }); }
   catch(e){ /* logging must never break the operation */ }
 }
+async function sha256Hex(str){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(str)));
+  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+// Credit holds: customers blocked from placing orders (enforced authoritatively
+// by the order-create Firestore rule via order_blocks/list; the public
+// order_blocks_public/hashes doc lets the customer app show a clear message).
+let blockList = { blockedPhones:[], entries:[] };
+async function loadBlocks(){
+  try{ const d=await getDoc(doc(db,'order_blocks','list')); blockList = d.exists()?{ blockedPhones:d.data().blockedPhones||[], entries:d.data().entries||[] }:{ blockedPhones:[], entries:[] }; }
+  catch(e){ blockList={ blockedPhones:[], entries:[] }; }
+  if(tab==='controls') render();
+}
+async function writeBlocks(phones, entries){
+  const hashes = await Promise.all(phones.map(sha256Hex));
+  await setDoc(doc(db,'order_blocks','list'), { blockedPhones:phones, entries });
+  await setDoc(doc(db,'order_blocks_public','hashes'), { hashes });
+  blockList = { blockedPhones:phones, entries };
+}
+async function blockCustomer(phone, gstin, name, reason){
+  phone = String(phone||'').replace(/\D/g,'').slice(-10);
+  if(!/^[6-9]\d{9}$/.test(phone)){ alert('Enter a valid 10-digit mobile number.'); return false; }
+  if((blockList.blockedPhones||[]).includes(phone)){ alert('That customer is already on hold.'); return false; }
+  const phones=[...(blockList.blockedPhones||[]), phone];
+  const entries=[...(blockList.entries||[]), { phone, gstin:gstin||'', name:name||'', reason:reason||'', at:new Date().toISOString() }];
+  try{ await writeBlocks(phones, entries); logAdmin('customer_order_blocked', phone+(reason?(' — '+reason):'')); render(); return true; }
+  catch(e){ alert('Could not block: '+e.message); return false; }
+}
+async function unblockCustomer(phone){
+  const phones=(blockList.blockedPhones||[]).filter(p=>p!==phone);
+  const entries=(blockList.entries||[]).filter(e=>e.phone!==phone);
+  try{ await writeBlocks(phones, entries); logAdmin('customer_order_unblocked', phone); render(); }
+  catch(e){ alert('Could not unblock: '+e.message); }
+}
 function money(n){ return '₹' + Math.round(Number(n)||0).toLocaleString('en-IN'); }
 function fmtDate(ts){
   const d = ts?.toDate ? ts.toDate() : (ts ? new Date(ts) : null);
@@ -949,6 +983,28 @@ function controlsBody(){
           <div class="ctrl-info"><div class="t">${esc(p.name||p.id)}</div><div class="d">${p.disabled?'Hidden from the app':'Visible to customers'}</div></div>
           <label class="switch"><input type="checkbox" data-product-disable="${esc(p.id)}" ${p.disabled?'checked':''}><span class="track"></span><span class="knob"></span></label>
         </div>`).join('') : '<div class="muted">No products loaded.</div>'}
+    </div>
+
+    <div class="section-head" style="margin:20px 0 10px;"><span class="eyebrow" style="font-size:.78rem;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em;">Credit holds — block a customer's ordering</span></div>
+    <div class="muted" style="font-size:.82rem;line-height:1.5;margin-bottom:10px;">
+      Stop a specific customer (by mobile number) from placing new orders — e.g. over their credit limit or on payment hold.
+      Enforced on the server: a blocked customer's order is rejected, and their app shows an "account on hold" message. Unblock any time.
+    </div>
+    <div class="card">
+      <div class="grid2">
+        <div><label>Customer mobile (10 digits)</label><input id="blk-phone" inputmode="numeric" placeholder="9812345678"></div>
+        <div><label>Reason (optional, private)</label><input id="blk-reason" placeholder="e.g. over credit limit"></div>
+      </div>
+      <button class="btn-primary" id="btn-block" style="background:var(--bad);">Put this customer on hold</button>
+    </div>
+    <div class="card">
+      <div class="m-head" style="margin-bottom:8px;"><h3 class="m-title" style="font-size:.95rem;">On hold (${(blockList.entries||[]).length})</h3></div>
+      ${(blockList.entries||[]).length ? [...blockList.entries].reverse().map(e=>`
+        <div class="ctrl-row">
+          <div class="ctrl-info"><div class="t">+91 ${esc(e.phone)}${e.name?` · ${esc(e.name)}`:''}</div>
+            <div class="d">${e.gstin?esc(e.gstin)+' · ':''}${e.reason?esc(e.reason):'no reason given'} · ${e.at?fmtDate(e.at):''}</div></div>
+          <button class="btn-quiet btn-sm" data-unblock="${esc(e.phone)}" style="color:var(--fresh);">Unblock</button>
+        </div>`).join('') : '<div class="muted" style="font-size:.85rem;">No customers on hold.</div>'}
     </div>`;
 }
 async function setControl(key, on){
@@ -994,6 +1050,17 @@ function wireControlsEvents(){
     inp.disabled = true;
     try{ await updateDoc(doc(db,'products',id), { disabled: inp.checked }); const p=(products||[]).find(x=>x.id===id); if(p) p.disabled=inp.checked; logAdmin('product_'+(inp.checked?'disabled':'enabled'), id); render(); }
     catch(e){ alert('Could not update that product: '+e.message); inp.checked = !inp.checked; inp.disabled = false; }
+  });
+  const blk = document.getElementById('btn-block');
+  if(blk) blk.onclick = async () => {
+    const phone=(document.getElementById('blk-phone').value||'');
+    const reason=(document.getElementById('blk-reason').value||'').slice(0,120);
+    if(!confirm('Put +91 '+phone.replace(/\D/g,'').slice(-10)+' on hold? They will not be able to place new orders until you unblock them.')) return;
+    blk.disabled = true;
+    if(!await blockCustomer(phone, '', '', reason)) blk.disabled = false;
+  };
+  document.querySelectorAll('[data-unblock]').forEach(b => b.onclick = async () => {
+    if(confirm('Unblock +91 '+b.dataset.unblock+' and allow ordering again?')) await unblockCustomer(b.dataset.unblock);
   });
 }
 
@@ -1311,6 +1378,7 @@ onAuthStateChanged(auth, user => {
     loadDeviceCount();
     loadReverifyState();
     loadAdminActivity();
+    loadBlocks();
     render();
   }else{
     if(unsubOrders){ unsubOrders(); unsubOrders = null; }

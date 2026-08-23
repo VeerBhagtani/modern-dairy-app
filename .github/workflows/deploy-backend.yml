@@ -1,0 +1,66 @@
+name: Deploy Backend (Cloud Run)
+
+# MANUAL ONLY. Deploys backend/ to Cloud Run. This does nothing useful until
+# billing (Blaze) is on and the two secrets below exist — until then it's the
+# prepared one-click path. See backend/DEPLOY.md for the full runbook.
+#
+# Required repo secrets (add when ready):
+#   GCP_PROJECT_ID   - e.g. modern-dairy-pune
+#   GCP_SA_KEY       - JSON key for a service account with roles:
+#                      Cloud Run Admin, Cloud Build Editor, Service Account User,
+#                      Artifact Registry Writer, Secret Manager Secret Accessor.
+#
+# After a successful deploy, copy the printed service URL into the app's
+# CONFIG.API_BASE (www/config.js) as `<url>/api`... — see DEPLOY.md step 6.
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: Cloud Run region
+        default: asia-south1
+        required: true
+      service:
+        description: Cloud Run service name
+        default: modern-dairy-api
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard — secrets present?
+        run: |
+          if [ -z "${{ secrets.GCP_SA_KEY }}" ] || [ -z "${{ secrets.GCP_PROJECT_ID }}" ]; then
+            echo "::error::GCP_SA_KEY and GCP_PROJECT_ID secrets are not set. See backend/DEPLOY.md — this workflow is a no-op until billing + these secrets are ready."
+            exit 1
+          fi
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run (builds from backend/Dockerfile)
+        run: |
+          gcloud run deploy "${{ github.event.inputs.service }}" \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --region "${{ github.event.inputs.region }}" \
+            --source backend \
+            --allow-unauthenticated \
+            --set-env-vars "GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},NODE_ENV=production" \
+            --port 8080 \
+            --quiet
+
+      - name: Print service URL
+        run: |
+          URL=$(gcloud run services describe "${{ github.event.inputs.service }}" \
+            --project "${{ secrets.GCP_PROJECT_ID }}" --region "${{ github.event.inputs.region }}" \
+            --format 'value(status.url)')
+          echo "Service URL: $URL"
+          echo "Set the app's CONFIG.API_BASE to: $URL/api  (see backend/DEPLOY.md step 6)"

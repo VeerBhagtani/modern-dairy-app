@@ -1188,6 +1188,11 @@ function randomHex(bytes){
   const a = new Uint8Array(bytes); globalThis.crypto.getRandomValues(a);
   return [...a].map(b=>b.toString(16).padStart(2,'0')).join('');
 }
+async function sha256Hex(str){
+  if(!subtle) return '';
+  try{ return toHex(await subtle.digest('SHA-256', new TextEncoder().encode(String(str)))); }
+  catch(e){ return ''; }
+}
 async function pbkdf2Hex(password, saltHex, iterations){
   const enc = new TextEncoder();
   const key = await subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
@@ -2656,8 +2661,9 @@ function scrCheckout(){
       <div style="height:8px;"></div>
     </div>
     <div style="padding:12px 16px calc(12px + var(--safe-b));border-top:1px solid var(--line);background:var(--surface);">
-      <button class="btn" id="btn-place" ${PAY==='credit'&&!enough?'disabled':''} onclick="placeOrder()">
-        ${PAY==='credit'&&!enough?`Insufficient credit`:`Place order · ${money(t.total)}`}</button>
+      ${ORDER_BLOCKED?`<div class="banner bad mb-12">${icon('alert',17)}<div>Your account is on hold for new orders. Please contact us to clear it before placing an order.</div></div>`:''}
+      <button class="btn" id="btn-place" ${ORDER_BLOCKED || (PAY==='credit'&&!enough)?'disabled':''} onclick="placeOrder()">
+        ${ORDER_BLOCKED?`Account on hold`:PAY==='credit'&&!enough?`Insufficient credit`:`Place order · ${money(t.total)}`}</button>
     </div>
   </div>`;
 }
@@ -2669,6 +2675,7 @@ function radio(on){
 let PLACING_ORDER = false;   // re-entry guard: never place the same order twice
 async function placeOrder(){
   if(PLACING_ORDER) return;   // a place is already in flight (double-tap / retry)
+  if(ORDER_BLOCKED){ toast('Your account is on hold for new orders. Please contact us to clear your account before ordering.','alert'); return; }
   if(APPCFG.ordersDisabled){ toast('Ordering is temporarily paused. Please try again a little later.','alert'); return; }
   if(!S.user?.address){ toast('Add a delivery address before placing your order','alert'); editDeliveryAddressSheet(); return; }
   PLACING_ORDER = true;
@@ -3993,6 +4000,7 @@ async function boot(){
   if(!S.user){ S.screen='login'; paint(); return; }
   S.screen='home'; S.tab='home'; paint();
   await Promise.all([loadWallet(), loadOrders(), loadBroadcasts()]);
+  refreshOrderBlock();
   paint();
   initPushNotifications();
 }
@@ -4093,6 +4101,24 @@ async function pollLiveState(){
       if(S.user && (S.screen==='home' || S.tab==='home')) paint();
     }
   }catch(e){ /* offline */ }
+  // 3) Credit hold — is this customer blocked from ordering? (opaque phone
+  //    hashes, public-read; the real enforcement is in the Firestore rules.)
+  await refreshOrderBlock();
+}
+let ORDER_BLOCKED = false;
+async function refreshOrderBlock(){
+  if(!S.user?.phone){ ORDER_BLOCKED = false; return; }
+  try{
+    const res = await fetch('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/order_blocks_public/hashes');
+    if(!res.ok){ if(res.status===404) ORDER_BLOCKED = false; return; }
+    const doc = await res.json();
+    const arr = (doc.fields && doc.fields.hashes && doc.fields.hashes.arrayValue && doc.fields.hashes.arrayValue.values) || [];
+    const hashes = arr.map(v=>v.stringValue).filter(Boolean);
+    const mine = await sha256Hex(String(S.user.phone));
+    const wasBlocked = ORDER_BLOCKED;
+    ORDER_BLOCKED = !!mine && hashes.includes(mine);
+    if(ORDER_BLOCKED !== wasBlocked && (S.screen==='home' || S.screen==='checkout')) paint();
+  }catch(e){ /* offline — leave current state */ }
 }
 function startMaintenancePolling(){
   if(LIVE_TIMER) return;
