@@ -111,7 +111,12 @@ svg{display:block;flex-shrink:0;}
 ::-webkit-scrollbar{width:0;height:0;}
 
 /* ── APP SHELL ─────────────────────────────────────────── */
-#app{max-width:520px;margin:0 auto;height:100dvh;background:var(--surface);position:relative;
+/* height:100% (of html/body, which fill the native window) — NOT 100dvh.
+   On Android WebView, 100dvh often does not shrink when the soft keyboard
+   opens, so the app stayed full-height and the keyboard covered the inputs.
+   With adjustResize + the Capacitor Keyboard plugin, the window resizes and
+   100% follows it, so the focused field stays visible above the keyboard. */
+#app{max-width:520px;margin:0 auto;height:100%;background:var(--surface);position:relative;
      display:flex;flex-direction:column;overflow:hidden;}
 .screen{display:none;flex-direction:column;height:100%;min-height:0;overflow:hidden;}
 .screen.on{display:flex;}
@@ -3995,6 +4000,17 @@ function startMaintenancePolling(){
   }
 }
 boot();
+
+/* Keep the focused input visible when the keyboard opens. With the native
+   resize configured above this is mostly automatic, but centering the focused
+   field guarantees it — including inside bottom sheets — so nothing hides
+   behind the keyboard. The short delay lets the keyboard/resize settle. */
+document.addEventListener('focusin', (e)=>{
+  const el = e.target;
+  if(el && (el.tagName==='INPUT' || el.tagName==='TEXTAREA')){
+    setTimeout(()=>{ try{ el.scrollIntoView({ block:'center', behavior:'smooth' }); }catch(_){} }, 280);
+  }
+});
 
 /* ── Native push notifications (Capacitor PushNotifications plugin, no-op
    on plain web / if permission is denied). Registers this device's FCM

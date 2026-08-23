@@ -9,5 +9,10 @@
   },
   "server": {
     "androidScheme": "https"
+  },
+  "plugins": {
+    "Keyboard": {
+      "resize": "native"
+    }
   }
 }

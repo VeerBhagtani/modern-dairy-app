@@ -16,6 +16,7 @@
     "@capacitor/core": "^6.1.2",
     "@capacitor/geolocation": "^6.1.1",
     "@capacitor/ios": "^6.1.2",
+    "@capacitor/keyboard": "^6.0.4",
     "@capacitor/network": "^6.0.2",
     "@capacitor/push-notifications": "^6.0.5"
   },
