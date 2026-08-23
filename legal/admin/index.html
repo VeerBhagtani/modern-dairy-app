@@ -762,6 +762,13 @@ const ADMIN_UID = '63cH4Dduh4WS7okdV0s0DcJtD7q2';
    ═══════════════════════════════════════════════════════════ */
 let dashPeriod = 'today';
 let deviceCount = null;   // registered push devices (loaded once)
+let reverifyReq = {};     // reverify_control/request
+let reverifyResult = {};  // reverify_control/result
+async function loadReverifyState(){
+  try{ const a=await getDoc(doc(db,'reverify_control','request')); reverifyReq = a.exists()?a.data():{}; }catch(e){ reverifyReq={}; }
+  try{ const b=await getDoc(doc(db,'reverify_control','result')); reverifyResult = b.exists()?b.data():{}; }catch(e){ reverifyResult={}; }
+  if(tab==='dashboard') render();
+}
 async function loadDeviceCount(){
   try{
     const snap = await getDocs(collection(db, 'device_tokens'));
@@ -819,10 +826,49 @@ function dashboardBody(){
       These are what the app can measure. <b>Exact Play Store / App Store download counts aren’t available here</b> —
       those live in your Google Play Console / App Store Connect. When the backend is live we can pull install
       stats via the Play Developer API and show the real total here.
-    </div>`;
+    </div>
+
+    <div class="section-head" style="margin:22px 0 10px;"><span class="eyebrow" style="font-size:.78rem;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em;">Business verification</span></div>
+    <div class="card">
+      <div class="muted" style="font-size:.85rem;line-height:1.55;margin-bottom:12px;">
+        Re-check the current GST status of every business that has ordered, and flag any whose GST registration has
+        since been cancelled or suspended. ${reverifyReq.lastAt?`Last run: ${fmtDate(reverifyReq.lastAt)} — ${esc(reverifyReq.lastResult||'')}`:'Not run yet.'}
+      </div>
+      <button class="btn-primary" id="btn-reverify" ${reverifyReq.requested?'disabled':''}>${reverifyReq.requested?'Re-verifying… (runs shortly)':'Re-verify all business accounts'}</button>
+      <span class="muted" style="font-size:.78rem;display:block;margin-top:8px;">GSTIN status only — the bank-account check can’t be re-run because account numbers are never stored (privacy).</span>
+    </div>
+    ${reverifyResultHtml()}`;
+}
+function reverifyResultHtml(){
+  const list = (reverifyResult.businesses)||[];
+  if(!list.length) return '';
+  const flagged = list.filter(b=>!b.active);
+  return `
+    <div class="muted" style="font-size:.82rem;margin:14px 0 8px;">
+      ${reverifyResult.total||list.length} business(es) checked ${reverifyResult.at?`on ${fmtDate(reverifyResult.at)}`:''} · <b style="color:${flagged.length?'var(--bad)':'var(--fresh)'}">${flagged.length} need attention</b></div>
+    <div class="tbl-scroll"><table>
+      <thead><tr><th>Business</th><th>GSTIN</th><th>Phone</th><th>GST status</th></tr></thead>
+      <tbody>
+        ${list.map(b=>`<tr>
+          <td>${esc(b.legalName||b.name||'—')}</td>
+          <td class="mono" style="font-size:.82rem;">${esc(b.gstin)}</td>
+          <td>${esc(b.phone||'—')}</td>
+          <td><span class="pill ${b.active?'delivered':'cancelled'}">${esc(b.status||'?')}</span></td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>`;
 }
 function wireDashboardEvents(){
   document.querySelectorAll('.period-btn').forEach(b => b.onclick = () => { dashPeriod = b.dataset.period; render(); });
+  const rv = document.getElementById('btn-reverify');
+  if(rv) rv.onclick = async () => {
+    if(!confirm('Re-verify the GST status of all business accounts? This runs a background check and updates the list here shortly.')) return;
+    rv.disabled = true;
+    try{
+      await setDoc(doc(db,'reverify_control','request'), { requested:true, requestedAt:serverTimestamp(), requestedBy:(auth.currentUser&&auth.currentUser.email)||'admin' }, { merge:true });
+      reverifyReq.requested = true; render();
+    }catch(e){ alert('Could not start re-verification: '+e.message); rv.disabled = false; }
+  };
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1198,6 +1244,7 @@ onAuthStateChanged(auth, user => {
     loadSettings();
     loadAuditState();
     loadDeviceCount();
+    loadReverifyState();
     render();
   }else{
     if(unsubOrders){ unsubOrders(); unsubOrders = null; }

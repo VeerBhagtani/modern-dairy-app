@@ -1,0 +1,30 @@
+name: Re-verify Business GSTINs
+
+# Backs the admin panel's "Re-verify all business accounts" button. Only acts
+# when the admin has requested it (reverify_control/request.requested). Then it
+# re-checks the current GST status of every business that has placed an order,
+# and writes the results back for the admin panel to show. Runs on a short
+# schedule so a click is picked up within ~10 min, plus manual dispatch.
+#
+# Secrets: FCM_SERVICE_ACCOUNT_JSON, GST_API_KEY, GST_API_SECRET (all already set).
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  reverify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Re-verify business GSTINs if requested
+        env:
+          FCM_SERVICE_ACCOUNT_JSON: ${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}
+          GST_API_KEY: ${{ secrets.GST_API_KEY }}
+          GST_API_SECRET: ${{ secrets.GST_API_SECRET }}
+        run: node backend/scripts/reverify-business.js
