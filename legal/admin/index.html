@@ -603,12 +603,56 @@ function closeModal(){ document.getElementById('modal-bg')?.classList.remove('on
 async function setStatus(id, status){
   try{
     await updateDoc(doc(db, 'orders', id), { status, statusUpdatedAt: serverTimestamp() });
+    await syncDelivery(id, status);
     closeModal();
   }catch(e){ alert('Could not update status: ' + e.message); }
+}
+
+/* The rider's copy of a delivery.
+   Riders sign in with nothing, so they must never touch an order document —
+   an order carries the customer's full record (GSTIN, items, totals, the lot).
+   Instead, marking an order OUT FOR DELIVERY publishes a deliveries/{orderNo}
+   doc holding only what someone on a doorstep needs. The order number is the
+   document id, so a rider who knows the number can fetch exactly that one and
+   nothing else (rules allow get, never list).
+
+   Moving the status on sets active:false, which is what makes the rules stop
+   accepting the rider's location writes — tracking cannot outlive the trip. */
+async function syncDelivery(id, status){
+  const o = orders.find(x => x.id === id);
+  if(!o) return;
+  const orderNo = String(o.orderNo || o.id);
+  const ref = doc(db, 'deliveries', orderNo);
+  try{
+    if(status === 'out_for_delivery'){
+      await setDoc(ref, {
+        orderNo, orderId: id, active: true,
+        customer: o.company || o.name || 'Customer',
+        contact: (o.company && o.name) ? o.name : null,
+        phone: o.phone || null,
+        address: o.address || null,
+        items: (o.items || []).length,
+        total: Number(o.total) || 0,
+        startedAt: serverTimestamp(),
+        // Cleared so a re-delivery never opens on the previous trip's dot.
+        riderLat: null, riderLng: null, riderAt: null,
+        riderName: null, riderPhone: null, riderAccuracy: null,
+      }, { merge: true });
+    }else{
+      // Only if it exists — most status changes never had a delivery doc.
+      const snap = await getDoc(ref);
+      if(snap.exists()) await setDoc(ref, { active: false, endedAt: serverTimestamp() }, { merge: true });
+    }
+  }catch(e){
+    // The status change already succeeded; tracking is the secondary effect.
+    console.warn('Could not sync the delivery doc:', e);
+    alert('Status updated, but the rider tracking record could not be written: ' + e.message);
+  }
 }
 async function denyOrder(id, deniedBy, deniedReason){
   try{
     await updateDoc(doc(db, 'orders', id), { status: 'denied', deniedBy, deniedReason, statusUpdatedAt: serverTimestamp() });
+    await syncDelivery(id, 'denied');
     closeModal();
   }catch(e){ alert('Could not deny order: ' + e.message); }
 }

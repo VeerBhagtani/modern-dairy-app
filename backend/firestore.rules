@@ -15,30 +15,8 @@ service cloud.firestore {
     function isOwner() {
       return request.auth != null && resource.data.createdByUid == request.auth.uid;
     }
-    // A delivery rider: an allowlisted uid in riders/{uid}. The doc is
-    // admin-only to write, so a rider cannot enrol themselves — the admin
-    // creates it. Existence IS the permission; the doc needs no fields.
-    function isRider() {
-      return request.auth != null
-             && exists(/databases/$(database)/documents/riders/$(request.auth.uid));
-    }
-    // The location fields a rider may write, and nothing else. Coordinates are
-    // bounds-checked so a malformed or hostile write can't put a courier in
-    // the sea, and the payload is capped at these five keys — a rider must
-    // never be able to touch status, totals, items or customer details.
-    function isRiderLocationUpdate() {
-      return request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['riderLat', 'riderLng', 'riderAt', 'riderAccuracy', 'riderUid'])
-             && request.resource.data.riderLat is number
-             && request.resource.data.riderLat >= -90 && request.resource.data.riderLat <= 90
-             && request.resource.data.riderLng is number
-             && request.resource.data.riderLng >= -180 && request.resource.data.riderLng <= 180
-             && request.resource.data.riderUid == request.auth.uid
-             // Only while the order is actually being delivered. Once it is
-             // delivered/cancelled/denied the rider's writes stop being
-             // accepted at the server — tracking cannot outlive the delivery.
-             && resource.data.status == 'out_for_delivery';
-    }
+    // Riders are deliberately NOT a Firestore identity. They sign in with
+    // nothing — see /deliveries below, which is the only thing they touch.
     // Statuses a customer is still allowed to cancel from — once an order
     // is out for delivery (or later), only the admin can see it change and
     // the customer must call in instead. This must match CANCELLABLE_STATUSES
@@ -144,14 +122,46 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
-    // Rider allowlist. Existence of riders/{uid} is what makes a uid a rider,
-    // so ONLY the admin may write here — a rider who could create their own
-    // doc could grant themselves read access to every customer's address.
-    // A rider may read their own doc (to confirm they are enrolled); nobody
-    // else can read the list at all.
-    match /riders/{riderUid} {
-      allow read: if isAdmin() || (request.auth != null && request.auth.uid == riderUid);
-      allow write: if isAdmin();
+    // ── Deliveries: the rider's entire world ────────────────────────────
+    // A rider signs in with nothing. They type the order number the office
+    // gave them, and that number IS the key: the document id here is the
+    // order number.
+    //
+    // This exists so a rider never touches an order document. An order holds
+    // the customer's full record — name, phone, address, GSTIN, items, totals.
+    // A delivery holds only what someone standing on a doorstep needs, copied
+    // across by the admin when the order goes out for delivery.
+    //
+    // get vs list is the load-bearing distinction. A get fetches ONE document
+    // by id, so it requires already knowing the order number. A list would let
+    // anyone enumerate every delivery, so it stays admin-only. Without that
+    // split, "no rider login" would mean "every customer's address is public",
+    // which is not a trade worth making.
+    //
+    // Residual risk, stated plainly: anyone who knows a live order number can
+    // see that one delivery's address and post a location to it. The admin
+    // sees the rider's name and phone on every update, and the document stops
+    // accepting writes the moment the order leaves out_for_delivery.
+    function isDeliveryLocationUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['riderLat', 'riderLng', 'riderAt', 'riderAccuracy', 'riderName', 'riderPhone'])
+             && request.resource.data.riderLat is number
+             && request.resource.data.riderLat >= -90 && request.resource.data.riderLat <= 90
+             && request.resource.data.riderLng is number
+             && request.resource.data.riderLng >= -180 && request.resource.data.riderLng <= 180
+             && request.resource.data.riderName is string
+             && request.resource.data.riderName.size() > 0
+             && request.resource.data.riderName.size() <= 80
+             && strOk(request.resource.data.riderPhone, 20)
+             // Tracking cannot outlive the delivery: the admin sets active
+             // false when the status moves on, and writes stop being accepted.
+             && resource.data.active == true;
+    }
+    match /deliveries/{orderNo} {
+      allow get: if request.auth != null;      // must know the order number
+      allow list: if isAdmin();                // never enumerable
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || isDeliveryLocationUpdate();
     }
     match /order_blocks_public/{docId} {
       allow read: if true;          // opaque phone hashes only — for app UX
@@ -163,18 +173,12 @@ service cloud.firestore {
       // ONLY by setting status to 'cancelled', and ONLY that field (plus a
       // cancelledAt timestamp) may change. No human — including the admin —
       // can set an order to cancelled; that status is customer-triggered only.
-      // A rider can read orders too — they need the delivery address. This is
-      // the one place a non-owner sees a customer's details, which is why
-      // riders/{uid} is admin-created and not self-service.
-      allow read: if isAdmin() || isOwner() || isRider();
+      allow read: if isAdmin() || isOwner();
       allow update: if isAdmin()
                     || (isOwner()
                         && isCancellable(resource.data.status)
                         && request.resource.data.status == 'cancelled'
-                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelledAt']))
-                    // Live tracking: location only, and only while out for
-                    // delivery. See isRiderLocationUpdate() above.
-                    || (isRider() && isRiderLocationUpdate());
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelledAt']));
       allow delete: if isAdmin();
     }
 

@@ -543,7 +543,7 @@ if (firebaseConfig.apiKey === "PASTE_API_KEY") {
    itself keeps reading from, unchanged). Firestore rules only allow
    create here — never read/update/delete — see backend/firestore.rules. ── */
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getAuth, signInAnonymously, signInWithEmailAndPassword, signOut as fbSignOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFirestore, collection, addDoc, doc, getDoc, getDocs, updateDoc, setDoc, onSnapshot, serverTimestamp, query, where, limit } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 const mirrorConfig = {
@@ -656,40 +656,43 @@ window.listenToOrderDoc = function(firestoreId, onChange) {
 };
 
 /* ── Rider mode ───────────────────────────────────────────────────────────
-   A rider signs in with a real Firebase account whose uid is allowlisted in
-   riders/{uid} (admin-created — see backend/firestore.rules). The rules let
-   that uid write ONLY riderLat/riderLng/riderAt/riderAccuracy/riderUid, and
-   ONLY while the order is out_for_delivery. So even a leaked rider login
-   cannot alter an order, and cannot track anything once it is delivered. */
-window.riderSignIn = async function(email, password) {
-  const cred = await signInWithEmailAndPassword(mirrorAuth, email, password);
-  return cred.user.uid;
+   Riders have no account. They give a name and phone (attribution, so the
+   office knows who is carrying an order) and type the order number they were
+   issued. That number is the document id of deliveries/{orderNo}.
+
+   The rules allow `get` on a delivery but never `list`, so knowing a number
+   fetches exactly that one record — the customer's address and phone for THAT
+   delivery — and gives no way to enumerate any other. A rider never reads or
+   writes an order document, which is what keeps every other customer's full
+   record (GSTIN, items, totals) out of reach entirely.
+
+   Anonymous auth still applies: the rules require request.auth != null, so a
+   completely unauthenticated caller gets nothing. */
+window.riderFindDelivery = async function(orderNo) {
+  await ensureSignedIn();
+  const snap = await getDoc(doc(mirrorDb, 'deliveries', String(orderNo)));
+  return snap.exists() ? { orderNo: String(orderNo), ...snap.data() } : null;
 };
-window.riderSignOut = async function() { await fbSignOut(mirrorAuth); };
-window.riderUid = () => mirrorAuth.currentUser?.uid || null;
-// Confirms this account is actually an enrolled rider. riders/{uid} is
-// readable by its own uid, so a non-rider just gets permission-denied.
-window.riderIsEnrolled = async function(uid) {
-  try { return (await getDoc(doc(mirrorDb, 'riders', uid))).exists(); }
-  catch (e) { return false; }
-};
-// One order, by the number printed on its invoice. Single-field equality, so
-// no composite index is needed. Riders can read orders (they need the
-// address); the rules stop them writing anything but location.
-window.riderFindOrder = async function(orderNo) {
-  const snap = await getDocs(query(collection(mirrorDb, 'orders'),
-                                   where('orderNo', '==', orderNo), limit(1)));
-  if (snap.empty) return null;
-  const d = snap.docs[0];
-  return { firestoreId: d.id, ...d.data() };
-};
-window.riderPushLocation = async function(firestoreId, lat, lng, accuracy) {
-  const uid = mirrorAuth.currentUser?.uid;
-  if (!uid) throw new Error('Not signed in as a rider.');
-  await updateDoc(doc(mirrorDb, 'orders', firestoreId), {
+window.riderPushLocation = async function(orderNo, lat, lng, accuracy, riderName, riderPhone) {
+  await ensureSignedIn();
+  await updateDoc(doc(mirrorDb, 'deliveries', String(orderNo)), {
     riderLat: lat, riderLng: lng, riderAt: serverTimestamp(),
-    riderAccuracy: accuracy ?? null, riderUid: uid,
+    riderAccuracy: accuracy ?? null,
+    riderName: String(riderName || '').slice(0, 80),
+    riderPhone: riderPhone ? String(riderPhone).slice(0, 20) : null,
   });
+};
+// The customer watches the same delivery record for the rider's position.
+// They know their own order number, which is all a `get` requires.
+window.listenToDelivery = function(orderNo, onChange) {
+  try {
+    return onSnapshot(doc(mirrorDb, 'deliveries', String(orderNo)),
+      snap => onChange(snap.exists() ? snap.data() : null),
+      err => { console.warn('Delivery listener failed:', err); onChange(null); });
+  } catch (e) {
+    console.warn('Could not start delivery listener:', e);
+    return () => {};
+  }
 };
 
 // Self-cancel, customer-initiated only — enforced server-side by
@@ -2894,21 +2897,24 @@ function ordersBody(){
 }
 let ORDER_STATUS_UNSUB = null;
 const CANCELLABLE_STATUSES = ['placed','confirmed','pending_confirmation','packed']; // must match backend/firestore.rules isCancellable()
-function stopOrderStatusListener(){ if(ORDER_STATUS_UNSUB){ ORDER_STATUS_UNSUB(); ORDER_STATUS_UNSUB=null; } }
+function stopOrderStatusListener(){
+  stopDeliveryListener(); if(ORDER_STATUS_UNSUB){ ORDER_STATUS_UNSUB(); ORDER_STATUS_UNSUB=null; } }
 function startOrderStatusListener(o){
   stopOrderStatusListener();
   if(!o?.firestoreId || !window.listenToOrderDoc) return;
   // The whole document, not just status — the rider's coordinates ride along
   // on the same snapshot, so the map updates with no extra listener or poll.
+  if(o.status === 'out_for_delivery') startDeliveryListener(o);
   ORDER_STATUS_UNSUB = window.listenToOrderDoc(o.firestoreId, (data)=>{
     if(!data) return;
     const status = data.status;
-    const moved = data.riderLat !== S.order?.riderLat || data.riderLng !== S.order?.riderLng;
     const changed = status && status !== S.order?.status;
-    if(!changed && !moved) return;
-    S.order = {...S.order, status: status || S.order?.status,
-               riderLat: data.riderLat ?? null, riderLng: data.riderLng ?? null,
-               riderAt: data.riderAt ?? null};
+    if(!changed) return;
+    S.order = {...S.order, status};
+    // Rider position lives on the delivery record, so start/stop that
+    // listener as the order enters and leaves out_for_delivery.
+    if(status === 'out_for_delivery') startDeliveryListener(S.order);
+    else { stopDeliveryListener(); S.order = {...S.order, riderLat:null, riderLng:null}; }
     if(changed){
       const list = DB.orders;
       const idx = list.findIndex(x=>x.orderNo===o.orderNo);
@@ -3064,12 +3070,32 @@ function scrOrder(){
    pushed here by the same Firestore listener that already drives status, so
    there is no polling: the dot moves when the rider moves. */
 let TRACK_MAP = null, TRACK_RIDER = null, TRACK_DEST = null, TRACK_FITTED = false;
+let DELIVERY_UNSUB = null;   // the rider-position listener, separate from status
 // Older than this and we say so rather than showing a stale dot as if live.
 const RIDER_STALE_MS = 90 * 1000;
 
 function destroyTrackMap(){
   if(TRACK_MAP){ try{ TRACK_MAP.remove(); }catch(e){} }
   TRACK_MAP = null; TRACK_RIDER = null; TRACK_DEST = null; TRACK_FITTED = false;
+}
+/* The rider writes to deliveries/{orderNo}, not to the order, so the map
+   needs its own listener alongside the status one. Started only while an
+   order is out for delivery, and torn down the moment it is not. */
+function startDeliveryListener(o){
+  stopDeliveryListener();
+  if(!o?.orderNo || !window.listenToDelivery) return;
+  DELIVERY_UNSUB = window.listenToDelivery(o.orderNo, (d)=>{
+    if(!d) return;
+    const moved = d.riderLat !== S.order?.riderLat || d.riderLng !== S.order?.riderLng;
+    if(!moved) return;
+    S.order = {...S.order, riderLat: d.riderLat ?? null, riderLng: d.riderLng ?? null,
+               riderAt: d.riderAt ?? null, riderName: d.riderName ?? null};
+    // Only the marker moves — a repaint would rebuild and re-centre the map.
+    if(S.screen==='order') renderTrackMap();
+  });
+}
+function stopDeliveryListener(){
+  if(DELIVERY_UNSUB){ try{ DELIVERY_UNSUB(); }catch(e){} DELIVERY_UNSUB = null; }
 }
 function riderAtMs(o){
   const t = o?.riderAt;
@@ -3569,47 +3595,55 @@ async function fakeRazorpayPay(){
 /* ═══════════════════════════════════════════════════════════
    22. RIDER MODE — live delivery tracking
    ═══════════════════════════════════════════════════════════
-   Reached by five taps on the logo, then a real Firebase login whose uid must
-   be allowlisted in riders/{uid}. Both checks are enforced server-side by
-   backend/firestore.rules; the UI gate is convenience, not security.
+   Five taps on the logo. No password: the rider gives their name and phone
+   (so the office knows who is carrying the order), then types the order
+   number the office issued them.
 
-   THE HARD PART IS BACKGROUNDING. A rider cannot ride with the screen on, and
+   That number is the key. It is the document id of deliveries/{orderNo}, and
+   the rules allow `get` but never `list` — so knowing a number fetches
+   exactly that one delivery and nothing else. A rider never touches an order
+   document, which is what keeps every other customer's record out of reach.
+
+   BACKGROUNDING IS THE HARD PART. A rider cannot ride with the screen on, and
    Android suspends timers and GPS in a backgrounded web view within seconds.
-   So tracking runs through @capacitor-community/background-geolocation, which
-   holds a real foreground service with a persistent notification — the only
-   way Android permits continuous location. The browser fallback below exists
-   for testing in a desktop browser and pauses the moment the tab is hidden,
-   which is exactly why it is not what ships to riders.
+   Tracking therefore runs through @capacitor-community/background-geolocation,
+   which holds a real foreground service with a persistent notification — the
+   only way Android permits continuous location. The browser fallback below is
+   for desktop testing and pauses when the tab hides, which is exactly why it
+   is not what riders use.
 
-   Tracking is scoped to ONE delivery and stops when it is delivered. The rules
-   also refuse any rider write once status leaves out_for_delivery, so tracking
-   cannot outlive the trip even if the app is left running. */
-const RIDER_SESSION_KEY = 'mda_rider_session';
+   Tracking cannot outlive the trip: the admin sets active:false when the
+   status moves on, and the rules then refuse every further write. */
+const RIDER_KEY = 'mda_rider';
 let RIDER = {
-  uid: null,
-  order: null,        // the delivery being tracked
-  looking: false,     // a lookup is in flight
-  lookupTried: null,  // keeps a failed number in the box to correct
-  watchId: null,      // background-geolocation watcher id
-  webWatchId: null,   // browser geolocation fallback
+  name: null,
+  phone: null,
+  delivery: null,     // the deliveries/{orderNo} document being tracked
+  looking: false,
+  lookupTried: null,
+  watchId: null,      // background-geolocation watcher
+  webWatchId: null,   // browser fallback
   lastFix: null,
   pushes: 0,
   error: null,
 };
 
 function riderRestore(){
-  try{ return JSON.parse(localStorage.getItem(RIDER_SESSION_KEY) || 'null'); }
-  catch(e){ return null; }
+  try{
+    const v = JSON.parse(localStorage.getItem(RIDER_KEY) || 'null');
+    if(v && v.name){ RIDER.name = v.name; RIDER.phone = v.phone || null; }
+  }catch(e){}
 }
-function riderRemember(uid){
-  try{ localStorage.setItem(RIDER_SESSION_KEY, JSON.stringify({ uid, at: Date.now() })); }catch(e){}
+function riderRemember(){
+  try{ localStorage.setItem(RIDER_KEY, JSON.stringify({ name: RIDER.name, phone: RIDER.phone })); }catch(e){}
 }
 function riderForget(){
-  try{ localStorage.removeItem(RIDER_SESSION_KEY); }catch(e){}
+  try{ localStorage.removeItem(RIDER_KEY); }catch(e){}
 }
 
-/* ── Login ─────────────────────────────────────────────── */
+/* ── Who are you? ──────────────────────────────────────── */
 function scrRiderLogin(){
+  riderRestore();
   return `<div class="screen on" style="background:var(--brand);">
     <div style="padding:calc(var(--safe-t) + 8px) 20px 0;">
       <button class="iconbtn" style="color:#fff;" onclick="back()" aria-label="Back">${icon('left',22)}</button>
@@ -3624,84 +3658,54 @@ function scrRiderLogin(){
     <div class="scroll" style="background:var(--surface);border-radius:20px 20px 0 0;padding-top:4px;">
       <div class="section">
         <div class="banner info mb-16">${icon('info',17)}
-          <div>For delivery riders only. Sign in with the rider account the office gave you —
-          customers don't need this screen.</div></div>
-        <div class="field"><label class="label">Rider ID</label>
-          <input id="f-rider-user" placeholder="rider1" autocomplete="off" autocapitalize="none"></div>
-        <div class="field"><label class="label">Password</label>
-          <input id="f-rider-pw" type="password" placeholder="Password" autocomplete="off"></div>
+          <div>For delivery riders. Tell us who you are, then enter the order number
+          the office gave you.</div></div>
+        <div class="field"><label class="label">Your name</label>
+          <input id="f-rider-name" placeholder="e.g. Suresh" autocomplete="off" value="${esc(RIDER.name || '')}"></div>
+        <div class="field"><label class="label">Your mobile number</label>
+          <input id="f-rider-phone" type="tel" inputmode="numeric" placeholder="10-digit number"
+                 autocomplete="off" value="${esc(RIDER.phone || '')}"
+                 onkeydown="if(event.key==='Enter')doRiderStart()"></div>
         <div id="rider-err" class="t-sm" style="color:var(--bad);margin-bottom:12px;display:none;"></div>
-        <button class="btn" id="btn-rider-login" onclick="doRiderLogin()">Sign in</button>
+        <button class="btn" id="btn-rider-go" onclick="doRiderStart()">Continue</button>
         <button class="btn btn-quiet mt-8" onclick="back()">Not a rider? Go back</button>
       </div>
     </div></div>`;
 }
 
-async function doRiderLogin(){
-  const user = (document.getElementById('f-rider-user').value || '').trim();
-  const pw = document.getElementById('f-rider-pw').value;
+function doRiderStart(){
+  const name = (document.getElementById('f-rider-name').value || '').trim();
+  const phone = (document.getElementById('f-rider-phone').value || '').trim();
   const err = document.getElementById('rider-err');
   const show = m => { if(err){ err.textContent = m; err.style.display = 'block'; } };
-  if(!user || !pw){ show('Enter your rider ID and password.'); return; }
-  busy('btn-rider-login', true, 'Signing in…');
-  try{
-    // Same convention the admin panel uses: a plain id, not a real mailbox.
-    const uid = await window.riderSignIn(user.toLowerCase().replace(/\s+/g,'_') + '@rider.local', pw);
-    if(!await window.riderIsEnrolled(uid)){
-      await window.riderSignOut();
-      show('That account is not set up as a rider. Ask the office to enrol it.');
-      return;
-    }
-    RIDER.uid = uid;
-    riderRemember(uid);
-    go('rider', {replace:true});
-  }catch(e){
-    show('Incorrect rider ID or password.');
-  }finally{
-    busy('btn-rider-login', false, 'Sign in');
-  }
+  if(name.length < 2){ show('Enter your name.'); return; }
+  if(!/^[6-9]\d{9}$/.test(phone)){ show('Enter a valid 10-digit mobile number.'); return; }
+  RIDER.name = name.slice(0, 80);
+  RIDER.phone = phone;
+  RIDER.error = null;
+  riderRemember();
+  go('rider', {replace:true});
 }
 
-/* ── Find-a-delivery / tracking screen ─────────────────── */
-function scrRider(){
-  const t = RIDER.order;
-  return `<div class="screen on">
-    ${navBar('Rider', {sub: t ? 'Tracking ' + esc(t.orderNo || '') : 'Enter an order number',
-      action:`<button class="iconbtn" onclick="doRiderSignOut()" aria-label="Sign out">${icon('logout',20)}</button>`})}
-    <div class="scroll"><div class="section">
-      ${RIDER.error ? `<div class="banner alert mb-16">${icon('alert',17)}<div>${esc(RIDER.error)}</div></div>` : ''}
-      ${t ? riderTrackingCard(t) : riderLookupBody()}
-    </div></div>
-  </div>`;
-}
-
-/* ── Find a delivery by order number ───────────────────
-   The rider types the order number off the invoice instead of picking from a
-   list of every delivery in flight. That is the workflow the office actually
-   uses, and it also means one rider is never shown another customer's address
-   and phone. (The Firestore rules still permit a rider to read orders — they
-   have to, to load this one — so this narrows what the app SHOWS, not what
-   the rules allow. The rules limit what a rider can WRITE.) */
+/* ── Find the delivery ─────────────────────────────────── */
 async function riderLookup(){
-  const raw = (document.getElementById('f-rider-order')?.value || '').trim();
+  const raw = (document.getElementById('f-rider-order')?.value || '').trim().toUpperCase();
   if(!raw){ RIDER.error = 'Enter the order number.'; paint(); return; }
   RIDER.error = null;
   RIDER.looking = true;
   paint();
   try{
-    const found = await window.riderFindOrder(raw);
-    if(!found){
-      RIDER.error = 'No order found with number ' + raw + '. Check the number on the invoice.';
+    const d = await window.riderFindDelivery(raw);
+    if(!d){
+      // Either the number is wrong, or the office has not marked it out for
+      // delivery yet — the delivery record only exists from that moment.
+      RIDER.error = 'No delivery found for ' + raw + '. Check the number, and that the office has marked it out for delivery.';
       RIDER.lookupTried = raw;
-    }else if(found.status !== 'out_for_delivery'){
-      // The rules refuse a rider's location write unless the order is out for
-      // delivery, so starting a trip here would fail on the first push. Say
-      // why now rather than after the rider sets off.
-      RIDER.error = raw + ' is not out for delivery yet (' +
-        ((STATUS[found.status] || {}).l || found.status) + '). Ask the office to mark it out for delivery.';
+    }else if(d.active === false){
+      RIDER.error = raw + ' has already been completed.';
       RIDER.lookupTried = raw;
     }else{
-      RIDER.order = found;
+      RIDER.delivery = d;
       RIDER.lookupTried = null;
     }
   }catch(e){
@@ -3712,11 +3716,23 @@ async function riderLookup(){
   }
 }
 
+function scrRider(){
+  const d = RIDER.delivery;
+  return `<div class="screen on">
+    ${navBar('Rider', {sub: d ? 'Tracking ' + esc(d.orderNo || '') : esc(RIDER.name || 'Enter an order number'),
+      action:`<button class="iconbtn" onclick="doRiderSignOut()" aria-label="Finish">${icon('logout',20)}</button>`})}
+    <div class="scroll"><div class="section">
+      ${RIDER.error ? `<div class="banner alert mb-16">${icon('alert',17)}<div>${esc(RIDER.error)}</div></div>` : ''}
+      ${d ? riderTrackingCard(d) : riderLookupBody()}
+    </div></div>
+  </div>`;
+}
+
 function riderLookupBody(){
   return `<div class="card" style="padding:16px;">
       <div class="eyebrow mb-8">Which delivery?</div>
       <div class="t-sm muted mb-16" style="line-height:1.5;">
-        Type the order number from the invoice — for example <b>MD-1041</b>.
+        Type the order number the office gave you — for example <b>MD-1041</b>.
       </div>
       <div class="field"><label class="label">Order number</label>
         <input id="f-rider-order" placeholder="MD-1041" autocomplete="off" autocapitalize="characters"
@@ -3727,69 +3743,67 @@ function riderLookupBody(){
     </div>`;
 }
 
-function riderClearOrder(){
-  if(RIDER.watchId || RIDER.webWatchId){ toast('Stop the trip first','alert'); return; }
-  RIDER.order = null; RIDER.error = null; RIDER.lookupTried = null; paint();
-}
-
-function riderTrackingCard(t){
+function riderTrackingCard(d){
   const live = RIDER.watchId || RIDER.webWatchId;
   const fix = RIDER.lastFix;
   return `<div class="card" style="padding:16px;">
       <div class="row between mb-12">
-        <div><div class="t-base" style="font-weight:700;">${esc(t.orderNo || '')}</div>
-          <div class="t-sm muted mt-4">${esc(t.company || t.name || 'Customer')}</div></div>
+        <div><div class="t-base" style="font-weight:700;">${esc(d.orderNo || '')}</div>
+          <div class="t-sm muted mt-4">${esc(d.customer || 'Customer')}</div></div>
         ${live ? '<span class="rider-live"><i></i>Live</span>' : ''}
       </div>
-      ${t.address ? `<div class="banner info mb-12">${icon('pin',17)}<div>${esc(t.address)}</div></div>` : ''}
-      ${t.phone ? `<a class="btn btn-quiet mb-12" href="tel:${esc(t.phone)}">${icon('phone',18)} Call the customer</a>` : ''}
+      ${d.address ? `<div class="banner info mb-12">${icon('pin',17)}<div>${esc(d.address)}</div></div>` : ''}
+      ${d.phone ? `<a class="btn btn-quiet mb-12" href="tel:${esc(d.phone)}">${icon('phone',18)} Call the customer</a>` : ''}
       ${live ? `
         <div class="t-sm muted mb-12" style="line-height:1.5;">
           Your location is going to the customer${fix ? ` · last sent ${esc(dtFmt(fix.at))}` : '…'}<br>
-          ${RIDER.pushes} update${RIDER.pushes===1?'':'s'} sent. Keep the app installed — you can lock the phone,
-          tracking continues in the background.
+          ${RIDER.pushes} update${RIDER.pushes===1?'':'s'} sent. You can lock the phone —
+          tracking keeps running in the background.
         </div>
-        <button class="btn" style="background:var(--bad);border-color:var(--bad);" onclick="riderStopTracking()">Stop &amp; hand back</button>`
+        <button class="btn" style="background:var(--bad);border-color:var(--bad);" onclick="riderStopTracking()">Stop tracking</button>`
       : `
         <div class="t-sm muted mb-12" style="line-height:1.5;">
-          Start the trip and the customer sees you move on their map. Android will ask for location
-          <b>“Allow all the time”</b> — without that, tracking stops when your screen locks.
+          Start the trip and the customer sees you move on their map. Android will ask for location —
+          choose <b>“Allow all the time”</b>, or tracking stops when your screen locks.
         </div>
         <button class="btn" id="btn-rider-start" onclick="riderStartTracking()">${icon('pin',18)} Start trip</button>`}
       <button class="btn btn-quiet mt-8" onclick="riderClearOrder()">Look up a different order</button>
     </div>`;
 }
 
+function riderClearOrder(){
+  if(RIDER.watchId || RIDER.webWatchId){ toast('Stop tracking first','alert'); return; }
+  RIDER.delivery = null; RIDER.error = null; RIDER.lookupTried = null; paint();
+}
 
 async function doRiderSignOut(){
   await riderStopTracking(true);
-  try{ await window.riderSignOut(); }catch(e){}
   riderForget();
-  RIDER = { uid:null, order:null, deliveries:[], watchId:null, webWatchId:null, lastFix:null, pushes:0, error:null };
+  RIDER = { name:null, phone:null, delivery:null, looking:false, lookupTried:null,
+            watchId:null, webWatchId:null, lastFix:null, pushes:0, error:null };
   go('account', {replace:true});
 }
 
 /* ── The tracking itself ───────────────────────────────── */
 async function riderPush(lat, lng, accuracy){
-  const t = RIDER.order;
-  if(!t) return;
+  const d = RIDER.delivery;
+  if(!d) return;
   try{
-    await window.riderPushLocation(t.firestoreId, lat, lng, accuracy);
+    await window.riderPushLocation(d.orderNo, lat, lng, accuracy, RIDER.name, RIDER.phone);
     RIDER.lastFix = { lat, lng, at: new Date().toISOString() };
     RIDER.pushes++;
     if(S.screen === 'rider') paint();
   }catch(e){
-    // The rules reject writes once the order is no longer out for delivery —
-    // that is the delivery finishing, not a fault. Stop cleanly.
-    RIDER.error = 'Location updates stopped: ' + (e?.message || 'permission denied');
+    // The rules refuse writes once active:false — that is the office closing
+    // the delivery, not a fault. Stop cleanly and say so.
+    RIDER.error = 'Tracking stopped — this delivery has been closed by the office.';
     await riderStopTracking(true);
     paint();
   }
 }
 
 async function riderStartTracking(){
-  const t = RIDER.order;
-  if(!t) return;
+  if(!RIDER.delivery) return;
   RIDER.error = null;
   const BG = window.Capacitor?.Plugins?.BackgroundGeolocation;
   if(BG){
@@ -3801,14 +3815,12 @@ async function riderStartTracking(){
         backgroundTitle: 'Delivery in progress',
         requestPermissions: true,
         stale: false,
-        distanceFilter: 25,       // metres — moving, not jitter
+        distanceFilter: 25,       // metres — real movement, not GPS jitter
       }, (location, error) => {
         if(error){
-          if(error.code === 'NOT_AUTHORIZED'){
-            RIDER.error = 'Location permission is off. Enable “Allow all the time” in Settings, then start again.';
-          }else{
-            RIDER.error = 'Location error: ' + (error.message || error.code);
-          }
+          RIDER.error = error.code === 'NOT_AUTHORIZED'
+            ? 'Location permission is off. Enable “Allow all the time” in Settings, then start again.'
+            : 'Location error: ' + (error.message || error.code);
           paint();
           return;
         }
@@ -3820,8 +3832,8 @@ async function riderStartTracking(){
       RIDER.error = 'Could not start background tracking: ' + (e?.message || e);
     }
   }
-  // Browser fallback — for testing on a desktop only. This one DOES pause when
-  // the tab is hidden, which is precisely why the plugin above is what ships.
+  // Browser fallback — desktop testing only. This one DOES pause when the tab
+  // is hidden, which is precisely why the plugin above is what ships.
   if(!navigator.geolocation){ RIDER.error = 'This device has no location support.'; paint(); return; }
   RIDER.webWatchId = navigator.geolocation.watchPosition(
     p => riderPush(p.coords.latitude, p.coords.longitude, p.coords.accuracy),
