@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { getSecret } = require('../services/secretManager');
-const { db } = require('../services/firestore');
+const { db, admin } = require('../services/firestore');
 
 const ADMIN_TOKEN_TTL = '4h';
 
@@ -43,19 +43,49 @@ async function verifyAdminLogin(username, password) {
   return { id: username, ...safe };
 }
 
+// The one Firebase uid that is the admin. Must stay identical to isAdmin() in
+// backend/firestore.rules and ADMIN_UID in legal/admin/index.html — the admin
+// website signs in with Firebase, and without this it would have to hold a
+// SECOND set of credentials just to reach these endpoints. Same human, same
+// identity, one login. Settable per-environment; the default is the uid the
+// Firestore rules already trust.
+const ADMIN_FIREBASE_UID = process.env.ADMIN_FIREBASE_UID || '63cH4Dduh4WS7okdV0s0DcJtD7q2';
+
+// A Firebase ID token from the admin website. Verified by firebase-admin
+// (signature, expiry, audience, issuer — all of it), then the uid is checked
+// against the single admin uid. Anonymous sessions carry a uid too, so the
+// uid check is what actually gates this: verification alone would admit any
+// Firebase identity on the project, including one minted from a browser
+// console with the public web API key.
+async function verifyFirebaseAdmin(token) {
+  const decoded = await admin.auth().verifyIdToken(token, true);
+  if (decoded.uid !== ADMIN_FIREBASE_UID) return null;
+  return decoded.uid;
+}
+
 function requireAdmin() {
   return async (req, res, next) => {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    if (!token) return res.status(401).json({ success: false, message: 'Missing admin token' });
+
+    // Path 1: this service's own admin JWT (POST /admin/login).
     try {
-      const header = req.headers.authorization || '';
-      const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-      if (!token) return res.status(401).json({ success: false, message: 'Missing admin token' });
       const key = await signingKey();
       const payload = jwt.verify(token, key, { algorithms: ['HS256'] });
       if (payload.type !== 'admin') return res.status(403).json({ success: false, message: 'Not an admin token' });
       req.adminId = payload.sub;
-      next();
-    } catch (e) {
-      res.status(401).json({ success: false, message: 'Invalid or expired admin token' });
+      return next();
+    } catch { /* not our JWT — fall through to Firebase */ }
+
+    // Path 2: a Firebase ID token belonging to the admin uid.
+    try {
+      const uid = await verifyFirebaseAdmin(token);
+      if (!uid) return res.status(403).json({ success: false, message: 'Not an admin account' });
+      req.adminId = `firebase:${uid}`;
+      return next();
+    } catch {
+      return res.status(401).json({ success: false, message: 'Invalid or expired admin token' });
     }
   };
 }
