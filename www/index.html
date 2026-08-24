@@ -673,12 +673,15 @@ window.riderIsEnrolled = async function(uid) {
   try { return (await getDoc(doc(mirrorDb, 'riders', uid))).exists(); }
   catch (e) { return false; }
 };
-// Orders currently out for delivery. Riders can read orders (they need the
+// One order, by the number printed on its invoice. Single-field equality, so
+// no composite index is needed. Riders can read orders (they need the
 // address); the rules stop them writing anything but location.
-window.riderLoadDeliveries = async function() {
+window.riderFindOrder = async function(orderNo) {
   const snap = await getDocs(query(collection(mirrorDb, 'orders'),
-                                   where('status', '==', 'out_for_delivery'), limit(50)));
-  return snap.docs.map(d => ({ firestoreId: d.id, ...d.data() }));
+                                   where('orderNo', '==', orderNo), limit(1)));
+  if (snap.empty) return null;
+  const d = snap.docs[0];
+  return { firestoreId: d.id, ...d.data() };
 };
 window.riderPushLocation = async function(firestoreId, lat, lng, accuracy) {
   const uid = mirrorAuth.currentUser?.uid;
@@ -3561,7 +3564,8 @@ const RIDER_SESSION_KEY = 'mda_rider_session';
 let RIDER = {
   uid: null,
   order: null,        // the delivery being tracked
-  deliveries: [],
+  looking: false,     // a lookup is in flight
+  lookupTried: null,  // keeps a failed number in the box to correct
   watchId: null,      // background-geolocation watcher id
   webWatchId: null,   // browser geolocation fallback
   lastFix: null,
@@ -3626,7 +3630,6 @@ async function doRiderLogin(){
     }
     RIDER.uid = uid;
     riderRemember(uid);
-    await riderLoadList();
     go('rider', {replace:true});
   }catch(e){
     show('Incorrect rider ID or password.');
@@ -3635,47 +3638,74 @@ async function doRiderLogin(){
   }
 }
 
-async function riderLoadList(){
-  try{
-    RIDER.deliveries = await window.riderLoadDeliveries();
-    RIDER.error = null;
-  }catch(e){
-    RIDER.deliveries = [];
-    RIDER.error = 'Could not load deliveries. Check your connection.';
-  }
-}
-
-/* ── Delivery list / tracking screen ───────────────────── */
+/* ── Find-a-delivery / tracking screen ─────────────────── */
 function scrRider(){
   const t = RIDER.order;
   return `<div class="screen on">
-    ${navBar('Rider', {sub: t ? 'Tracking ' + esc(t.orderNo || '') : `${RIDER.deliveries.length} out for delivery`,
+    ${navBar('Rider', {sub: t ? 'Tracking ' + esc(t.orderNo || '') : 'Enter an order number',
       action:`<button class="iconbtn" onclick="doRiderSignOut()" aria-label="Sign out">${icon('logout',20)}</button>`})}
     <div class="scroll"><div class="section">
       ${RIDER.error ? `<div class="banner alert mb-16">${icon('alert',17)}<div>${esc(RIDER.error)}</div></div>` : ''}
-      ${t ? riderTrackingCard(t) : riderListBody()}
+      ${t ? riderTrackingCard(t) : riderLookupBody()}
     </div></div>
   </div>`;
 }
 
-function riderListBody(){
-  if(!RIDER.deliveries.length){
-    return `${stateBlock('truck','Nothing out for delivery','An order appears here once the office marks it out for delivery.','')}
-      <button class="btn btn-ghost mt-16" onclick="riderRefresh()">${icon('repeat',18)} Refresh</button>`;
+/* ── Find a delivery by order number ───────────────────
+   The rider types the order number off the invoice instead of picking from a
+   list of every delivery in flight. That is the workflow the office actually
+   uses, and it also means one rider is never shown another customer's address
+   and phone. (The Firestore rules still permit a rider to read orders — they
+   have to, to load this one — so this narrows what the app SHOWS, not what
+   the rules allow. The rules limit what a rider can WRITE.) */
+async function riderLookup(){
+  const raw = (document.getElementById('f-rider-order')?.value || '').trim();
+  if(!raw){ RIDER.error = 'Enter the order number.'; paint(); return; }
+  RIDER.error = null;
+  RIDER.looking = true;
+  paint();
+  try{
+    const found = await window.riderFindOrder(raw);
+    if(!found){
+      RIDER.error = 'No order found with number ' + raw + '. Check the number on the invoice.';
+      RIDER.lookupTried = raw;
+    }else if(found.status !== 'out_for_delivery'){
+      // The rules refuse a rider's location write unless the order is out for
+      // delivery, so starting a trip here would fail on the first push. Say
+      // why now rather than after the rider sets off.
+      RIDER.error = raw + ' is not out for delivery yet (' +
+        ((STATUS[found.status] || {}).l || found.status) + '). Ask the office to mark it out for delivery.';
+      RIDER.lookupTried = raw;
+    }else{
+      RIDER.order = found;
+      RIDER.lookupTried = null;
+    }
+  }catch(e){
+    RIDER.error = 'Could not look that up. Check your connection.';
+  }finally{
+    RIDER.looking = false;
+    paint();
   }
-  return `<div class="eyebrow mb-12">Out for delivery</div>
-    ${RIDER.deliveries.map(d=>`
-      <div class="lrow" onclick="riderPick('${esc(d.firestoreId)}')" style="align-items:flex-start;">
-        <div class="lrow-ic">${icon('pin',17)}</div>
-        <div class="lrow-body">
-          <div class="t-base" style="font-weight:700;">${esc(d.orderNo || d.firestoreId)}</div>
-          <div class="t-sm muted mt-4">${esc(d.company || d.name || 'Customer')}</div>
-          ${d.address ? `<div class="t-sm muted mt-4">${esc(d.address)}</div>` : ''}
-          ${d.riderUid && d.riderUid !== RIDER.uid ? `<div class="t-xs mt-4" style="color:var(--warn);font-weight:600;">Another rider is tracking this</div>` : ''}
-        </div>
-        ${icon('right',18)}
-      </div>`).join('')}
-    <button class="btn btn-ghost mt-16" onclick="riderRefresh()">${icon('repeat',18)} Refresh</button>`;
+}
+
+function riderLookupBody(){
+  return `<div class="card" style="padding:16px;">
+      <div class="eyebrow mb-8">Which delivery?</div>
+      <div class="t-sm muted mb-16" style="line-height:1.5;">
+        Type the order number from the invoice — for example <b>MD-1041</b>.
+      </div>
+      <div class="field"><label class="label">Order number</label>
+        <input id="f-rider-order" placeholder="MD-1041" autocomplete="off" autocapitalize="characters"
+               value="${esc(RIDER.lookupTried || '')}"
+               onkeydown="if(event.key==='Enter')riderLookup()"></div>
+      <button class="btn" id="btn-rider-find" onclick="riderLookup()">
+        ${RIDER.looking ? 'Finding…' : icon('search',18) + ' Find delivery'}</button>
+    </div>`;
+}
+
+function riderClearOrder(){
+  if(RIDER.watchId || RIDER.webWatchId){ toast('Stop the trip first','alert'); return; }
+  RIDER.order = null; RIDER.error = null; RIDER.lookupTried = null; paint();
 }
 
 function riderTrackingCard(t){
@@ -3702,19 +3732,10 @@ function riderTrackingCard(t){
           <b>“Allow all the time”</b> — without that, tracking stops when your screen locks.
         </div>
         <button class="btn" id="btn-rider-start" onclick="riderStartTracking()">${icon('pin',18)} Start trip</button>`}
-      <button class="btn btn-quiet mt-8" onclick="riderBackToList()">Back to deliveries</button>
+      <button class="btn btn-quiet mt-8" onclick="riderClearOrder()">Look up a different order</button>
     </div>`;
 }
 
-function riderPick(id){
-  RIDER.order = RIDER.deliveries.find(d => d.firestoreId === id) || null;
-  paint();
-}
-function riderBackToList(){
-  if(RIDER.watchId || RIDER.webWatchId){ toast('Stop the trip first','alert'); return; }
-  RIDER.order = null; paint();
-}
-async function riderRefresh(){ await riderLoadList(); paint(); }
 
 async function doRiderSignOut(){
   await riderStopTracking(true);
