@@ -15,6 +15,8 @@ service cloud.firestore {
     function isOwner() {
       return request.auth != null && resource.data.createdByUid == request.auth.uid;
     }
+    // Riders are deliberately NOT a Firestore identity. They sign in with
+    // nothing — see /deliveries below, which is the only thing they touch.
     // Statuses a customer is still allowed to cancel from — once an order
     // is out for delivery (or later), only the admin can see it change and
     // the customer must call in instead. This must match CANCELLABLE_STATUSES
@@ -118,6 +120,48 @@ service cloud.firestore {
     // above; never exposed to customers). Public hash list lives separately.
     match /order_blocks/{docId} {
       allow read, write: if isAdmin();
+    }
+
+    // ── Deliveries: the rider's entire world ────────────────────────────
+    // A rider signs in with nothing. They type the order number the office
+    // gave them, and that number IS the key: the document id here is the
+    // order number.
+    //
+    // This exists so a rider never touches an order document. An order holds
+    // the customer's full record — name, phone, address, GSTIN, items, totals.
+    // A delivery holds only what someone standing on a doorstep needs, copied
+    // across by the admin when the order goes out for delivery.
+    //
+    // get vs list is the load-bearing distinction. A get fetches ONE document
+    // by id, so it requires already knowing the order number. A list would let
+    // anyone enumerate every delivery, so it stays admin-only. Without that
+    // split, "no rider login" would mean "every customer's address is public",
+    // which is not a trade worth making.
+    //
+    // Residual risk, stated plainly: anyone who knows a live order number can
+    // see that one delivery's address and post a location to it. The admin
+    // sees the rider's name and phone on every update, and the document stops
+    // accepting writes the moment the order leaves out_for_delivery.
+    function isDeliveryLocationUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['riderLat', 'riderLng', 'riderAt', 'riderAccuracy', 'riderName', 'riderPhone'])
+             && request.resource.data.riderLat is number
+             && request.resource.data.riderLat >= -90 && request.resource.data.riderLat <= 90
+             && request.resource.data.riderLng is number
+             && request.resource.data.riderLng >= -180 && request.resource.data.riderLng <= 180
+             && request.resource.data.riderName is string
+             && request.resource.data.riderName.size() > 0
+             && request.resource.data.riderName.size() <= 80
+             && strOk(request.resource.data.riderPhone, 20)
+             // Tracking cannot outlive the delivery: the admin sets active
+             // false when the status moves on, and writes stop being accepted.
+             && resource.data.active == true;
+    }
+    match /deliveries/{orderNo} {
+      allow get: if request.auth != null;      // must know the order number
+      allow list: if isAdmin();                // never enumerable
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || isDeliveryLocationUpdate();
     }
     match /order_blocks_public/{docId} {
       allow read: if true;          // opaque phone hashes only — for app UX

@@ -5,6 +5,7 @@ const { requireAdmin, verifyAdminLogin, issueAdminToken } = require('../middlewa
 const { adminLoginLimiter, writeLimiter, generalLimiter } = require('../middleware/rateLimit');
 const { isBoundedString, isValidId, pickAllowed, hasForbiddenKeys } = require('../middleware/validate');
 const secretManager = require('../services/secretManager');
+const goFrugalClient = require('../services/goFrugalClient');
 
 // POST /admin/login { username, password } — no auth required (this IS the login).
 // 5 attempts / 15 min, keyed by IP + attempted username (see rateLimit.js).
@@ -187,6 +188,98 @@ router.post('/wallet/:customerId/confirm-topup', writeLimiter, async (req, res) 
 router.get('/audit-log', async (req, res) => {
   const snap = await col.auditLog().orderBy('at', 'desc').limit(200).get();
   res.json({ success: true, data: snap.docs.map(d => ({ id: d.id, ...d.data() })) });
+});
+
+// POST /admin/orders/:id/bill — raise this order's bill in GoFrugal.
+//
+// This is what the Bills tab's Print button calls before it prints. GoFrugal
+// is the billing system of record: it allots the legal invoice number and,
+// where applicable, registers the e-invoice. We store what it returns and
+// print that.
+//
+// IDEMPOTENT BY DESIGN. "Print all 40 bills" pressed twice must not raise 80
+// bills, and a reprint must never raise a second one. An order that already
+// carries gofrugal.billNo is returned as-is with created:false — the caller
+// can then print immediately. The claim is staked inside a transaction before
+// the network call, so two admins pressing Print at the same moment cannot
+// both get through.
+router.post('/orders/:id/bill', writeLimiter, async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) return res.status(400).json({ success: false, message: 'Invalid order id' });
+
+  const ref = col.orders().doc(id);
+  let order;
+  try {
+    order = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) { const e = new Error('Order not found'); e.status = 404; throw e; }
+      const data = { id: snap.id, ...snap.data() };
+
+      if (data.gofrugal?.billNo) return { already: data.gofrugal, data };
+
+      // A bill in progress from another click/tab. Two minutes is far longer
+      // than the 20s client timeout, so a genuinely stuck claim clears itself
+      // rather than locking the order out for good.
+      const claimedAt = data.gofrugal?.claimedAt?.toMillis?.();
+      if (claimedAt && Date.now() - claimedAt < 120000) {
+        const e = new Error('A bill is already being raised for this order. Try again in a moment.');
+        e.status = 409;
+        throw e;
+      }
+      tx.set(ref, { gofrugal: { claimedAt: FieldValue.serverTimestamp(), claimedBy: req.adminId } }, { merge: true });
+      return { already: null, data };
+    });
+  } catch (e) {
+    return res.status(e.status || 500).json({ success: false, message: e.message });
+  }
+
+  if (order.already) {
+    return res.json({ success: true, data: { created: false, gofrugal: order.already } });
+  }
+
+  let result;
+  try {
+    result = await goFrugalClient.raiseBill(order.data);
+  } catch (e) {
+    // Release the claim so a retry is possible — except on a timeout, where
+    // the bill may in fact exist in GoFrugal. Leaving that claim in place for
+    // its two minutes is the safer failure: better a delayed retry than a
+    // duplicate bill in the books.
+    if (e.code !== 'PROVIDER_TIMEOUT') {
+      await ref.set({ gofrugal: { claimedAt: null, claimedBy: null } }, { merge: true }).catch(() => {});
+    }
+    await writeAuditLog({ adminId: req.adminId, action: 'gofrugal_bill_failed', target: id, after: { code: e.code || null, message: e.message } });
+    const status = e.code === 'NOT_CONFIGURED' ? 400 : 502;
+    return res.status(status).json({ success: false, code: e.code || 'PROVIDER_ERROR', message: e.message });
+  }
+
+  // GoFrugal recomputes tax from its own masters. If its total disagrees with
+  // what the customer was charged, that is a catalogue/tax-master mismatch and
+  // an operator has to look at it — so it is recorded and surfaced, never
+  // silently printed over.
+  const mismatch = result.total !== null && Math.abs(result.total - (Number(order.data.total) || 0)) > 1;
+
+  const gofrugal = {
+    billNo: result.billNo,
+    billDate: result.billDate || null,
+    irn: result.irn || null,
+    ackNo: result.ackNo || null,
+    ackDate: result.ackDate || null,
+    signedQr: result.signedQr || null,
+    total: result.total,
+    totalMismatch: mismatch,
+    raisedAt: FieldValue.serverTimestamp(),
+    raisedBy: req.adminId,
+    claimedAt: null,
+    claimedBy: null,
+  };
+  await ref.set({ gofrugal }, { merge: true });
+  await writeAuditLog({
+    adminId: req.adminId, action: 'gofrugal_bill_raised', target: id,
+    after: { billNo: result.billNo, irn: result.irn || null, totalMismatch: mismatch },
+  });
+
+  res.json({ success: true, data: { created: true, gofrugal, totalMismatch: mismatch } });
 });
 
 module.exports = router;

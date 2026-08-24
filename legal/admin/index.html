@@ -86,6 +86,7 @@
   .asst-typing{align-self:flex-start;color:var(--ink-2);font-size:.85rem;font-style:italic;padding:4px 6px;}
   .asst-head-row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;}
   .asst-model{font-size:.82rem;padding:6px 8px;width:auto;margin:0;}
+  .inline-select{width:auto;max-width:100%;margin:0;padding:8px 10px;font-size:.85rem;}
   .chip-btn{background:var(--bg);border:1px solid var(--line);color:var(--ink-2);font-size:.8rem;padding:6px 10px;border-radius:8px;}
   /* ── Dashboard stat tiles ─────────────────────────────── */
   .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px;}
@@ -109,16 +110,192 @@
   .switch.ok input:checked + .track{background:var(--fresh);}
   .ctrl-banner{background:#fbe4e2;color:var(--bad);border:1px solid #f2c4c0;border-radius:10px;padding:11px 14px;font-size:.85rem;font-weight:600;margin-bottom:14px;display:none;}
   .ctrl-banner.on{display:block;}
+  /* ── Bills / bulk printing ────────────────────────────── */
+  .bills-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;}
+  .bill-hint{font-size:.8rem;color:var(--ink-2);line-height:1.55;margin-top:10px;}
+  .tick{width:16px;height:16px;margin:0;padding:0;vertical-align:middle;cursor:pointer;}
+  .printed-tag{font-size:.75rem;font-weight:700;color:var(--fresh);}
+  .unprinted-tag{font-size:.75rem;font-weight:700;color:var(--warn);}
+  .bill-toast{background:var(--brand-tint);color:var(--brand-2);border:1px solid #c6d8ea;border-radius:8px;padding:9px 12px;font-size:.85rem;font-weight:600;margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
+  .bill-toast button{background:transparent;color:var(--brand-2);font-size:.82rem;padding:4px 8px;text-decoration:underline;}
+  /* ── The bill sheet ───────────────────────────────────── */
+  /* Deliberately plain black-on-white with no background fills: a cheap 80mm
+     thermal roll printer and an office laser render this identically, which
+     is the whole point of one button serving both. */
+  #print-root{display:none;}
+  .bill{font-size:8.5pt;line-height:1.35;color:#000;background:#fff;border:1.2px solid #000;}
+  .bill *{box-sizing:border-box;}
+  .bill table{width:100%;border-collapse:collapse;}
+  .bill table tr:hover{background:none;cursor:default;}
+  .bill-title{display:flex;justify-content:space-between;align-items:center;gap:10px;border-bottom:1.2px solid #000;padding:5px 9px;}
+  .bill-title-t{font-size:12pt;font-weight:800;letter-spacing:.16em;text-transform:uppercase;}
+  .bill-stamp{border:1.1px solid #000;padding:2px 7px;font-size:6.4pt;font-weight:800;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;}
+  /* 1. Seller header */
+  .bill-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;border-bottom:1.2px solid #000;padding:8px 9px;}
+  .bill-seller{flex:1;min-width:0;}
+  .bill-biz{font-size:13pt;font-weight:800;letter-spacing:-.01em;line-height:1.15;margin-bottom:2px;}
+  .bill-sub{font-size:7.6pt;color:#222;line-height:1.45;}
+  .bill-sub b{font-weight:700;}
+  .bill-soft{color:#666;font-size:7pt;font-weight:400;}
+  .bill-regs{display:flex;flex-wrap:wrap;gap:2px 16px;margin-top:4px;padding-top:4px;border-top:1px dotted #999;font-size:7.6pt;}
+  /* QR: reserved, never faked */
+  .bill-qr{width:74px;height:74px;flex-shrink:0;border:1px solid #000;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  .bill-qr img{width:100%;height:100%;object-fit:contain;}
+  .bill-qr.empty{border-style:dashed;border-color:#888;}
+  .bill-qr.empty span{font-size:5.6pt;line-height:1.35;color:#777;text-align:center;padding:3px;}
+  /* 2/3/4/8/9 boxes */
+  .bill-cols2{display:flex;border-bottom:1.2px solid #000;}
+  .bill-cols2 > .bill-box{flex:1;min-width:0;border:none;}
+  .bill-cols2 > .bill-box + .bill-box{border-left:1.2px solid #000;}
+  .bill-box{padding:6px 9px;border-bottom:1.2px solid #000;}
+  .bill-sec{font-size:6.4pt;font-weight:800;letter-spacing:.11em;text-transform:uppercase;color:#555;margin-bottom:3px;}
+  table.bill-kv td{width:1%;white-space:nowrap;padding:1px 10px 1px 0;color:#555;font-size:7.6pt;border:none;text-align:left;}
+  table.bill-kv th{padding:1px 0;text-align:left;font-weight:700;font-size:8pt;color:#000;border:none;text-transform:none;letter-spacing:0;}
+  table.bill-kv.wide th{white-space:normal;}
+  table.bill-kv th.bill-brk{word-break:break-all;font-weight:600;font-size:7pt;}
+  table.bill-kv tr.bill-kv-sum td,table.bill-kv tr.bill-kv-sum th{border-top:1px solid #000;padding-top:3px;font-weight:800;color:#000;}
+  /* 5. Product table */
+  table.bill-items th{font-size:6.4pt;text-transform:uppercase;letter-spacing:.04em;border-bottom:1.1px solid #000;padding:4px 5px;color:#000;font-weight:800;white-space:nowrap;}
+  table.bill-items td{font-size:8.2pt;padding:3.5px 5px;border-bottom:1px dotted #b0b0b0;vertical-align:top;}
+  table.bill-items tbody tr:last-child td{border-bottom:1.2px solid #000;}
+  .col-sr{width:26px;text-align:center;color:#555;}
+  .col-hsn{width:56px;text-align:center;}
+  .col-unit{width:64px;}
+  .bill-num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
+  /* 6. Totals strip */
+  table.bill-strip th{font-size:6.4pt;text-transform:uppercase;letter-spacing:.04em;padding:3px 5px;font-weight:800;text-align:right;white-space:nowrap;border-bottom:1px dotted #999;}
+  table.bill-strip td{font-size:8.4pt;padding:4px 5px;text-align:right;font-variant-numeric:tabular-nums;border-bottom:1.2px solid #000;}
+  table.bill-strip th.grand,table.bill-strip td.grand{border-left:1px solid #000;}
+  table.bill-strip td.grand{font-size:11pt;font-weight:800;}
+  /* 7. Amount in words */
+  .bill-words{padding:5px 9px;border-bottom:1.2px solid #000;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;}
+  .bill-words .bill-sec{margin:0;flex-shrink:0;}
+  .bill-words-v{font-size:8.6pt;font-weight:700;}
+  /* 8. GST summary */
+  table.bill-gst th{font-size:6.4pt;text-transform:uppercase;letter-spacing:.04em;padding:2px 4px;font-weight:800;border-bottom:1px solid #000;white-space:nowrap;text-align:left;}
+  table.bill-gst td{font-size:7.8pt;padding:2.5px 4px;border-bottom:1px dotted #ccc;font-variant-numeric:tabular-nums;}
+  table.bill-gst tbody tr:last-child td{border-bottom:none;}
+  /* 10-12. Legal */
+  .bill-legal{font-size:6.8pt;color:#333;line-height:1.5;padding:6px 9px;border-bottom:1.2px solid #000;}
+  .bill-legal > div + div{margin-top:2.5px;}
+  .bill-legal b{color:#000;font-weight:800;}
+  .bill-warn{font-weight:800;color:#000;border:1px solid #000;padding:2px 6px;display:inline-block;margin-top:4px;}
+  /* 13/14. QR + authorisation */
+  .bill-foot-grid{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding:7px 9px;}
+  .bill-sign{text-align:right;flex-shrink:0;}
+  .bill-stampbox{border:1px dashed #888;width:150px;height:52px;margin:4px 0 3px auto;color:#999;font-size:6.4pt;display:flex;align-items:center;justify-content:center;letter-spacing:.1em;text-transform:uppercase;}
+  /* Thermal rolls: no room for a nine-column table or any two-up block, so
+     the sheet goes linear and the analytical columns drop away. */
+  .fmt-80 .bill,.fmt-58 .bill{font-size:8.6pt;border:none;}
+  .fmt-80 .bill-title,.fmt-58 .bill-title{display:block;text-align:center;padding:4px 0;}
+  .fmt-80 .bill-title-t,.fmt-58 .bill-title-t{font-size:10.5pt;display:block;}
+  .fmt-80 .bill-stamp,.fmt-58 .bill-stamp{border:none;font-size:6pt;margin-top:2px;display:inline-block;}
+  .fmt-80 .bill-head,.fmt-58 .bill-head{display:block;text-align:center;padding:5px 0;}
+  .fmt-80 .bill-biz,.fmt-58 .bill-biz{font-size:11pt;}
+  .fmt-80 .bill-regs,.fmt-58 .bill-regs{display:block;text-align:center;}
+  .fmt-80 .bill-qr,.fmt-58 .bill-qr{margin:5px auto 0;}
+  .fmt-80 .bill-cols2,.fmt-58 .bill-cols2{display:block;}
+  .fmt-80 .bill-cols2 > .bill-box + .bill-box,.fmt-58 .bill-cols2 > .bill-box + .bill-box{border-left:none;border-top:1px dotted #999;}
+  .fmt-80 .bill-box,.fmt-58 .bill-box{padding:5px 0;}
+  .fmt-80 .bill-words,.fmt-58 .bill-words{display:block;padding:5px 0;}
+  .fmt-80 .bill-legal,.fmt-58 .bill-legal{padding:5px 0;}
+  .fmt-80 .bill-foot-grid,.fmt-58 .bill-foot-grid{display:block;padding:6px 0;}
+  .fmt-80 .bill-sign,.fmt-58 .bill-sign{text-align:left;margin-top:8px;}
+  .fmt-80 .bill-stampbox,.fmt-58 .bill-stampbox{margin-left:0;width:110px;height:40px;}
+  .fmt-80 .col-hsn,.fmt-80 .col-tax,.fmt-80 .col-sr,.fmt-80 .col-unit,
+  .fmt-58 .col-hsn,.fmt-58 .col-tax,.fmt-58 .col-sr,.fmt-58 .col-unit,
+  .fmt-58 .col-rate{display:none;}
+  /* 58mm is too narrow for the 6-column GST summary — drop the per-component
+     columns (they are already on the strip above) and keep rate/value. */
+  .fmt-58 table.bill-gst th:nth-child(3),.fmt-58 table.bill-gst td:nth-child(3),
+  .fmt-58 table.bill-gst th:nth-child(4),.fmt-58 table.bill-gst td:nth-child(4),
+  .fmt-58 table.bill-gst th:nth-child(5),.fmt-58 table.bill-gst td:nth-child(5){display:none;}
+  /* The 7-column strip cannot fit a roll: stack it as label/value rows. */
+  .fmt-80 table.bill-strip,.fmt-58 table.bill-strip{display:block;}
+  .fmt-80 table.bill-strip thead,.fmt-58 table.bill-strip thead{display:none;}
+  .fmt-80 table.bill-strip tbody,.fmt-80 table.bill-strip tr,
+  .fmt-58 table.bill-strip tbody,.fmt-58 table.bill-strip tr{display:block;}
+  .fmt-80 table.bill-strip td,.fmt-58 table.bill-strip td{display:flex;justify-content:space-between;border-bottom:1px dotted #ccc;padding:2px 0;}
+  .fmt-80 table.bill-strip td::before,.fmt-58 table.bill-strip td::before{content:attr(data-l);font-weight:600;color:#555;}
+  .fmt-80 table.bill-strip td.grand,.fmt-58 table.bill-strip td.grand{border-left:none;border-top:1px solid #000;font-size:10.5pt;}
+  /* ── Phone layout ─────────────────────────────────────
+     The panel is used standing at a counter as often as at a desk, so this is
+     a real layout rather than a shrink: the 9-tab bar scrolls instead of
+     wrapping into three cramped lines, and the data tables — 6 and 7 columns
+     wide — restack into one card per row. A 7-column table at 380px is not
+     readable no matter how small the type gets. */
+  @media (max-width:640px){
+    .wrap{padding:14px 10px 48px;}
+    .center-wrap{margin:36px auto;}
+    header{margin-bottom:12px;}
+    .brand{gap:10px;}
+    .brand-logo{width:38px;height:38px;}
+    h1{font-size:1.12rem;}
+    .card{padding:13px;border-radius:10px;}
+    .tabs{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;scrollbar-width:none;margin-bottom:13px;}
+    .tabs::-webkit-scrollbar{display:none;}
+    .tab{flex:0 0 auto;white-space:nowrap;margin-right:15px;font-size:.92rem;}
+    /* Chip rows scroll rather than stacking four lines deep. */
+    .period-row,#filter-chips{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px;}
+    .period-row::-webkit-scrollbar,#filter-chips::-webkit-scrollbar{display:none;}
+    .period-row .period-btn,#filter-chips button{flex:0 0 auto;white-space:nowrap;}
+    /* One card per row. */
+    table.stacked,table.stacked tbody,table.stacked tr,table.stacked td{display:block;width:auto;}
+    table.stacked thead{display:none;}
+    table.stacked tr{border-bottom:8px solid var(--bg);padding:11px 13px;}
+    table.stacked tr:last-child{border-bottom:none;}
+    table.stacked tr:hover{background:transparent;}
+    table.stacked td{border:none;padding:4px 0;display:block;text-align:left;font-size:.94rem;}
+    table.stacked td::before{content:attr(data-l);display:block;color:var(--ink-2);font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:1px;}
+    table.stacked td:not([data-l])::before{content:none;}
+    table.stacked td.cell-action{padding-top:10px;}
+    table.stacked td.cell-action button{width:100%;padding:11px 18px;}
+    /* Long values (an address, a 15-char GSTIN) must wrap, not widen the row. */
+    table.stacked td,table.stacked td *{overflow-wrap:anywhere;}
+    .inline-select{width:100%;}
+    /* Tap targets: a 16px tick is not a finger target. */
+    .tick{width:20px;height:20px;}
+    .btn-sm{padding:10px 14px;}
+    .bills-bar{gap:12px;}
+    .bills-bar > label{width:100%;justify-content:space-between;}
+    .bills-bar select{flex:1;min-width:0;}
+    #bill-actions .bills-bar button{width:100%;}
+    .modal{max-height:92vh;padding:15px;border-radius:12px;}
+    .status-btns button{min-width:calc(50% - 3px);}
+    .stat .n{font-size:1.5rem;}
+    .asst-wrap{height:calc(100dvh - 250px);min-height:340px;}
+    .ctrl-row{gap:10px;}
+  }
+  /* The bill preview keeps its true proportions and pans, rather than
+     reflowing into something that isn't what will come out of the printer. */
+  .bill-preview{border:1px solid var(--line);border-radius:10px;padding:16px;background:#fff;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .bill-preview:not(.fmt-80):not(.fmt-58) > .bill{min-width:640px;}
+  @media print{
+    body{background:#fff;margin:0;}
+    #app{display:none !important;}
+    #print-root{display:block !important;}
+    /* One bill per page — this is what turns 40 bills into one 40-page job. */
+    .bill{page-break-after:always;break-after:page;page-break-inside:avoid;}
+    .bill:last-child{page-break-after:auto;break-after:auto;}
+  }
 </style>
+
+
+
 </head>
 <body>
 <div id="app"></div>
+<!-- Bulk-print surface. Kept OUTSIDE #app because render() replaces #app's
+     innerHTML wholesale. The @page rule is swapped per paper size before
+     each print — page size is the one thing a CSS class cannot express. -->
+<style id="print-page-style"></style>
+<div id="print-root" aria-hidden="true"></div>
 
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFirestore, collection, query, orderBy, limit, onSnapshot, doc, updateDoc, setDoc, getDoc, getDocs, addDoc, deleteDoc, serverTimestamp }
+import { getFirestore, collection, query, orderBy, limit, onSnapshot, doc, updateDoc, setDoc, getDoc, getDocs, addDoc, deleteDoc, serverTimestamp, writeBatch, increment }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 const firebaseConfig = {
@@ -192,6 +369,14 @@ async function unblockCustomer(phone){
   catch(e){ alert('Could not unblock: '+e.message); }
 }
 function money(n){ return '₹' + Math.round(Number(n)||0).toLocaleString('en-IN'); }
+// Bills show paise. The order lists round — but a bill that doesn't foot to
+// the paisa is a bill the customer's accountant will ring up about.
+function money2(n){ return '₹' + (Number(n)||0).toLocaleString('en-IN', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
+function fmtBillDate(ts){
+  const d = ts?.toDate ? ts.toDate() : (ts ? new Date(ts) : null);
+  if(!d) return '—';
+  return d.toLocaleString('en-IN', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+}
 function fmtDate(ts){
   const d = ts?.toDate ? ts.toDate() : (ts ? new Date(ts) : null);
   if(!d) return '—';
@@ -246,6 +431,7 @@ function renderShell(bodyHtml){
       <div class="tabs">
         <button class="tab ${tab==='dashboard'?'on':''}" data-tab="dashboard">Dashboard</button>
         <button class="tab ${tab==='orders'?'on':''}" data-tab="orders">Orders</button>
+        <button class="tab ${tab==='bills'?'on':''}" data-tab="bills">Bills</button>
         <button class="tab ${tab==='products'?'on':''}" data-tab="products">Products</button>
         <button class="tab ${tab==='broadcasts'?'on':''}" data-tab="broadcasts">Broadcasts</button>
         <button class="tab ${tab==='controls'?'on':''}" data-tab="controls" style="color:var(--bad);">Controls</button>
@@ -265,6 +451,7 @@ function render(){
   if(tab==='dashboard'){ renderShell(dashboardBody()); wireDashboardEvents(); }
   else if(tab==='controls'){ renderShell(controlsBody()); wireControlsEvents(); }
   else if(tab==='orders'){ renderShell(ordersBody()); wireOrdersEvents(); }
+  else if(tab==='bills'){ renderShell(billsBody()); wireBillsEvents(); }
   else if(tab==='products'){ renderShell(productsBody()); wireProductsEvents(); }
   else if(tab==='broadcasts'){ renderShell(broadcastsBody()); wireBroadcastsEvents(); }
   else if(tab==='maintenance'){ renderShell(maintenanceBody()); wireMaintenanceEvents(); }
@@ -321,17 +508,17 @@ function ordersListHtml(){
     <div class="muted" style="margin-bottom:10px;">${list.length} order${list.length===1?'':'s'}${orderFilter!=='all'||orderSearch?' matching':''}</div>
     <div class="card" style="padding:0;overflow:auto;">
       ${!list.length ? `<div class="empty">${orders.length?'No orders match this filter/search.':'No orders yet. New orders from the app will appear here in real time.'}</div>` : `
-      <table>
+      <table class="stacked">
         <thead><tr><th>Order</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Placed</th></tr></thead>
         <tbody>
           ${list.map(o => `
             <tr data-id="${esc(o.id)}">
-              <td><b>${esc(o.orderNo||o.id)}</b>${o.priceMismatch?' <span title="Price mismatch vs catalogue" style="color:var(--bad);">⚠</span>':''}</td>
-              <td>${esc(o.name||o.company||'—')}<br><span class="muted">${esc(o.phone||'')}</span></td>
-              <td>${(o.items||[]).length}</td>
-              <td>${money(o.total)}</td>
-              <td><span class="pill ${esc(o.status||'placed')}">${STATUS_LABEL[o.status]||o.status}</span></td>
-              <td class="muted">${fmtDate(o.placedAt)}</td>
+              <td data-l="Order"><b>${esc(o.orderNo||o.id)}</b>${o.priceMismatch?' <span title="Price mismatch vs catalogue" style="color:var(--bad);">⚠</span>':''}</td>
+              <td data-l="Customer">${esc(o.name||o.company||'—')}<br><span class="muted">${esc(o.phone||'')}</span></td>
+              <td data-l="Items">${(o.items||[]).length}</td>
+              <td data-l="Total">${money(o.total)}</td>
+              <td data-l="Status"><span class="pill ${esc(o.status||'placed')}">${STATUS_LABEL[o.status]||o.status}</span></td>
+              <td data-l="Placed" class="muted">${fmtDate(o.placedAt)}</td>
             </tr>`).join('')}
         </tbody>
       </table>`}
@@ -416,12 +603,56 @@ function closeModal(){ document.getElementById('modal-bg')?.classList.remove('on
 async function setStatus(id, status){
   try{
     await updateDoc(doc(db, 'orders', id), { status, statusUpdatedAt: serverTimestamp() });
+    await syncDelivery(id, status);
     closeModal();
   }catch(e){ alert('Could not update status: ' + e.message); }
+}
+
+/* The rider's copy of a delivery.
+   Riders sign in with nothing, so they must never touch an order document —
+   an order carries the customer's full record (GSTIN, items, totals, the lot).
+   Instead, marking an order OUT FOR DELIVERY publishes a deliveries/{orderNo}
+   doc holding only what someone on a doorstep needs. The order number is the
+   document id, so a rider who knows the number can fetch exactly that one and
+   nothing else (rules allow get, never list).
+
+   Moving the status on sets active:false, which is what makes the rules stop
+   accepting the rider's location writes — tracking cannot outlive the trip. */
+async function syncDelivery(id, status){
+  const o = orders.find(x => x.id === id);
+  if(!o) return;
+  const orderNo = String(o.orderNo || o.id);
+  const ref = doc(db, 'deliveries', orderNo);
+  try{
+    if(status === 'out_for_delivery'){
+      await setDoc(ref, {
+        orderNo, orderId: id, active: true,
+        customer: o.company || o.name || 'Customer',
+        contact: (o.company && o.name) ? o.name : null,
+        phone: o.phone || null,
+        address: o.address || null,
+        items: (o.items || []).length,
+        total: Number(o.total) || 0,
+        startedAt: serverTimestamp(),
+        // Cleared so a re-delivery never opens on the previous trip's dot.
+        riderLat: null, riderLng: null, riderAt: null,
+        riderName: null, riderPhone: null, riderAccuracy: null,
+      }, { merge: true });
+    }else{
+      // Only if it exists — most status changes never had a delivery doc.
+      const snap = await getDoc(ref);
+      if(snap.exists()) await setDoc(ref, { active: false, endedAt: serverTimestamp() }, { merge: true });
+    }
+  }catch(e){
+    // The status change already succeeded; tracking is the secondary effect.
+    console.warn('Could not sync the delivery doc:', e);
+    alert('Status updated, but the rider tracking record could not be written: ' + e.message);
+  }
 }
 async function denyOrder(id, deniedBy, deniedReason){
   try{
     await updateDoc(doc(db, 'orders', id), { status: 'denied', deniedBy, deniedReason, statusUpdatedAt: serverTimestamp() });
+    await syncDelivery(id, 'denied');
     closeModal();
   }catch(e){ alert('Could not deny order: ' + e.message); }
 }
@@ -437,9 +668,750 @@ function startOrdersListener(){
       else { render(); }
       if(openOrderId) openModal(openOrderId);
     }
+    if(tab==='bills'){
+      // Same reasoning as above: refresh the list and the button counts in
+      // place, so an order landing mid-search never steals the cursor.
+      if(document.getElementById('bills-list')) refreshBills();
+      else render();
+    }
   }, err => {
     $app.innerHTML = `<div class="wrap"><div class="card err">Could not load orders: ${esc(err.message)}</div></div>`;
   });
+}
+
+/* ── Bills: bulk printing + reprint ───────────────────────
+   Printing from a web page always goes through the browser's own print
+   dialog, and that dialog is already pointed at whichever printer THIS
+   computer is set up with — so "print" here means "print on the printer
+   attached to this PC", A4 laser or 80mm thermal roll alike. What this tab
+   adds is that ONE click builds every matching bill into a single document,
+   one bill per page, so it's one dialog and one job instead of forty.
+   (For a genuinely dialog-free click, launch Chrome once with
+   --kiosk-printing; it then prints straight to the default printer.) */
+let billSearch = '';
+let billScope = 'today';
+let billUnprintedOnly = false;
+let billSelected = new Set();
+let billFormat = (() => { try{ return localStorage.getItem('mda_bill_format') || 'a4'; }catch(e){ return 'a4'; } })();
+let billCopy = (() => { try{ return localStorage.getItem('mda_bill_copy') || 'original'; }catch(e){ return 'original'; } })();
+
+const BILL_SCOPES = [
+  { id: 'today', label: 'Today' },
+  { id: '7d',    label: 'Last 7 days' },
+  { id: 'month', label: 'This month' },
+  { id: 'all',   label: 'All loaded' },
+];
+const BILL_FORMATS = [
+  { id: 'a4',   label: 'A4 sheet' },
+  { id: 'a5',   label: 'A5 sheet' },
+  { id: '80mm', label: '80mm thermal roll' },
+  { id: '58mm', label: '58mm thermal roll' },
+];
+const PAGE_CSS = {
+  a4:     '@page{size:A4;margin:12mm;}',
+  a5:     '@page{size:A5;margin:8mm;}',
+  '80mm': '@page{size:80mm auto;margin:3mm;}',
+  '58mm': '@page{size:58mm auto;margin:2mm;}',
+};
+// A cancelled or denied order was never fulfilled, so it has no bill.
+const NO_BILL_STATUSES = ['cancelled', 'denied'];
+
+function orderMillis(o){
+  const d = o.placedAt?.toDate ? o.placedAt.toDate() : (o.placedAt ? new Date(o.placedAt) : null);
+  return d ? d.getTime() : 0;
+}
+function billScopeStart(){
+  const n = new Date();
+  if(billScope === 'today') return new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
+  if(billScope === '7d')    return new Date(n.getFullYear(), n.getMonth(), n.getDate() - 6).getTime();
+  if(billScope === 'month') return new Date(n.getFullYear(), n.getMonth(), 1).getTime();
+  return 0;
+}
+function filteredBills(){
+  const from = billScopeStart();
+  const q = billSearch.trim().toLowerCase();
+  return orders.filter(o => {
+    if(NO_BILL_STATUSES.includes(o.status || 'placed')) return false;
+    if(billUnprintedOnly && (o.billPrintCount || 0) > 0) return false;
+    // A search deliberately IGNORES the date filter: "find bill MD-1042" has
+    // to work whatever the tab is currently showing, otherwise reprinting an
+    // old bill means hunting for the right date range first.
+    if(!q) return orderMillis(o) >= from;
+    return [o.orderNo, o.id, o.name, o.company, o.phone].some(v => String(v || '').toLowerCase().includes(q));
+  });
+}
+
+/* ── The bill format ──────────────────────────────────────
+   A GST tax invoice laid out to the agreed 14-section structure: seller
+   header with registrations, e-invoice block, transaction block, party
+   details, the SNo→Total product table, the taxable/CGST/SGST/IGST/cess
+   strip, amount in words, GST-rate summary, customer account summary,
+   declarations, GSTIN-verification note, jurisdiction, IRN QR area and the
+   signatory block.
+
+   Everything a bill legally has to carry comes out of Settings, so handing
+   over the real registration numbers later is a form fill, not a code change.
+
+   PLACEHOLDERS: every registration field falls back to an obviously-fake
+   specimen value until Settings holds a real one. They're shaped like the
+   real thing (a GSTIN really is 15 chars, state code first) so the layout
+   you see now is the layout you'll get — but while ANY of them is still a
+   specimen, the bill prints a "not valid for tax purposes" line and both the
+   Bills and Settings tabs warn. All of it clears itself once the real values
+   are saved. */
+const BILL_PLACEHOLDERS = {
+  gstin:       '27ABCDE1234F1Z5',
+  pan:         'ABCDE1234F',
+  fssai:       '12345678901234',
+  msme:        'UDYAM-MH-00-0000000',
+  hsn:         '0401',
+  bankName:    'Specimen Bank — Camp Branch, Pune',
+  bankAccount: '0000 1111 2222 33',
+  bankIfsc:    'ABCD0001234',
+  upi:         'moderndairy@specimenbank',
+  jurisdiction:'Pune',
+  declaration1:'We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.',
+  declaration2:'Goods are supplied in sound and merchantable condition. Being perishable dairy produce, please check quantity, temperature and condition at the time of delivery — claims will not be entertained thereafter.',
+  gstinNote:   'Customers are requested to verify the GST number printed on this invoice. We shall not be liable for any consequence arising from an incorrect or unverified GST number, including denial or reversal of input tax credit.',
+  terms:       'Goods once sold will not be taken back. Payment due within 15 days of invoice date. Interest @18% p.a. is chargeable on overdue amounts.',
+};
+// A bill field: whatever Settings holds, else the specimen value.
+function bf(key){ const v = (cfg[key] ?? '').toString().trim(); return v || BILL_PLACEHOLDERS[key] || ''; }
+// True while any legally-significant registration is still a specimen.
+function billUsesPlaceholders(){
+  return ['gstin', 'pan', 'fssai', 'msme', 'bankAccount', 'bankIfsc'].some(k => !((cfg[k] ?? '').toString().trim()));
+}
+
+const GST_STATES = {
+  '01':'Jammu & Kashmir','02':'Himachal Pradesh','03':'Punjab','04':'Chandigarh','05':'Uttarakhand',
+  '06':'Haryana','07':'Delhi','08':'Rajasthan','09':'Uttar Pradesh','10':'Bihar','11':'Sikkim',
+  '12':'Arunachal Pradesh','13':'Nagaland','14':'Manipur','15':'Mizoram','16':'Tripura','17':'Meghalaya',
+  '18':'Assam','19':'West Bengal','20':'Jharkhand','21':'Odisha','22':'Chhattisgarh','23':'Madhya Pradesh',
+  '24':'Gujarat','26':'Dadra & Nagar Haveli and Daman & Diu','27':'Maharashtra','29':'Karnataka','30':'Goa',
+  '31':'Lakshadweep','32':'Kerala','33':'Tamil Nadu','34':'Puducherry','35':'Andaman & Nicobar Islands',
+  '36':'Telangana','37':'Andhra Pradesh','38':'Ladakh','97':'Other Territory',
+};
+function stateOf(gstin){
+  const code = String(gstin || '').slice(0, 2);
+  return GST_STATES[code] ? { code, name: GST_STATES[code] } : null;
+}
+function stateLine(st){ return st ? `${st.code} — ${st.name}` : '—'; }
+
+/* Rupees in words, Indian numbering (lakh/crore) — a tax invoice must carry
+   the amount in words, and no browser API does Indian grouping in words. */
+function amountInWords(amount){
+  const abs = Math.abs(Number(amount) || 0);
+  const whole = Math.floor(abs);
+  const paise = Math.round((abs - whole) * 100);
+  const ONES = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve',
+                'Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
+  const TENS = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
+  const under100 = v => v < 20 ? ONES[v] : TENS[Math.floor(v / 10)] + (v % 10 ? ' ' + ONES[v % 10] : '');
+  const under1000 = v => v >= 100
+    ? ONES[Math.floor(v / 100)] + ' Hundred' + (v % 100 ? ' ' + under100(v % 100) : '')
+    : under100(v);
+  function indian(v){
+    if(v === 0) return 'Zero';
+    const out = [];
+    const crore = Math.floor(v / 10000000); v %= 10000000;
+    const lakh  = Math.floor(v / 100000);   v %= 100000;
+    const thou  = Math.floor(v / 1000);     v %= 1000;
+    if(crore) out.push(under1000(crore) + ' Crore');
+    if(lakh)  out.push(under1000(lakh) + ' Lakh');
+    if(thou)  out.push(under1000(thou) + ' Thousand');
+    if(v)     out.push(under1000(v));
+    return out.join(' ');
+  }
+  return 'Rupees ' + indian(whole) + (paise ? ' and ' + under100(paise) + ' Paise' : '') + ' Only';
+}
+
+/* Which copy of the bill this is. Indian practice prints up to three, each
+   labelled for a different holder; the operator picks in the Bills tab. */
+const BILL_COPIES = [
+  { id:'original',  label:'Original for Recipient' },
+  { id:'duplicate', label:'Duplicate for Transporter' },
+  { id:'triplicate',label:'Triplicate for Supplier' },
+];
+
+/* SAC codes for the non-goods charges. Freight and the platform fee are
+   charged without GST in this app, so they ride as 0% lines — which is also
+   how a real invoice presents them, and it keeps the taxable column and the
+   invoice total footing to the paisa. */
+const SAC_DELIVERY = '9968';
+const SAC_PLATFORM = '9997';
+
+/* One row per printed line. Per-item `gstRate`/`hsn`/`unit` are honoured when
+   an order carries them, so a future multi-rate catalogue needs no change
+   here; today every line shares cfg.gstRate and the GST summary is one row.
+
+   RECONCILIATION: `o.subtotal` and `o.gst` are what the customer was actually
+   charged and the invoice must agree with them exactly. If per-line arithmetic
+   drifts by a paisa (rounding, or an older order whose subtotal was computed
+   differently), the difference is absorbed by the largest line rather than
+   left to make the invoice disagree with the payment. */
+function billLines(o){
+  const defaultRate = (Number(cfg.gstRate) || 0.05) * 100;
+  const lines = (o.items || []).map(i => {
+    const qty = Number(i.qty) || 0;
+    const rate = Number(i.price) || 0;
+    const taxable = rate * qty;
+    const taxRate = i.gstRate != null ? Number(i.gstRate) * 100 : defaultRate;
+    return { name: i.name || '', hsn: i.hsn || bf('hsn'), qty, unit: i.unit || i.label || 'Nos',
+             rate, taxable, taxRate, tax: taxable * taxRate / 100 };
+  });
+
+  const absorb = (key, target) => {
+    if(!lines.length || !Number.isFinite(target)) return;
+    const sum = lines.reduce((s, l) => s + l[key], 0);
+    const diff = target - sum;
+    if(Math.abs(diff) > 0.005){
+      lines.reduce((a, b) => (b[key] > a[key] ? b : a), lines[0])[key] += diff;
+    }
+  };
+  absorb('taxable', Number(o.subtotal));
+  absorb('tax', Number(o.gst));
+
+  // Charges come after reconciliation so they're never used to absorb drift.
+  if(Number(o.delivery)) lines.push({ name:'Delivery charges', hsn:SAC_DELIVERY, qty:1, unit:'Nos',
+    rate:Number(o.delivery), taxable:Number(o.delivery), taxRate:0, tax:0 });
+  if(Number(o.platform)) lines.push({ name:'Platform fee', hsn:SAC_PLATFORM, qty:1, unit:'Nos',
+    rate:Number(o.platform), taxable:Number(o.platform), taxRate:0, tax:0 });
+
+  lines.forEach(l => { l.total = l.taxable + l.tax; });
+  return lines;
+}
+
+/* Tax treatment for one order. Same state on both GSTINs (or no buyer GSTIN
+   at all — a walk-in B2C sale is always local) means CGST+SGST; a different
+   state means IGST. The total tax is only ever SPLIT, never recomputed. */
+function billTax(o){
+  const seller = stateOf(bf('gstin'));
+  const buyer = o.gstin ? stateOf(o.gstin) : null;
+  const interState = !!(seller && buyer && seller.code !== buyer.code);
+  const lines = billLines(o);
+  const taxable = lines.reduce((s, l) => s + l.taxable, 0);
+  const tax = lines.reduce((s, l) => s + l.tax, 0);
+
+  const byRate = new Map();
+  lines.forEach(l => {
+    const g = byRate.get(l.taxRate) || { rate: l.taxRate, taxable: 0, tax: 0 };
+    g.taxable += l.taxable; g.tax += l.tax;
+    byRate.set(l.taxRate, g);
+  });
+  const groups = [...byRate.values()].sort((a, b) => a.rate - b.rate).map(g => ({
+    rate: g.rate, taxable: g.taxable, tax: g.tax,
+    cgst: interState ? 0 : g.tax / 2,
+    sgst: interState ? 0 : g.tax / 2,
+    igst: interState ? g.tax : 0,
+    gross: g.taxable + g.tax,
+  }));
+
+  return {
+    seller, buyer, interState, lines, groups, taxable, tax,
+    cess: Number(o.cess) || 0,
+    stateCess: Number(o.stateCess) || 0,
+    cgst: interState ? 0 : tax / 2,
+    sgst: interState ? 0 : tax / 2,
+    igst: interState ? tax : 0,
+    place: stateLine(buyer || seller),
+  };
+}
+
+/* Customer account summary. Outstanding is a point-in-time figure, so the
+   only trustworthy source is a number stamped on the order when it was
+   raised — `prevOutstanding`. Nothing writes it yet (the ledger lands with
+   the backend), and it is NOT inferred from the orders on screen: showing a
+   guessed balance on a tax invoice is worse than showing none. Until then
+   the section prints the current invoice and dashes. */
+function billOutstanding(o){
+  const raw = o.prevOutstanding;
+  const prev = (raw === null || raw === undefined || !Number.isFinite(Number(raw))) ? null : Number(raw);
+  const current = Number(o.total) || 0;
+  return { prev, current, total: prev === null ? null : prev + current };
+}
+
+/* The printed bill. */
+function billHtml(o, copyId){
+  const copy = BILL_COPIES.find(c => c.id === copyId) || BILL_COPIES[0];
+  const t = billTax(o);
+  const acct = billOutstanding(o);
+  // GoFrugal is the system of record when it's in use: its bill number IS the
+  // legal invoice number, and our own orderNo drops to a reference line. Two
+  // invoice numbers for one sale is not an option.
+  const gf = o.gofrugal || {};
+  const ei = o.eInvoice || {};
+  const invoiceNo = gf.billNo || o.orderNo || o.id;
+  const orderRef = gf.billNo ? (o.orderNo || o.id) : null;
+  const irn = gf.irn || ei.irn || '';
+  const ackNo = gf.ackNo || ei.ackNo || '';
+  const ackDate = gf.ackDate || ei.ackDate || null;
+  const qrData = gf.signedQr || ei.signedQr || '';
+  const reprint = (o.billPrintCount || 0) > 0;
+  const dash = v => v === null ? '—' : money2(v);
+
+  /* No fake QR is ever drawn. The block below renders an image only when the
+     order actually carries the IRP's signed QR; otherwise it reserves the
+     space and says so, so the sheet is print-ready the day e-invoicing is
+     wired up without the layout shifting. */
+  const qrBox = (label) => ei.qrImage
+    ? `<div class="bill-qr"><img src="${esc(ei.qrImage)}" alt="${esc(label)}"></div>`
+    : qrData
+      // The signed payload is here but nothing on this page can draw a QR yet.
+      // Saying so beats printing an empty box the operator can't explain.
+      ? `<div class="bill-qr empty"><span>${esc(label)}<br>signed QR received<br>— rendering not<br>yet enabled</span></div>`
+      : `<div class="bill-qr empty"><span>${esc(label)}<br>prints once the<br>e-invoice is generated</span></div>`;
+
+  return `<div class="bill">
+
+    <div class="bill-title">
+      <span class="bill-title-t">Tax Invoice</span>
+      <span class="bill-stamp">${esc(copy.label)}</span>
+    </div>
+
+    <!-- 1. Seller -->
+    <div class="bill-head">
+      <div class="bill-seller">
+        <div class="bill-biz">${esc(cfg.businessName || 'Modern Dairy')}</div>
+        <div class="bill-sub">${esc(cfg.address || '')}</div>
+        <div class="bill-sub">Tel: ${esc(cfg.supportPhone || '—')}</div>
+        <div class="bill-sub">Email: ${esc(cfg.email || '—')}</div>
+        <div class="bill-regs">
+          <span>GSTIN: <b>${esc(bf('gstin'))}</b></span>
+          <span>FSSAI No.: <b>${esc(bf('fssai'))}</b></span>
+          <span>MSME No.: <b>${esc(bf('msme'))}</b></span>
+        </div>
+      </div>
+      ${qrBox('QR')}
+    </div>
+
+    <!-- 2 + 3. E-invoice / transaction -->
+    <div class="bill-cols2">
+      <div class="bill-box">
+        <div class="bill-sec">E-Invoice Details</div>
+        <table class="bill-kv">
+          <tr><td>IRN</td><th class="bill-brk">${esc(irn || '—')}</th></tr>
+          <tr><td>Ack No.</td><th>${esc(ackNo || '—')}</th></tr>
+          <tr><td>Ack Date</td><th>${ackDate ? esc(fmtBillDate(ackDate)) : '—'}</th></tr>
+        </table>
+      </div>
+      <div class="bill-box">
+        <div class="bill-sec">Transaction Details</div>
+        <table class="bill-kv">
+          <tr><td>Invoice No.</td><th>${esc(invoiceNo)}</th></tr>
+          ${orderRef ? `<tr><td>Order Ref.</td><th>${esc(orderRef)}</th></tr>` : ''}
+          <tr><td>Invoice Date</td><th>${esc(fmtBillDate(gf.billDate || o.placedAt))}</th></tr>
+          <tr><td>State Code &amp; Name</td><th>${esc(stateLine(t.seller))}</th></tr>
+          <tr><td>Date of Supply</td><th>${esc(fmtBillDate(o.deliveredAt || o.placedAt))}</th></tr>
+          <tr><td>PO</td><th>${esc(o.poNumber || '—')}</th></tr>
+          <tr><td>PO Date</td><th>${o.poDate ? esc(fmtBillDate(o.poDate)) : '—'}</th></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- 4. Party -->
+    <div class="bill-box">
+      <div class="bill-sec">Party Details</div>
+      <table class="bill-kv wide">
+        <tr><td>Name</td><th>${esc(o.company || o.name || 'Customer')}${o.company && o.name ? ` <span class="bill-soft">(Attn: ${esc(o.name)})</span>` : ''}</th></tr>
+        <tr><td>Address</td><th>${esc(o.address || '—')}</th></tr>
+        <tr><td>Phone</td><th>${o.phone ? '+91 ' + esc(o.phone) : '—'}</th></tr>
+        <tr><td>GSTIN</td><th>${o.gstin ? esc(o.gstin) : 'Unregistered / B2C'}</th></tr>
+        <tr><td>State</td><th>${esc(stateLine(t.buyer || t.seller))}</th></tr>
+      </table>
+    </div>
+
+    <!-- 5. Products -->
+    <table class="bill-items">
+      <thead><tr>
+        <th class="col-sr">SNo</th>
+        <th style="text-align:left;">Name of Product</th>
+        <th class="col-hsn">HSN Code</th>
+        <th class="bill-num">Qty</th>
+        <th class="col-unit">Unit</th>
+        <th class="bill-num col-rate">Rate</th>
+        <th class="bill-num col-tax">Tax.Amt (Rs)</th>
+        <th class="bill-num col-tax">Tax %</th>
+        <th class="bill-num">Total (Rs)</th>
+      </tr></thead>
+      <tbody>${t.lines.map((l, ix) => `<tr>
+        <td class="col-sr">${ix + 1}</td>
+        <td>${esc(l.name)}</td>
+        <td class="col-hsn">${esc(l.hsn)}</td>
+        <td class="bill-num">${esc(l.qty)}</td>
+        <td class="col-unit">${esc(l.unit)}</td>
+        <td class="bill-num col-rate">${money2(l.rate)}</td>
+        <td class="bill-num col-tax">${money2(l.tax)}</td>
+        <td class="bill-num col-tax">${l.taxRate}%</td>
+        <td class="bill-num">${money2(l.total)}</td>
+      </tr>`).join('')}</tbody>
+    </table>
+
+    <!-- 6. Totals strip -->
+    <table class="bill-strip">
+      <thead><tr>
+        <th>Taxable Amt (Rs)</th><th>CGST Amount</th><th>SGST Amount</th><th>IGST Amount</th>
+        <th>Cess Amount</th><th>State Cess Amt</th><th class="grand">Invoice Total (Rs)</th>
+      </tr></thead>
+      <!-- data-l carries the column label so a thermal roll, where the
+           7-column head can't fit, can restack this as label/value rows. -->
+      <tbody><tr>
+        <td data-l="Taxable Amt">${money2(t.taxable)}</td>
+        <td data-l="CGST">${money2(t.cgst)}</td>
+        <td data-l="SGST">${money2(t.sgst)}</td>
+        <td data-l="IGST">${money2(t.igst)}</td>
+        <td data-l="Cess">${money2(t.cess)}</td>
+        <td data-l="State Cess">${money2(t.stateCess)}</td>
+        <td class="grand" data-l="Invoice Total">${money2(o.total)}</td>
+      </tr></tbody>
+    </table>
+
+    <!-- 7. Amount in words -->
+    <div class="bill-words">
+      <span class="bill-sec">Amount in Words:</span>
+      <span class="bill-words-v">${esc(amountInWords(o.total))}</span>
+    </div>
+
+    <!-- 8 + 9. GST summary / account summary -->
+    <div class="bill-cols2">
+      <div class="bill-box">
+        <div class="bill-sec">GST Tax Details</div>
+        <table class="bill-gst">
+          <thead><tr><th>GST%</th><th class="bill-num">Amount</th><th class="bill-num">SGST</th><th class="bill-num">CGST</th><th class="bill-num">IGST</th><th class="bill-num">G.Value</th></tr></thead>
+          <tbody>${t.groups.map(g => `<tr>
+            <td>${g.rate}%</td>
+            <td class="bill-num">${money2(g.taxable)}</td>
+            <td class="bill-num">${money2(g.sgst)}</td>
+            <td class="bill-num">${money2(g.cgst)}</td>
+            <td class="bill-num">${money2(g.igst)}</td>
+            <td class="bill-num">${money2(g.gross)}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+      <div class="bill-box">
+        <div class="bill-sec">Customer Account Summary</div>
+        <table class="bill-kv">
+          <tr><td>Prev Outstanding</td><th>${dash(acct.prev)}</th></tr>
+          <tr><td>+ Current Invoice</td><th>${money2(acct.current)}</th></tr>
+          <tr class="bill-kv-sum"><td>= Total Outstanding</td><th>${dash(acct.total)}</th></tr>
+        </table>
+        ${acct.prev === null ? `<div class="bill-soft" style="margin-top:3px;">Ledger balance not available for this invoice.</div>` : ''}
+        <div class="bill-sec" style="margin-top:7px;">Payment</div>
+        <div class="bill-sub">${esc(bf('bankName'))}</div>
+        <div class="bill-sub">A/c ${esc(bf('bankAccount'))} · IFSC ${esc(bf('bankIfsc'))} · UPI ${esc(bf('upi'))}</div>
+      </div>
+    </div>
+
+    <!-- 10, 11, 12. Declarations -->
+    <div class="bill-legal">
+      <div><b>Declaration:</b> ${esc(bf('declaration1'))}</div>
+      <div>${esc(bf('declaration2'))}</div>
+      <div><b>GST Number:</b> ${esc(bf('gstinNote'))}</div>
+      <div><b>Terms:</b> ${esc(bf('terms'))}</div>
+      <div><b>Jurisdiction:</b> Any dispute arising out of this invoice shall be subject to ${esc(bf('jurisdiction'))} jurisdiction only.</div>
+      ${reprint ? `<div><b>Reprint:</b> This is a reprint of a bill first printed ${esc(fmtBillDate(o.billPrintedAt))}.</div>` : ''}
+      ${billUsesPlaceholders() ? `<div class="bill-warn">SPECIMEN DETAILS — the registration numbers on this bill are placeholders. Not valid for tax purposes until the real values are entered in Settings.</div>` : ''}
+    </div>
+
+    <!-- 13 + 14. IRN QR / authorisation -->
+    <div class="bill-foot-grid">
+      <div>
+        <div class="bill-sec">IRN QR Code</div>
+        ${qrBox('IRN QR')}
+      </div>
+      <div class="bill-sign">
+        <div class="bill-sub">For <b>${esc(cfg.businessName || 'Modern Dairy')}</b></div>
+        <div class="bill-stampbox">Stamp</div>
+        <div class="bill-sub">Authorised Signatory</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ── GoFrugal ─────────────────────────────────────────────
+   GoFrugal is the billing system of record. Print doesn't just put ink on
+   paper: it first asks the backend to raise the bill in GoFrugal, which allots
+   the legal invoice number and (where applicable) registers the e-invoice.
+   Only then do we print — carrying GoFrugal's number, not ours.
+
+   The call goes admin panel → our Cloud Run backend → GoFrugal. It cannot go
+   direct: GoFrugal sends no CORS headers for this origin, the hosting CSP's
+   connect-src doesn't include them, and the API key would be sitting in the
+   browser for anyone with this page open.
+
+   Until Settings has a backend URL and the toggle is on, none of this runs and
+   Print behaves exactly as it always has — our own number, no network call. */
+function gofrugalOn(){ return !!(cfg.gofrugalEnabled && (cfg.backendUrl || '').trim()); }
+
+async function raiseGoFrugalBill(order){
+  const base = (cfg.backendUrl || '').trim().replace(/\/+$/, '');
+  if(!base) throw new Error('Backend URL is not set (Settings → Backend URL).');
+  const user = auth.currentUser;
+  if(!user) throw new Error('Signed out — sign in again.');
+  // The backend accepts this Firebase ID token and checks the uid against the
+  // one admin uid, so there is no second login to keep track of.
+  const token = await user.getIdToken();
+  const res = await fetch(base + '/admin/orders/' + encodeURIComponent(order.id) + '/bill', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+  });
+  let json = {};
+  try{ json = await res.json(); }catch(e){}
+  if(!res.ok || !json.success) throw new Error(json.message || ('Backend returned ' + res.status));
+  return json.data;
+}
+
+/* Make sure every bill about to print has a GoFrugal bill number.
+   Sequential on purpose: invoice numbers should come out in the order the
+   operator sees them, and firing 40 concurrent requests at a billing system
+   is a good way to get rate-limited or to interleave numbering. */
+async function ensureGoFrugalBills(list){
+  const ok = [], failed = [];
+  let raised = 0, done = 0;
+  const pending = list.filter(o => !o.gofrugal?.billNo).length;
+  for(const o of list){
+    if(o.gofrugal?.billNo){ ok.push(o); continue; }
+    done++;
+    billToast('Raising bill ' + done + ' of ' + pending + ' in GoFrugal — ' + (o.orderNo || o.id) + '…', null);
+    try{
+      const d = await raiseGoFrugalBill(o);
+      // Merge locally so the print that follows has the number immediately,
+      // without waiting for the Firestore snapshot to come back round.
+      o.gofrugal = { ...(o.gofrugal || {}), ...(d.gofrugal || {}) };
+      if(d.created) raised++;
+      ok.push(o);
+    }catch(e){
+      failed.push({ order: o, message: e.message });
+    }
+  }
+  return { ok, failed, raised };
+}
+
+/* One dialog, one job, N pages. */
+async function printBills(list){
+  if(!list.length){ alert('There are no bills to print for this filter.'); return; }
+
+  if(gofrugalOn()){
+    const btns = document.querySelectorAll('#bill-actions button, [data-reprint]');
+    btns.forEach(b => b.disabled = true);
+    let res;
+    try{ res = await ensureGoFrugalBills(list); }
+    finally{ btns.forEach(b => b.disabled = false); }
+
+    if(res.failed.length){
+      const lines = res.failed.slice(0, 8).map(f => '· ' + (f.order.orderNo || f.order.id) + ' — ' + f.message).join('\n');
+      alert(res.failed.length + ' of ' + list.length + ' bill(s) could not be raised in GoFrugal and will NOT be printed:\n\n'
+        + lines + (res.failed.length > 8 ? '\n· …' : '')
+        + '\n\nThe rest will print. Fix these and print them again.');
+    }
+    if(!res.ok.length){ billToast('Nothing printed — no bill could be raised in GoFrugal.', null); return; }
+
+    // GoFrugal recomputes tax from its own masters. A disagreement with what
+    // the customer was actually charged is a catalogue/tax-master problem, and
+    // printing over it silently would put a number on paper that nobody paid.
+    const mismatched = res.ok.filter(o => o.gofrugal?.totalMismatch);
+    if(mismatched.length && !confirm(mismatched.length + ' bill(s) have a total in GoFrugal that differs from what the customer was charged:\n\n'
+        + mismatched.slice(0, 8).map(o => '· ' + (o.orderNo || o.id)).join('\n')
+        + '\n\nThis usually means a price or tax master is out of step. Print anyway?')) return;
+
+    list = res.ok;
+  }
+
+  const root = document.getElementById('print-root');
+  const pageStyle = document.getElementById('print-page-style');
+  root.className = 'fmt-' + billFormat.replace('mm', '');
+  // 'all' lays down the three labelled copies back-to-back per bill, the
+  // way a bill book does: recipient, transporter, supplier.
+  const copies = billCopy === 'all' ? BILL_COPIES.map(c => c.id) : [billCopy];
+  root.innerHTML = list.map(o => copies.map(c => billHtml(o, c)).join('')).join('');
+  pageStyle.textContent = PAGE_CSS[billFormat] || PAGE_CSS.a4;
+  window.print();
+  markPrinted(list);
+}
+
+/* Print-marks are what make "print only what's new" work the next morning.
+   The browser can't tell us whether the dialog ended in Print or Cancel, so
+   the marking is always undoable rather than silently wrong. */
+async function markPrinted(list){
+  const prev = list.map(o => ({ id: o.id, billPrintCount: o.billPrintCount || 0, billPrintedAt: o.billPrintedAt || null }));
+  try{
+    for(let i = 0; i < list.length; i += 400){
+      const batch = writeBatch(db);
+      list.slice(i, i + 400).forEach(o => batch.update(doc(db, 'orders', o.id), { billPrintedAt: serverTimestamp(), billPrintCount: increment(1) }));
+      await batch.commit();
+    }
+    logAdmin('bills_printed', `${list.length} bill(s) @ ${billFormat}/${billCopy}: ${list.slice(0, 20).map(o => o.orderNo || o.id).join(', ')}${list.length > 20 ? ' …' : ''}`);
+    billToast(`${list.length} bill${list.length === 1 ? '' : 's'} sent to the printer and marked printed.`, prev);
+  }catch(e){
+    billToast('Sent to the printer, but the print marks could not be saved: ' + e.message, null);
+  }
+}
+async function undoPrinted(prev){
+  try{
+    for(let i = 0; i < prev.length; i += 400){
+      const batch = writeBatch(db);
+      prev.slice(i, i + 400).forEach(p => batch.update(doc(db, 'orders', p.id), { billPrintCount: p.billPrintCount, billPrintedAt: p.billPrintedAt }));
+      await batch.commit();
+    }
+    logAdmin('bills_print_undo', `${prev.length} bill(s)`);
+    billToast('Print marks undone — those bills count as not printed again.', null);
+  }catch(e){ alert('Could not undo: ' + e.message); }
+}
+let billUndo = null;
+function billToast(msg, prev){
+  billUndo = prev;
+  const el = document.getElementById('bill-toast');
+  if(!el) return;
+  el.innerHTML = `<div class="bill-toast"><span>${esc(msg)}</span>${prev ? '<button id="btn-undo-print">Undo</button>' : ''}</div>`;
+  const u = document.getElementById('btn-undo-print');
+  if(u) u.onclick = () => { el.innerHTML = ''; if(billUndo) undoPrinted(billUndo); };
+}
+
+function billsBody(){
+  // Like the Orders tab: the search <input> sits outside the regions that get
+  // refreshed, so a live order update can never reset what's being typed.
+  return `
+    <div class="card" style="padding:12px;margin-bottom:12px;">
+      <input id="bill-search" placeholder="Find a bill to reprint — bill no., customer name, company or phone…" value="${esc(billSearch)}" style="margin-bottom:12px;">
+      <div class="period-row" id="bill-scope">
+        ${BILL_SCOPES.map(s => `<button class="period-btn ${billScope === s.id ? 'on' : ''}" data-scope="${s.id}">${s.label}</button>`).join('')}
+      </div>
+      <div class="bills-bar">
+        <label style="margin:0;font-weight:600;font-size:.85rem;display:flex;align-items:center;gap:7px;">Paper
+          <select id="bill-format" class="inline-select">
+            ${BILL_FORMATS.map(f => `<option value="${f.id}" ${billFormat === f.id ? 'selected' : ''}>${f.label}</option>`).join('')}
+          </select>
+        </label>
+        <label style="margin:0;font-weight:600;font-size:.85rem;display:flex;align-items:center;gap:7px;">Copy
+          <select id="bill-copy" class="inline-select">
+            ${BILL_COPIES.map(c => `<option value="${c.id}" ${billCopy === c.id ? 'selected' : ''}>${c.label}</option>`).join('')}
+            <option value="all" ${billCopy === 'all' ? 'selected' : ''}>All three copies</option>
+          </select>
+        </label>
+        <label style="margin:0;font-weight:500;font-size:.85rem;display:flex;align-items:center;gap:7px;">
+          <input type="checkbox" id="bill-unprinted" class="tick" ${billUnprintedOnly ? 'checked' : ''}> Show only bills not yet printed
+        </label>
+      </div>
+      <div id="bill-actions">${billActionsHtml()}</div>
+      <div id="bill-toast"></div>
+      ${billUsesPlaceholders() ? `<div class="bill-toast" style="background:var(--warn-tint);color:var(--warn);border-color:#e9d9b0;"><span>Bills are printing with <b>specimen</b> GSTIN / PAN / FSSAI / bank details. Enter the real ones in Settings before issuing a bill to a customer.</span></div>` : ''}
+      <div class="bill-hint">
+        One click builds every bill below into a single print job — one bill per page — and hands it to this computer's printer dialog, so it goes out on whatever printer this PC is set to use. Set <b>Paper</b> to match that printer.<br>
+        Typing in the search box looks through <b>all</b> loaded bills and ignores the date filter, so an old bill is always one search away. The panel keeps the latest 200 orders loaded.
+      </div>
+    </div>
+    <div id="bills-list">${billsListHtml()}</div>`;
+}
+function billActionsHtml(){
+  const list = filteredBills();
+  const fresh = list.filter(o => !(o.billPrintCount || 0));
+  const sel = list.filter(o => billSelected.has(o.id));
+  return `<div class="bills-bar" style="margin:2px 0 0;">
+    <button class="btn-primary btn-sm" id="btn-print-all" ${list.length ? '' : 'disabled'}>Print all ${list.length} bill${list.length === 1 ? '' : 's'}</button>
+    ${fresh.length && fresh.length !== list.length ? `<button class="btn-sm" id="btn-print-new" style="background:var(--bg);color:var(--ink);border:1px solid var(--line);">Print the ${fresh.length} not yet printed</button>` : ''}
+    ${sel.length ? `<button class="btn-sm" id="btn-print-sel" style="background:var(--bg);color:var(--ink);border:1px solid var(--line);">Print ${sel.length} selected</button>` : ''}
+  </div>`;
+}
+function billsListHtml(){
+  const list = filteredBills();
+  const allTicked = list.length > 0 && list.every(o => billSelected.has(o.id));
+  return `
+    <div class="muted" style="margin-bottom:10px;">${list.length} bill${list.length === 1 ? '' : 's'}${billSearch ? ' matching your search (all dates)' : ''}</div>
+    <div class="card" style="padding:0;overflow:auto;">
+      ${!list.length ? `<div class="empty">${billSearch ? 'No bill matches that search.' : 'No bills in this period yet.'}</div>` : `
+      <table class="stacked">
+        <thead><tr>
+          <th style="width:34px;"><input type="checkbox" class="tick" id="bill-all-tick" ${allTicked ? 'checked' : ''}></th>
+          <th>Bill</th><th>Customer</th><th>Total</th><th>GoFrugal</th><th>Printed</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${list.map(o => `
+            <tr data-bill="${esc(o.id)}">
+              <td data-l="Select"><input type="checkbox" class="tick" data-tick="${esc(o.id)}" ${billSelected.has(o.id) ? 'checked' : ''}></td>
+              <td data-l="Bill"><b>${esc(o.orderNo || o.id)}</b><br><span class="muted">${esc(fmtDate(o.placedAt))}</span></td>
+              <td data-l="Customer">${esc(o.company || o.name || '—')}<br><span class="muted">${esc(o.phone || '')}</span></td>
+              <td data-l="Total">${money(o.total)}</td>
+              <td data-l="GoFrugal">${o.gofrugal?.billNo
+                    ? `<span class="printed-tag">${esc(o.gofrugal.billNo)}</span>${o.gofrugal.totalMismatch ? '<br><span class="unprinted-tag" title="GoFrugal\'s total differs from what the customer was charged">⚠ total differs</span>' : ''}`
+                    : gofrugalOn() ? `<span class="unprinted-tag">Not billed</span>` : `<span class="muted">—</span>`}</td>
+              <td data-l="Printed">${(o.billPrintCount || 0)
+                    ? `<span class="printed-tag">✓ printed ${o.billPrintCount}×</span><br><span class="muted" style="font-size:.75rem;">${esc(fmtDate(o.billPrintedAt))}</span>`
+                    : `<span class="unprinted-tag">Not printed</span>`}</td>
+              <td class="cell-action" style="text-align:right;"><button class="btn-quiet btn-sm" data-reprint="${esc(o.id)}">${(o.billPrintCount || 0) ? 'Reprint' : 'Print'}</button></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`}
+    </div>`;
+}
+
+function wireBillsEvents(){
+  const s = document.getElementById('bill-search');
+  if(s) s.oninput = () => { billSearch = s.value; refreshBills(); };
+  const f = document.getElementById('bill-format');
+  if(f) f.onchange = () => { billFormat = f.value; try{ localStorage.setItem('mda_bill_format', billFormat); }catch(e){} };
+  const c = document.getElementById('bill-copy');
+  if(c) c.onchange = () => { billCopy = c.value; try{ localStorage.setItem('mda_bill_copy', billCopy); }catch(e){} };
+  const u = document.getElementById('bill-unprinted');
+  if(u) u.onchange = () => { billUnprintedOnly = u.checked; refreshBills(); };
+  document.querySelectorAll('#bill-scope [data-scope]').forEach(b => b.onclick = () => {
+    billScope = b.dataset.scope;
+    document.querySelectorAll('#bill-scope [data-scope]').forEach(x => x.classList.toggle('on', x.dataset.scope === billScope));
+    refreshBills();
+  });
+  wireBillActionsEvents();
+  wireBillsListEvents();
+}
+function wireBillActionsEvents(){
+  const all = document.getElementById('btn-print-all');
+  if(all) all.onclick = () => { printBills(filteredBills()); };
+  const fresh = document.getElementById('btn-print-new');
+  if(fresh) fresh.onclick = () => { printBills(filteredBills().filter(o => !(o.billPrintCount || 0))); };
+  const sel = document.getElementById('btn-print-sel');
+  if(sel) sel.onclick = () => { printBills(filteredBills().filter(o => billSelected.has(o.id))); };
+}
+function wireBillsListEvents(){
+  document.querySelectorAll('[data-reprint]').forEach(b => b.onclick = (e) => {
+    e.stopPropagation();
+    const o = orders.find(x => x.id === b.dataset.reprint);
+    if(o) printBills([o]);
+  });
+  document.querySelectorAll('[data-tick]').forEach(c => c.onclick = (e) => {
+    e.stopPropagation();
+    if(c.checked) billSelected.add(c.dataset.tick); else billSelected.delete(c.dataset.tick);
+    refreshBillActions();
+  });
+  const all = document.getElementById('bill-all-tick');
+  if(all) all.onclick = (e) => {
+    e.stopPropagation();
+    const list = filteredBills();
+    list.forEach(o => all.checked ? billSelected.add(o.id) : billSelected.delete(o.id));
+    refreshBills();
+  };
+  document.querySelectorAll('tr[data-bill]').forEach(tr => tr.onclick = () => openBillPreview(tr.dataset.bill));
+}
+function refreshBills(){ refreshBillActions(); refreshBillsList(); }
+function refreshBillActions(){
+  const el = document.getElementById('bill-actions');
+  if(el){ el.innerHTML = billActionsHtml(); wireBillActionsEvents(); }
+}
+function refreshBillsList(){
+  const el = document.getElementById('bills-list');
+  if(el){ el.innerHTML = billsListHtml(); wireBillsListEvents(); }
+}
+
+function openBillPreview(id){
+  const o = orders.find(x => x.id === id);
+  if(!o) return;
+  openOrderId = null; // not an Orders-tab modal — don't let the live listener re-open it
+  document.getElementById('modal-content').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">
+      <div><b style="font-size:1.05rem;">Bill preview</b><div class="muted">Exactly what will print</div></div>
+      <button class="close-x" id="btn-close">×</button>
+    </div>
+    <div class="bill-preview fmt-${esc(billFormat.replace('mm', ''))}">${billHtml(o)}</div>
+    <button class="btn-primary btn-sm" id="btn-print-one" style="width:100%;margin-top:14px;">${(o.billPrintCount || 0) ? 'Reprint' : 'Print'} this bill</button>`;
+  document.getElementById('btn-close').onclick = closeModal;
+  document.getElementById('btn-print-one').onclick = () => { closeModal(); printBills([o]); };
+  document.getElementById('modal-bg').classList.add('on');
 }
 
 /* ── Products ─────────────────────────────────────────── */
@@ -737,6 +1709,10 @@ function startMaintenanceListener(){
 let cfg = {};
 function settingsBody(){
   return `
+    ${billUsesPlaceholders() ? `<div class="card" style="border-color:#e9d9b0;background:var(--warn-tint);color:var(--warn);">
+      <b>Bills are using specimen registration numbers.</b>
+      <div style="font-size:.86rem;margin-top:5px;line-height:1.5;">GSTIN, PAN, FSSAI and the bank details below are placeholders so the bill format can be checked end-to-end. Every bill printed meanwhile carries a "not valid for tax purposes" line. Fill these in and the warning disappears on its own — no code change needed.</div>
+    </div>` : ''}
     <div class="card">
       <div class="grid2">
         <div><label>Business name</label><input id="s-businessName" value="${esc(cfg.businessName||'')}"></div>
@@ -744,6 +1720,30 @@ function settingsBody(){
         <div><label>WhatsApp number</label><input id="s-whatsapp" value="${esc(cfg.whatsapp||'')}"></div>
         <div><label>Email</label><input id="s-email" value="${esc(cfg.email||'')}"></div>
       </div>
+      <div class="grid2">
+        <div><label>Your GSTIN</label><input id="s-gstin" value="${esc(cfg.gstin||'')}" placeholder="${esc(BILL_PLACEHOLDERS.gstin)}"></div>
+        <div><label>PAN</label><input id="s-pan" value="${esc(cfg.pan||'')}" placeholder="${esc(BILL_PLACEHOLDERS.pan)}"></div>
+        <div><label>FSSAI licence no.</label><input id="s-fssai" value="${esc(cfg.fssai||'')}" placeholder="${esc(BILL_PLACEHOLDERS.fssai)}"></div>
+        <div><label>Default HSN / SAC code</label><input id="s-hsn" value="${esc(cfg.hsn||'')}" placeholder="${esc(BILL_PLACEHOLDERS.hsn)}"></div>
+        <div><label>MSME / Udyam no.</label><input id="s-msme" value="${esc(cfg.msme||'')}" placeholder="${esc(BILL_PLACEHOLDERS.msme)}"></div>
+      </div>
+      <div class="grid2">
+        <div><label>Bank name &amp; branch</label><input id="s-bankName" value="${esc(cfg.bankName||'')}" placeholder="${esc(BILL_PLACEHOLDERS.bankName)}"></div>
+        <div><label>Account number</label><input id="s-bankAccount" value="${esc(cfg.bankAccount||'')}" placeholder="${esc(BILL_PLACEHOLDERS.bankAccount)}"></div>
+        <div><label>IFSC</label><input id="s-bankIfsc" value="${esc(cfg.bankIfsc||'')}" placeholder="${esc(BILL_PLACEHOLDERS.bankIfsc)}"></div>
+        <div><label>UPI ID</label><input id="s-upi" value="${esc(cfg.upi||'')}" placeholder="${esc(BILL_PLACEHOLDERS.upi)}"></div>
+        <div><label>Jurisdiction (city)</label><input id="s-jurisdiction" value="${esc(cfg.jurisdiction||'')}" placeholder="${esc(BILL_PLACEHOLDERS.jurisdiction)}"></div>
+      </div>
+      <div class="grid2">
+        <div><label>Backend URL (Cloud Run)</label><input id="s-backendUrl" value="${esc(cfg.backendUrl||'')}" placeholder="https://api-xxxxx-el.a.run.app"></div>
+        <div><label style="display:flex;align-items:center;gap:8px;margin-top:26px;"><input type="checkbox" id="s-gofrugalEnabled" class="tick" ${cfg.gofrugalEnabled?'checked':''}> Raise bills in GoFrugal before printing</label></div>
+      </div>
+      <div class="muted" style="font-size:.82rem;margin:-4px 0 14px;line-height:1.5;">With this on, Print pushes the sale to GoFrugal first and prints <b>GoFrugal's</b> bill number and IRN. Needs the backend deployed and GoFrugal API access enabled on your licence — leave it off until both are true.</div>
+      <div class="muted" style="font-size:.82rem;margin:14px 0 10px;line-height:1.5;">The four texts below print on every bill. They ship with standard wording — <b>have your CA or legal advisor approve the final text</b> before issuing real invoices.</div>
+      <label>Declaration — price &amp; particulars</label><textarea id="s-declaration1" rows="2" placeholder="${esc(BILL_PLACEHOLDERS.declaration1)}">${esc(cfg.declaration1||'')}</textarea>
+      <label>Declaration — condition of goods</label><textarea id="s-declaration2" rows="3" placeholder="${esc(BILL_PLACEHOLDERS.declaration2)}">${esc(cfg.declaration2||'')}</textarea>
+      <label>GST number verification note</label><textarea id="s-gstinNote" rows="3" placeholder="${esc(BILL_PLACEHOLDERS.gstinNote)}">${esc(cfg.gstinNote||'')}</textarea>
+      <label>Terms printed on every bill</label><textarea id="s-terms" rows="3" placeholder="${esc(BILL_PLACEHOLDERS.terms)}">${esc(cfg.terms||'')}</textarea>
       <label>Address</label><textarea id="s-address" rows="2">${esc(cfg.address||'')}</textarea>
       <label>Business hours</label><input id="s-businessHours" value="${esc(cfg.businessHours||'')}">
       <div class="grid2">
@@ -767,6 +1767,17 @@ async function saveSettings(){
   const patch = {
     businessName: val('s-businessName'), supportPhone: val('s-supportPhone'), whatsapp: val('s-whatsapp'),
     email: val('s-email'), address: val('s-address'), businessHours: val('s-businessHours'),
+    // Blank is meaningful: it means "fall back to the specimen value", so
+    // these are stored trimmed rather than defaulted here.
+    gstin: val('s-gstin').trim().toUpperCase(), pan: val('s-pan').trim().toUpperCase(),
+    fssai: val('s-fssai').trim(), hsn: val('s-hsn').trim(), msme: val('s-msme').trim(),
+    declaration1: val('s-declaration1').trim(), declaration2: val('s-declaration2').trim(),
+    gstinNote: val('s-gstinNote').trim(),
+    backendUrl: val('s-backendUrl').trim(),
+    gofrugalEnabled: document.getElementById('s-gofrugalEnabled').checked,
+    bankName: val('s-bankName').trim(), bankAccount: val('s-bankAccount').trim(),
+    bankIfsc: val('s-bankIfsc').trim().toUpperCase(), upi: val('s-upi').trim(),
+    jurisdiction: val('s-jurisdiction').trim(), terms: val('s-terms').trim(),
     minOrderValue: Number(val('s-minOrderValue'))||0, deliveryFee: Number(val('s-deliveryFee'))||0, platformFee: Number(val('s-platformFee'))||0,
     gstRate: Number(val('s-gstRate'))||0, orderCutoff: val('s-orderCutoff'), announcement: val('s-announcement'),
   };

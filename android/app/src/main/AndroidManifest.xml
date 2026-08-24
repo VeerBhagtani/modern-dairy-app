@@ -48,4 +48,18 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Rider live tracking. The delivery rider cannot keep the app open and
+         the screen on while riding, so location has to keep flowing with the
+         phone pocketed. Android only permits that from a FOREGROUND SERVICE,
+         which is required by law to show a persistent notification — the
+         rider always sees that tracking is running and can stop it.
+         ACCESS_BACKGROUND_LOCATION is requested separately by the OS and the
+         user must pick "Allow all the time"; anything less and Android cuts
+         updates off a few seconds after the screen locks.
+         Only used while a delivery is in progress — see riderStartTracking(). -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 </manifest>
