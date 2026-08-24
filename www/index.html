@@ -26,7 +26,7 @@
   script-src 'self' 'unsafe-inline' https://www.gstatic.com https://checkout.razorpay.com https://*.razorpay.com;
   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
   font-src 'self' data: https://fonts.gstatic.com;
-  img-src 'self' data: blob: https://res.cloudinary.com https://*.googleapis.com https://*.razorpay.com;
+  img-src 'self' data: blob: https://res.cloudinary.com https://*.googleapis.com https://*.razorpay.com https://*.tile.openstreetmap.org https://*.basemaps.cartocdn.com;
   connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://cpaas.messagecentral.com https://api.sandbox.co.in https://*.razorpay.com https://fonts.googleapis.com https://fonts.gstatic.com https://api.bigdatacloud.net https://nominatim.openstreetmap.org;
   frame-src https://*.razorpay.com https://modern-dairy-pune.firebaseapp.com;
   media-src 'self';
@@ -36,6 +36,10 @@
   frame-ancestors 'none'
 ">
 <title>Modern Dairy — Business Ordering</title>
+<!-- Leaflet, bundled rather than CDN-loaded: script-src is 'self' only.
+     Tile images come from OSM/Carto, which img-src above now allows. -->
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<script src="vendor/leaflet/leaflet.js" defer></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:opsz,wght@8..144,400;8..144,500;8..144,600;8..144,700;8..144,800&display=swap" rel="stylesheet">
@@ -171,6 +175,25 @@ svg{display:block;flex-shrink:0;}
 .search input{flex:1;border:none;background:none;font-size:var(--t-base);min-width:0;}
 .search input::placeholder{color:var(--ink-3);}
 .search:focus-within{border-color:var(--brand-line);background:var(--surface);}
+
+/* ── Live tracking map ───────────────────────────────────── */
+.map-wrap{position:relative;height:230px;border-radius:var(--r-md);overflow:hidden;border:1px solid var(--line);background:var(--surface-2);}
+.map-wrap .leaflet-container{height:100%;width:100%;background:var(--surface-2);}
+/* Leaflet writes inline z-index values that would otherwise sit above the
+   app's own sheets and toasts. */
+.map-wrap .leaflet-pane,.map-wrap .leaflet-control{z-index:1 !important;}
+.map-stale{position:absolute;left:8px;right:8px;bottom:8px;z-index:2;background:var(--warn-tint);color:var(--warn);
+  border:1px solid #e9d9b0;border-radius:8px;padding:7px 10px;font-size:.78rem;font-weight:600;line-height:1.4;}
+.map-empty{height:100%;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;
+  color:var(--ink-3);font-size:.85rem;line-height:1.5;}
+.rider-dot{background:var(--brand);border:2.5px solid #fff;border-radius:50%;width:18px;height:18px;
+  box-shadow:0 1px 6px rgba(0,0,0,.4);}
+.dest-dot{background:var(--bad);border:2.5px solid #fff;border-radius:50%;width:14px;height:14px;
+  box-shadow:0 1px 6px rgba(0,0,0,.4);}
+/* ── Rider mode ──────────────────────────────────────────── */
+.rider-live{display:inline-flex;align-items:center;gap:6px;font-size:.8rem;font-weight:700;color:var(--fresh);}
+.rider-live i{width:8px;height:8px;border-radius:50%;background:var(--fresh);display:block;animation:pulse 1.6s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
 
 /* ── BUTTONS · flat, functional, no lift/glow gimmicks ───── */
 .btn{
@@ -520,8 +543,8 @@ if (firebaseConfig.apiKey === "PASTE_API_KEY") {
    itself keeps reading from, unchanged). Firestore rules only allow
    create here — never read/update/delete — see backend/firestore.rules. ── */
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFirestore, collection, addDoc, doc, updateDoc, setDoc, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { getAuth, signInAnonymously, signInWithEmailAndPassword, signOut as fbSignOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getFirestore, collection, addDoc, doc, getDoc, getDocs, updateDoc, setDoc, onSnapshot, serverTimestamp, query, where, limit } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 const mirrorConfig = {
   apiKey: "AIzaSyD-3RNHrI9ZPmdTioLiuCi2gjwdNXZH8HI",
@@ -616,6 +639,54 @@ window.listenToOrderStatus = function(firestoreId, onChange) {
     console.warn('Could not start order status listener:', e);
     return () => {};
   }
+};
+
+// Live TRACKING listener — the whole order doc, not just its status, so the
+// rider's coordinates reach the tracking map. Kept separate from
+// listenToOrderStatus above so the existing status flow is untouched.
+window.listenToOrderDoc = function(firestoreId, onChange) {
+  try {
+    return onSnapshot(doc(mirrorDb, 'orders', firestoreId),
+      snap => onChange(snap.exists() ? snap.data() : null),
+      err => { console.warn('Order listener failed:', err); onChange(null); });
+  } catch (e) {
+    console.warn('Could not start order listener:', e);
+    return () => {};
+  }
+};
+
+/* ── Rider mode ───────────────────────────────────────────────────────────
+   A rider signs in with a real Firebase account whose uid is allowlisted in
+   riders/{uid} (admin-created — see backend/firestore.rules). The rules let
+   that uid write ONLY riderLat/riderLng/riderAt/riderAccuracy/riderUid, and
+   ONLY while the order is out_for_delivery. So even a leaked rider login
+   cannot alter an order, and cannot track anything once it is delivered. */
+window.riderSignIn = async function(email, password) {
+  const cred = await signInWithEmailAndPassword(mirrorAuth, email, password);
+  return cred.user.uid;
+};
+window.riderSignOut = async function() { await fbSignOut(mirrorAuth); };
+window.riderUid = () => mirrorAuth.currentUser?.uid || null;
+// Confirms this account is actually an enrolled rider. riders/{uid} is
+// readable by its own uid, so a non-rider just gets permission-denied.
+window.riderIsEnrolled = async function(uid) {
+  try { return (await getDoc(doc(mirrorDb, 'riders', uid))).exists(); }
+  catch (e) { return false; }
+};
+// Orders currently out for delivery. Riders can read orders (they need the
+// address); the rules stop them writing anything but location.
+window.riderLoadDeliveries = async function() {
+  const snap = await getDocs(query(collection(mirrorDb, 'orders'),
+                                   where('status', '==', 'out_for_delivery'), limit(50)));
+  return snap.docs.map(d => ({ firestoreId: d.id, ...d.data() }));
+};
+window.riderPushLocation = async function(firestoreId, lat, lng, accuracy) {
+  const uid = mirrorAuth.currentUser?.uid;
+  if (!uid) throw new Error('Not signed in as a rider.');
+  await updateDoc(doc(mirrorDb, 'orders', firestoreId), {
+    riderLat: lat, riderLng: lng, riderAt: serverTimestamp(),
+    riderAccuracy: accuracy ?? null, riderUid: uid,
+  });
 };
 
 // Self-cancel, customer-initiated only — enforced server-side by
@@ -1250,7 +1321,6 @@ const THROTTLE_RULES = {
   otpVerify: { max: 5,  windowMs: 15*60*1000, lockMs: 15*60*1000 },
   otpSend:   { max: 5,  windowMs: 15*60*1000, lockMs: 15*60*1000 },
   gstLookup: { max: 10, windowMs: 60*60*1000, lockMs: 30*60*1000 },
-  adminLogin:{ max: 5,  windowMs: 15*60*1000, lockMs: 30*60*1000 },
   pwReset:   { max: 5,  windowMs: 15*60*1000, lockMs: 15*60*1000 },
   bankVerify:{ max: 8,  windowMs: 60*60*1000, lockMs: 30*60*1000 },
 };
@@ -1299,7 +1369,6 @@ const S = {
   cart: JSON.parse(localStorage.getItem('mda_cart')||'[]'),
   wallet: { balance:0, txns:[] },
   orders: [],
-  broadcasts: [],
   tab: 'catalogue',
   cat: 'all',
   query: '',
@@ -1417,8 +1486,8 @@ function MOCK(method, path, b){
     let txn=null;
     if(b.payment==='credit') txn=ledgerPost('ORDER_DEBIT', b.total, 'Order payment', no);
     // Auto-confirm when every line item is fully in stock. If any item is on
-    // low stock it needs a human to check before it's confirmed — send it to
-    // the super admin's Pending confirmation queue instead.
+    // low stock it needs a human to check before it is confirmed, so it is left
+    // as pending_confirmation for the admin website to action.
     const anyLow = (b.items||[]).some(i=>CATALOGUE[i.pk]?.variants.find(v=>v.id===i.vid)?.stock==='low');
     const status = anyLow ? 'pending_confirmation' : 'confirmed';
     const o={orderNo:no,...b,status,placedAt:new Date().toISOString(),txnId:txn?.id||null,
@@ -1560,6 +1629,11 @@ function paint(){
   APP().innerHTML = r();
   if(S.screen==='catalogue'||S.screen==='reorder'){ renderOrderBar(); renderTabBadge(); }
   if(S.screen==='cart') renderTabBadge();
+  // The map's container is destroyed by the innerHTML above, so the Leaflet
+  // instance has to be rebuilt (and torn down when leaving the screen).
+  if(typeof renderTrackMap === 'function'){
+    if(S.screen==='order') renderTrackMap(); else destroyTrackMap();
+  }
 }
 
 /* Shared chrome ─────────────────────────────────────────── */
@@ -1623,16 +1697,18 @@ function scrLogin(){
 function setLoginMode(m){ LOGIN.mode=m; LOGIN.step='entry'; paint(); }
 function setAuthMode(m){ LOGIN.authMode=m; LOGIN.step='entry'; paint(); }
 
-// No visible "admin" entry point anywhere in the UI — tapping the logo 5
-// times within 2 seconds opens the super admin sign-in instead. Deliberately
-// undiscoverable: an attacker scanning the app has no button, no label, no
-// hint that an admin path exists at all.
+
+// Five taps on the logo within 2 seconds opens RIDER mode. Deliberately
+// undiscoverable — a customer scanning the app sees no button, no label and
+// no hint that a rider path exists. It is not a security boundary: the real
+// gate is the Firebase login on the next screen plus the riders/{uid}
+// allowlist in backend/firestore.rules, both enforced server-side.
 let LOGO_TAPS = { count: 0, at: 0 };
 function tapLogo(){
   const now = Date.now();
   LOGO_TAPS.count = (now - LOGO_TAPS.at < 2000) ? LOGO_TAPS.count + 1 : 1;
   LOGO_TAPS.at = now;
-  if(LOGO_TAPS.count >= 5){ LOGO_TAPS.count = 0; go('adminLogin'); }
+  if(LOGO_TAPS.count >= 5){ LOGO_TAPS.count = 0; go('riderLogin'); }
 }
 
 function b2bForm(){
@@ -2089,7 +2165,7 @@ async function doVerifyOTP(){
   localStorage.setItem('mda_user',JSON.stringify(S.user));
   localStorage.setItem('mda_token',S.token);
   localStorage.setItem('mda_refresh',S.refresh);
-  await Promise.all([loadWallet(), loadOrders(), loadBroadcasts()]);
+  await Promise.all([loadWallet(), loadOrders()]);
   S.tab='home'; NAV.length=0; go('home',{replace:true});
   initPushNotifications();
 }
@@ -2165,9 +2241,6 @@ function scrHome(){
 
       ${APPCFG.announcement?`<div style="padding:14px 16px 0;">
         <div class="banner info">${icon('info',17)}<div>${esc(APPCFG.announcement)}</div></div></div>`:''}
-      ${(()=>{ const b=activeBroadcast(); return b?`<div style="padding:14px 16px 0;">
-        <div class="banner info" style="align-items:flex-start;">${icon('info',17)}<div class="grow">${esc(b.message)}</div>
-          <button class="iconbtn" style="margin:-8px -6px -8px 4px;flex-shrink:0;" onclick="dismissBroadcast('${esc(b.id)}')" aria-label="Dismiss">${icon('close',16)}</button></div></div>`:''; })()}
 
       <!-- Live order -->
       ${live?`<div style="padding:16px 16px 0;">
@@ -2821,16 +2894,31 @@ const CANCELLABLE_STATUSES = ['placed','confirmed','pending_confirmation','packe
 function stopOrderStatusListener(){ if(ORDER_STATUS_UNSUB){ ORDER_STATUS_UNSUB(); ORDER_STATUS_UNSUB=null; } }
 function startOrderStatusListener(o){
   stopOrderStatusListener();
-  if(!o?.firestoreId || !window.listenToOrderStatus) return;
-  ORDER_STATUS_UNSUB = window.listenToOrderStatus(o.firestoreId, (status)=>{
-    if(!status || status===S.order?.status) return;
-    S.order = {...S.order, status};
-    const list = DB.orders;
-    const idx = list.findIndex(x=>x.orderNo===o.orderNo);
-    if(idx!==-1){ list[idx] = {...list[idx], status}; DB.orders = list; }
-    const oi = S.orders.findIndex(x=>x.orderNo===o.orderNo);
-    if(oi!==-1) S.orders[oi] = {...S.orders[oi], status};
-    if(S.screen==='order') paint();
+  if(!o?.firestoreId || !window.listenToOrderDoc) return;
+  // The whole document, not just status — the rider's coordinates ride along
+  // on the same snapshot, so the map updates with no extra listener or poll.
+  ORDER_STATUS_UNSUB = window.listenToOrderDoc(o.firestoreId, (data)=>{
+    if(!data) return;
+    const status = data.status;
+    const moved = data.riderLat !== S.order?.riderLat || data.riderLng !== S.order?.riderLng;
+    const changed = status && status !== S.order?.status;
+    if(!changed && !moved) return;
+    S.order = {...S.order, status: status || S.order?.status,
+               riderLat: data.riderLat ?? null, riderLng: data.riderLng ?? null,
+               riderAt: data.riderAt ?? null};
+    if(changed){
+      const list = DB.orders;
+      const idx = list.findIndex(x=>x.orderNo===o.orderNo);
+      if(idx!==-1){ list[idx] = {...list[idx], status}; DB.orders = list; }
+      const oi = S.orders.findIndex(x=>x.orderNo===o.orderNo);
+      if(oi!==-1) S.orders[oi] = {...S.orders[oi], status};
+    }
+    if(S.screen==='order'){
+      // A status change alters the markup, so repaint; a position change only
+      // moves the marker, and repainting would rebuild (and re-centre) the map.
+      if(changed) paint();
+      renderTrackMap();
+    }
   });
 }
 async function openOrder(no){
@@ -2897,6 +2985,12 @@ function scrOrder(){
         <div class="row between mb-16"><span class="pill ${st.c}">${st.l}</span>
           <span class="t-sm muted">${esc(o.deliverySlot||'')}</span></div>
         ${o.status==='denied'?`<div class="banner alert mb-16">${icon('alert',17)}<div><b>This order was denied</b><br>${esc(o.deniedReason||'Please call us for details.')}</div></div>`:''}
+        ${o.status==='out_for_delivery' ? `<div class="mb-16">
+          <div class="row between mb-8"><span class="eyebrow">Live tracking</span>
+            ${o.riderLat ? '<span class="rider-live"><i></i>Rider on the way</span>' : ''}</div>
+          <div class="map-wrap" id="track-map">${o.riderLat ? '' :
+            '<div class="map-empty">Waiting for the rider to start their trip.<br>The map appears as soon as they do.</div>'}</div>
+        </div>` : ''}
         ${o.address?`<div class="banner info mb-16">${icon('pin',17)}<div><b>Delivering to</b><br>${esc(o.address)}</div></div>`:''}
         ${o.status!=='denied' && o.status!=='cancelled' ? steps.map((s,i)=>`<div class="row gap-12" style="align-items:flex-start;">
           <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">
@@ -2935,6 +3029,76 @@ function scrOrder(){
     </div>
   </div>`;
 }
+/* ── Live tracking map ────────────────────────────────────────────────────
+   Leaflet + OpenStreetMap tiles — no API key, no billing account, no usage
+   contract to sign. The map only exists while an order is out for delivery.
+
+   Coordinates arrive on the order document itself, written by the rider and
+   pushed here by the same Firestore listener that already drives status, so
+   there is no polling: the dot moves when the rider moves. */
+let TRACK_MAP = null, TRACK_RIDER = null, TRACK_DEST = null, TRACK_FITTED = false;
+// Older than this and we say so rather than showing a stale dot as if live.
+const RIDER_STALE_MS = 90 * 1000;
+
+function destroyTrackMap(){
+  if(TRACK_MAP){ try{ TRACK_MAP.remove(); }catch(e){} }
+  TRACK_MAP = null; TRACK_RIDER = null; TRACK_DEST = null; TRACK_FITTED = false;
+}
+function riderAtMs(o){
+  const t = o?.riderAt;
+  if(!t) return 0;
+  if(typeof t?.toMillis === 'function') return t.toMillis();
+  if(typeof t?.seconds === 'number') return t.seconds * 1000;
+  const d = new Date(t);
+  return isNaN(d) ? 0 : d.getTime();
+}
+function renderTrackMap(){
+  const o = S.order;
+  const el = document.getElementById('track-map');
+  // Screen changed, or the delivery ended — tear the map down so it can't
+  // hold a stale position or leak a Leaflet instance.
+  if(!el || !o || o.status !== 'out_for_delivery'){ destroyTrackMap(); return; }
+  if(!o.riderLat || !window.L){ return; }
+
+  if(!TRACK_MAP){
+    el.innerHTML = '';
+    TRACK_MAP = L.map(el, { zoomControl:false, attributionControl:true, dragging:true, tap:true });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '© OpenStreetMap',
+    }).addTo(TRACK_MAP);
+    TRACK_MAP.setView([o.riderLat, o.riderLng], 15);
+  }
+  const riderIcon = L.divIcon({ className:'', html:'<div class="rider-dot"></div>', iconSize:[18,18], iconAnchor:[9,9] });
+  if(!TRACK_RIDER) TRACK_RIDER = L.marker([o.riderLat, o.riderLng], { icon:riderIcon }).addTo(TRACK_MAP);
+  else TRACK_RIDER.setLatLng([o.riderLat, o.riderLng]);
+
+  // Destination pin, when the customer's saved coordinates are known. The
+  // order document itself carries no coordinates (the Firestore create rule
+  // pins the allowed field set), so this comes from the local profile.
+  const dLat = S.user?.lat, dLng = S.user?.lng;
+  if(dLat && dLng && !TRACK_DEST){
+    TRACK_DEST = L.marker([dLat, dLng], {
+      icon: L.divIcon({ className:'', html:'<div class="dest-dot"></div>', iconSize:[14,14], iconAnchor:[7,7] }),
+    }).addTo(TRACK_MAP);
+  }
+  // Fit both points once, then leave the view alone so the map doesn't fight
+  // a customer who has panned or zoomed it themselves.
+  if(!TRACK_FITTED && TRACK_DEST){
+    TRACK_MAP.fitBounds(L.latLngBounds([[o.riderLat,o.riderLng],[dLat,dLng]]).pad(0.35));
+    TRACK_FITTED = true;
+  }
+  // Honesty about staleness: a rider who loses signal or force-quits leaves a
+  // last-known dot behind, and showing that as "live" is worse than saying so.
+  const age = Date.now() - riderAtMs(o);
+  const old = el.querySelector('.map-stale');
+  if(age > RIDER_STALE_MS){
+    const mins = Math.round(age / 60000);
+    const msg = 'Last update ' + (mins < 60 ? mins + ' min ago' : 'over an hour ago') + ' — the rider may have lost signal.';
+    if(old) old.textContent = msg;
+    else { const d = document.createElement('div'); d.className = 'map-stale'; d.textContent = msg; el.appendChild(d); }
+  } else if(old) old.remove();
+}
+
 function reorder(no){
   const o=S.orders.find(x=>x.orderNo===no)||S.order;
   if(!o) return;
@@ -3132,7 +3296,7 @@ function scrAccount(){
 
       <div class="section">
         <button class="btn btn-danger" onclick="confirmSignOut()">${icon('logout',18)} Sign out</button>
-        <div class="t-xs muted-2 center mt-16" onclick="tapLogo()" style="-webkit-tap-highlight-color:transparent;">Modern Dairy · v1.0.0<br>${CONFIG.DEMO?'Demo mode — not connected to server':'Connected'}</div>
+        <div class="t-xs muted-2 center mt-16" style="-webkit-tap-highlight-color:transparent;">Modern Dairy · v1.0.0<br>${CONFIG.DEMO?'Demo mode — not connected to server':'Connected'}</div>
       </div>
       <div style="height:calc(16px + var(--safe-b));"></div>
     </div>
@@ -3147,490 +3311,25 @@ function arow(ic,title,sub,onclick){
     ${icon('right',17)}</div>`;
 }
 
-/* Admin panel.
-   With a live backend (CONFIG.API_BASE set), opens the real server-hosted panel at /admin.
-   Without one (current DEMO mode), falls back to a local in-app admin panel that edits
-   APPCFG/CATALOGUE and persists overrides to localStorage on this device only — a working
-   preview, not a substitute for the real multi-device backend admin panel. */
-async function openAdmin(){
-  const base = CONFIG.API_BASE ? CONFIG.API_BASE.replace(/\/api\/?$/, '') : '';
-  if(base){ window.open(base + '/admin/', '_blank'); return; }
-  if(ADMIN.authed) await loadOrders();
-  go(ADMIN.authed ? 'admin' : 'adminLogin');
-}
+/* The in-app admin panel has been REMOVED.
 
-/* ═══════════════════════════════════════════════════════════
-   22. LOCAL ADMIN PANEL (demo mode — no backend yet)
-   Edits are stored in localStorage under mda_admin_overrides and merged over
-   APPCFG/CATALOGUE on every boot, so they persist across app restarts on this
-   device. Once a real backend exists, openAdmin() above should be pointed at
-   CONFIG.API_BASE and this local panel becomes a fallback only.
-   ═══════════════════════════════════════════════════════════ */
-// Super admin: a single named account (not a shared password gate) that owns
-// this device's admin panel, including confirming low-stock orders. Local-only
-// until a real backend/Firebase Auth exists.
-/* SECURITY — HARDCODED CREDENTIAL, NOW REMOVED.
-   This used to be a `SUPER_ADMIN_DEFAULT` object holding a literal username
-   and password (both now revoked, and deliberately not repeated here so this
-   comment doesn't republish them) — a working admin credential compiled into
-   every copy of a public APK and committed to a public GitHub repo. Anyone
-   who read the source (or ran `strings` on the APK) could open the panel on
-   any device: five taps on the logo, type the two known values.
+   It was a device-local demo panel, opened by five taps on the logo, that
+   edited APPCFG/CATALOGUE into localStorage on that one device. It never
+   wrote to Firestore — but it did let anyone holding a phone override the
+   prices SHOWN on it and then place an order at those prices, which is a
+   large part of why backend/scripts/verify-order-prices.js exists. Removing
+   the panel removes that surface completely.
 
-   There is no default any more. The panel has no credential until the
-   operator sets one on this device (first-run setup below), and only a
-   salted PBKDF2 hash is stored — never the password. */
-const SUPER_ADMIN_DEFAULT_USERNAME = 'moderndairy';
-function getSuperAdmin(){
-  try{ return {username: SUPER_ADMIN_DEFAULT_USERNAME, ...JSON.parse(localStorage.getItem('mda_super_admin')||'{}')}; }
-  catch(e){ return {username: SUPER_ADMIN_DEFAULT_USERNAME}; }
-}
-function setSuperAdmin(patch){
-  const next = {...getSuperAdmin(), ...patch};
-  delete next.password;                       // never persist plaintext
-  localStorage.setItem('mda_super_admin', JSON.stringify(next));
-}
-// True only once a credential has actually been created on this device.
-function superAdminConfigured(){
-  const sa = getSuperAdmin();
-  return !!(sa.pw && sa.pw.hash) || typeof sa.password === 'string';
-}
-async function setSuperAdminPassword(username, plaintext){
-  setSuperAdmin({ username, pw: await hashPassword(plaintext) });
-}
-async function verifySuperAdmin(username, password){
-  const sa = getSuperAdmin();
-  // Compare the username too, but never branch out early on it — a wrong
-  // username and a wrong password must cost the same and say the same.
-  const userOk = timingSafeEqual(String(username||'').toLowerCase(), String(sa.username||'').toLowerCase());
-  const pwOk = await verifyPassword(sa, password);
-  if(userOk && pwOk && !sa.pw && typeof sa.password === 'string'){
-    try{ await setSuperAdminPassword(sa.username, password); }catch(e){ /* upgrade is best-effort */ }
-  }
-  return userOk && pwOk;
-}
-const ADMIN = { authed: sessionStorage.getItem('mda_admin_authed')==='1' };
+   The real admin system is the Firebase-authenticated web panel at /admin/,
+   which is unaffected by this.
 
+   loadAdminOverrides() survives alone because openRazorpayCheckout() reads a
+   Razorpay key out of that store. Nothing writes it any more, so it now
+   always returns {} and the wallet takes its simulated-payment path — the
+   same behaviour as an unconfigured key today. */
 function loadAdminOverrides(){
   try{ return JSON.parse(localStorage.getItem('mda_admin_overrides')||'{}'); }
   catch(e){ return {}; }
-}
-function saveAdminOverrides(patch){
-  const cur = loadAdminOverrides();
-  const next = {...cur, ...patch};
-  localStorage.setItem('mda_admin_overrides', JSON.stringify(next));
-  return next;
-}
-function applyAdminOverrides(){
-  const o = loadAdminOverrides();
-  if(o.appcfg) APPCFG = {...APPCFG, ...o.appcfg};
-  if(o.products){
-    Object.keys(o.products).forEach(pid=>{
-      if(!CATALOGUE[pid]) return;
-      const patch = o.products[pid];
-      if(patch.variants){
-        CATALOGUE[pid].variants = CATALOGUE[pid].variants.map(v=>
-          patch.variants[v.id] ? {...v, ...patch.variants[v.id]} : v);
-      }
-    });
-  }
-}
-
-function scrAdminLogin(){
-  return `<div class="screen on" style="background:var(--brand);">
-    <div style="padding:calc(var(--safe-t) + 8px) 20px 0;">
-      <button class="iconbtn" style="color:#fff;" onclick="back()" aria-label="Back">${icon('left',22)}</button>
-    </div>
-    <div style="padding:8px 24px 32px;">
-      <div style="width:52px;height:52px;border-radius:var(--r-sm);background:rgba(255,255,255,.12);
-                  display:flex;align-items:center;justify-content:center;color:#fff;margin-bottom:20px;">
-        ${icon('shield',26)}</div>
-      <div class="eyebrow" style="color:rgba(255,255,255,.6);letter-spacing:.08em;margin-bottom:6px;">SUPER ADMIN</div>
-      <div class="t-2xl" style="color:#fff;">${esc(APPCFG.businessName)} control panel</div>
-    </div>
-    <div class="scroll" style="background:var(--surface);border-radius:20px 20px 0 0;padding-top:4px;">
-      <div class="section">
-        <div class="banner warn mb-16">${icon('alert',17)}
-          <div>Local demo mode — no backend is connected yet. This panel edits app content on
-          this device only. It is not the secure production admin system.</div></div>
-        ${superAdminConfigured() ? `
-        <div class="field"><label class="label">Username</label>
-          <input id="f-admin-user" placeholder="Username" autocomplete="off"></div>
-        <div class="field"><label class="label">Password</label>
-          <input id="f-admin-pw" type="password" placeholder="Enter password" autocomplete="off"></div>
-        <button class="btn mt-8" onclick="doAdminLogin()">Sign in</button>` : `
-        <div class="banner info mb-16">${icon('shield',17)}
-          <div><b>Set up this device's admin account</b><br>There is no default password. Choose your own —
-          only a salted hash of it is stored on this device, never the password itself.</div></div>
-        <div class="field"><label class="label">Username</label>
-          <input id="f-admin-setup-user" placeholder="${esc(SUPER_ADMIN_DEFAULT_USERNAME)}" autocomplete="off"></div>
-        <div class="field"><label class="label">Password</label>
-          <input id="f-admin-setup-pw" type="password" placeholder="${esc(PW_RULE_TEXT)}" autocomplete="off"></div>
-        <div class="field"><label class="label">Confirm password</label>
-          <input id="f-admin-setup-pw2" type="password" placeholder="Re-enter password" autocomplete="off"></div>
-        <button class="btn mt-8" onclick="doAdminSetup()">Create admin account</button>`}
-        <button class="btn btn-quiet mt-8" onclick="back()">${icon('user',18)} Not an admin? Customer sign in</button>
-      </div>
-    </div></div>`;
-}
-async function doAdminLogin(){
-  const user = document.getElementById('f-admin-user').value.trim();
-  const pw = document.getElementById('f-admin-pw').value;
-  const locked = throttleCheck('adminLogin', 'device');
-  if(locked){ toast(locked,'alert'); return; }
-  if(!superAdminConfigured()){ toast('No admin account has been set up on this device yet','alert'); paint(); return; }
-  if(!await verifySuperAdmin(user, pw)){
-    throttleFail('adminLogin', 'device');
-    toast('Incorrect username or password','alert');   // one message for both
-    return;
-  }
-  throttleReset('adminLogin', 'device');
-  ADMIN.authed = true;
-  sessionStorage.setItem('mda_admin_authed','1');
-  await loadOrders(); // pick up every order placed on this device, not just this session's
-  go('admin',{replace:true});
-}
-/* First-run setup — replaces the removed hardcoded default. The panel is
-   inaccessible until this is completed on this device. */
-async function doAdminSetup(){
-  const user = (document.getElementById('f-admin-setup-user').value || '').trim() || SUPER_ADMIN_DEFAULT_USERNAME;
-  const pw = document.getElementById('f-admin-setup-pw').value;
-  const pw2 = document.getElementById('f-admin-setup-pw2').value;
-  if(!isStrongEnough(pw)){ toast(PW_RULE_TEXT,'alert'); return; }
-  if(pw !== pw2){ toast('Passwords do not match','alert'); return; }
-  try{ await setSuperAdminPassword(user, pw); }
-  catch(e){ toast(e.message||'Could not save the admin password','alert'); return; }
-  toast('Admin account created — sign in with it now','check');
-  paint();
-}
-
-function scrAdmin(){
-  if(!ADMIN.authed){ return scrAdminLogin(); }
-  const products = Object.entries(CATALOGUE);
-  return `<div class="screen on">
-    ${navBar('Admin panel', {action:`<button class="iconbtn" onclick="go('adminGuide')">${icon('info',20)}</button>
-      <button class="iconbtn" onclick="adminSignOut()">${icon('logout',20)}</button>`})}
-    <div class="scroll">
-      <div class="section">
-        <div class="banner info mb-16">${icon('info',17)}
-          <div>Local demo mode. Changes save to this device's storage and apply immediately in
-          this app, but do not sync to other devices until a backend is connected.</div></div>
-      </div>
-
-      <div class="section-head"><span class="eyebrow">Business settings</span></div>
-      <div class="section" style="padding-top:0;">
-        <div class="card" style="padding:16px;">
-          <div class="field"><label class="label">Business name</label>
-            <input id="adm-businessName" value="${esc(APPCFG.businessName)}"></div>
-          <div class="field"><label class="label">Support phone</label>
-            <input id="adm-supportPhone" value="${esc(APPCFG.supportPhone)}"></div>
-          <div class="field"><label class="label">WhatsApp number</label>
-            <input id="adm-whatsapp" value="${esc(APPCFG.whatsapp)}"></div>
-          <div class="field"><label class="label">Email</label>
-            <input id="adm-email" value="${esc(APPCFG.email)}"></div>
-          <div class="field"><label class="label">Instagram URL</label>
-            <input id="adm-instagram" value="${esc(APPCFG.instagram)}"></div>
-          <div class="field"><label class="label">Address</label>
-            <input id="adm-address" value="${esc(APPCFG.address)}"></div>
-          <div class="field"><label class="label">Business hours</label>
-            <input id="adm-businessHours" value="${esc(APPCFG.businessHours)}"></div>
-          <div class="field"><label class="label">Minimum order value (₹)</label>
-            <input id="adm-minOrderValue" type="number" value="${APPCFG.minOrderValue}"></div>
-          <div class="field"><label class="label">Announcement banner</label>
-            <input id="adm-announcement" value="${esc(APPCFG.announcement||'')}" placeholder="Leave blank to hide"></div>
-          <button class="btn mt-8" onclick="saveAdminBusiness()">Save business settings</button>
-        </div>
-      </div>
-
-      <div class="section-head"><span class="eyebrow">Products (${products.length})</span></div>
-      <div class="section" style="padding-top:0;">
-        ${products.map(([pid,p])=>`
-          <div class="card mb-8" style="padding:14px;">
-            <div class="t-base mb-8" style="font-weight:600;">${esc(p.name)}</div>
-            ${p.variants.map(v=>`
-              <div style="border-top:1px solid var(--line-2);padding-top:10px;margin-top:10px;">
-                <div class="t-sm muted mb-8" style="font-weight:600;">${esc(v.label)}</div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-                  <div class="field" style="margin:0;"><label class="label">MRP</label>
-                    <input id="adm-mrp-${pid}-${v.id}" type="number" inputmode="decimal" value="${v.mrp}"></div>
-                  <div class="field" style="margin:0;"><label class="label">B2B price</label>
-                    <input id="adm-b2b-${pid}-${v.id}" type="number" inputmode="decimal" value="${v.b2b}"></div>
-                  <div class="field" style="margin:0;"><label class="label">MOQ</label>
-                    <input id="adm-moq-${pid}-${v.id}" type="number" inputmode="numeric" value="${v.moq}"></div>
-                  <div class="field" style="margin:0;"><label class="label">Stock</label>
-                    <select id="adm-stock-${pid}-${v.id}" style="width:100%;height:44px;border:1px solid var(--line);border-radius:var(--r-sm);font:inherit;padding:0 10px;">
-                      <option value="in" ${v.stock==='in'?'selected':''}>In stock</option>
-                      <option value="low" ${v.stock==='low'?'selected':''}>Low stock</option>
-                      <option value="out" ${v.stock==='out'?'selected':''}>Out of stock</option>
-                    </select></div>
-                </div>
-              </div>`).join('')}
-            <button class="btn btn-quiet" onclick="saveAdminProduct('${pid}')">Save ${esc(p.name)}</button>
-          </div>`).join('')}
-      </div>
-
-      ${(()=>{ const pending = S.orders.filter(o=>o.status==='pending_confirmation'); return `
-      <div class="section-head"><span class="eyebrow">Pending confirmation (${pending.length})</span></div>
-      <div class="section" style="padding-top:0;">
-        <div class="banner warn mb-12">${icon('alert',17)}
-          <div>Orders with at least one <b>low-stock</b> item stop here instead of auto-confirming.
-          Only the super admin (${esc(getSuperAdmin().username)}) can confirm these.</div></div>
-        ${!pending.length ? `<div class="card" style="padding:16px;text-align:center;" class="t-sm muted">Nothing waiting on you right now.</div>` :
-          pending.map(o=>`
-          <div class="card mb-8" style="padding:14px;">
-            <div class="row between mb-4">
-              <span class="t-base" style="font-weight:600;">${esc(o.orderNo||o.id||'—')}</span>
-              <span class="t-sm" style="font-weight:600;">${money(o.total||0)}</span></div>
-            <div class="row between mb-8">
-              <span class="t-sm muted">${o.placedAt?dtFmt(o.placedAt):''}</span>
-              <span class="pill a">${STATUS.pending_confirmation.l}</span></div>
-            <button class="btn btn-quiet" onclick="adminConfirmOrder('${esc(o.orderNo)}')">Confirm order</button>
-          </div>`).join('')}
-      </div>`;})()}
-
-      <div class="section-head"><span class="eyebrow">Orders (${S.orders.length})</span></div>
-      <div class="section" style="padding-top:0;">
-        <div class="banner warn mb-12">${icon('alert',17)}
-          <div>This lists orders placed on <b>this device</b> only. A real backend is required
-          to see every customer's orders across all devices in one place.</div></div>
-        ${!S.orders.length ? `<div class="card" style="padding:16px;text-align:center;" class="t-sm muted">No orders on this device yet.</div>` :
-          S.orders.map(o=>`
-          <div class="card mb-8" style="padding:14px;">
-            <div class="row between mb-4">
-              <span class="t-base" style="font-weight:600;">${esc(o.orderNo||o.id||'—')}</span>
-              <span class="t-sm" style="font-weight:600;">${money(o.total||0)}</span></div>
-            <div class="row between">
-              <span class="t-sm muted">${o.placedAt?dtFmt(o.placedAt):''}</span>
-              <span class="pill ${(STATUS[o.status]||STATUS.placed).c}">${(STATUS[o.status]||STATUS.placed).l}</span></div>
-          </div>`).join('')}
-      </div>
-
-      <div class="section-head row between"><span class="eyebrow">API &amp; integration keys</span>
-        <button class="t-sm" style="color:var(--brand-3);font-weight:600;" onclick="go('adminGuide')">How to get these →</button></div>
-      <div class="section" style="padding-top:0;">
-        <div class="banner warn mb-12">${icon('alert',17)}
-          <div><b>Local demo storage only.</b> Keys typed here are saved in this browser/app's
-          localStorage on this device — they are <b>not encrypted, not sent anywhere, and not
-          secure.</b> Do not enter real production secrets until a backend exists. Once a
-          backend is connected, these values must move to secure server-side storage and this
-          screen should only show a Configured/Missing status, never the raw key.</div></div>
-        ${adminApiKeyField('gofrugal', 'GoFrugal', 'API key + outlet/company ID from GoFrugal support or your GoFrugal admin console (Settings → API access). Used to sync orders/invoices to your billing system.')}
-        ${adminApiKeyField('gst_api_key', 'GST verification — API key', 'API key from sandbox.co.in → Dashboard → API Keys. Used with the API secret below to verify customer GSTIN during signup.')}
-        ${adminApiKeyField('gst_api_secret', 'GST verification — API secret', 'API secret from the same sandbox.co.in API key (shown once at creation — keep it safe).')}
-        ${adminApiKeyField('razorpay', 'Razorpay', 'Key ID + Key Secret from the Razorpay Dashboard → Settings → API Keys (use Test mode keys first). Used for online payments.')}
-        ${adminApiKeyField('whatsapp', 'WhatsApp Business API', 'Access token + Phone Number ID from Meta for Developers → your WhatsApp Business app → API Setup. Used for order notifications.')}
-        ${adminApiKeyField('uber', 'Uber Direct (delivery)', 'Customer ID + Client ID + Client Secret from the Uber Direct dashboard (developer.uber.com → Uber Direct). Used to book courier deliveries to customers.')}
-      </div>
-
-      <div class="section-head"><span class="eyebrow">Super admin account</span></div>
-      <div class="section" style="padding-top:0;">
-        <div class="card" style="padding:16px;">
-          <div class="t-sm muted mb-12" style="line-height:1.5;">This is the one personal account that owns this
-            device's admin panel — not a shared staff password. It's the only account that can confirm
-            low-stock orders in the Pending confirmation queue above.</div>
-          <div class="field"><label class="label">Current password</label>
-            <input id="adm-pw-cur" type="password" autocomplete="off"></div>
-          <div class="field"><label class="label">New username</label>
-            <input id="adm-user-new" placeholder="${esc(getSuperAdmin().username)}" autocomplete="off"></div>
-          <div class="field"><label class="label">New password</label>
-            <input id="adm-pw-new" type="password" autocomplete="off"></div>
-          <div class="field"><label class="label">Confirm new password</label>
-            <input id="adm-pw-confirm" type="password" autocomplete="off"></div>
-          <button class="btn mt-8" onclick="changeAdminPassword()">Save changes</button>
-        </div>
-      </div>
-
-      <div style="height:calc(24px + var(--safe-b));"></div>
-    </div>
-  </div>`;
-}
-const SETUP_GUIDE = [
-  { id:'gcp', title:'Google Cloud / Firebase project', why:
-    'The foundation everything else sits on: your database, backend server, secret storage, and admin/customer login. Do this one first.',
-    steps:[
-      'Go to console.firebase.google.com and sign in with the Google account that should own the business (not a personal throwaway).',
-      'Click "Add project" → name it (e.g. "modern-dairy") → you can skip Google Analytics.',
-      'Inside the project: Build → Authentication → Get started → enable "Email/Password" (and phone sign-in if you want OTP login).',
-      'Build → Firestore Database → Create database → Production mode → region "asia-south1 (Mumbai)".',
-      'Click the gear icon (Project settings) → General → scroll to "Your apps" → click the </> Web icon → register an app → copy the firebaseConfig block it shows you.',
-      'This project is also your Google Cloud project — the same project ID works for Cloud Run, Secret Manager, and Cloud Storage later.',
-    ] },
-  { id:'gst', title:'GST verification API', why:
-    'Verifies a customer’s GSTIN and pulls their registered business name automatically during signup, instead of trusting manual entry.',
-    steps:[
-      'Sign up at console.sandbox.co.in (instant self-serve, no sales gate) and verify your email/OTP.',
-      'In the console, go to API Keys and generate a new key — this gives you an API Key and an API Secret (secret is shown once, save it immediately).',
-      'Paste both into this app’s Admin Panel → API keys → GST verification (API key + API secret fields).',
-      'Once the backend is deployed, these two values move to Google Secret Manager (`gst-api-key` / `gst-api-secret`) and the backend exchanges them for a short-lived access token automatically on each verification call.',
-    ] },
-  { id:'gofrugal', title:'GoFrugal API', why:
-    'Syncs orders and invoices from this app into your GoFrugal billing/inventory system automatically.',
-    steps:[
-      'You need an active GoFrugal license first (contact GoFrugal sales if you don’t have one yet — this app doesn’t provide GoFrugal itself).',
-      'Log into your GoFrugal back-office admin console.',
-      'Go to Settings → API / Integration access (exact menu name varies by GoFrugal product edition — RPOS/RetailEasy/RestroEasy).',
-      'Enable "API access" and generate an API key. Note your Outlet ID and Company ID shown in the same screen — you’ll need all three.',
-      'If you don’t see this option, contact GoFrugal support and ask them to enable API access for your account — it’s sometimes gated behind a support request.',
-      'Paste the key + outlet/company IDs into Admin Panel → API keys → GoFrugal.',
-    ] },
-  { id:'razorpay', title:'Razorpay (payments)', why:
-    'Lets customers pay online for orders instead of only cash/credit.',
-    steps:[
-      'Go to dashboard.razorpay.com and sign up with your business details (PAN, GST, bank account for settlement).',
-      'Complete KYC — Razorpay needs this before enabling live payments (you can test without it first).',
-      'Once logged in: Settings → API Keys → Generate Test Key first (safe to experiment with, no real money moves).',
-      'Copy the Key ID and Key Secret.',
-      'When ready to accept real payments: complete full KYC, then Settings → API Keys → Generate Live Key, and swap the test key for the live one.',
-      'Paste keys into Admin Panel → API keys → Razorpay. Only the Key ID is ever safe to appear in an app; the Key Secret must stay server-side once a backend exists.',
-    ] },
-  { id:'whatsapp', title:'WhatsApp Business API', why:
-    'Sends order confirmations, delivery updates, and support messages to customers on WhatsApp automatically.',
-    steps:[
-      'Go to developers.facebook.com (Meta for Developers) and create a Business account if you don’t have one.',
-      'Create a new App → choose "Business" type → add the "WhatsApp" product to it.',
-      'In the WhatsApp → API Setup screen, you’ll get a temporary access token, a Phone Number ID, and a test phone number to try it with.',
-      'For production: verify your real business phone number (Meta Business Manager → WhatsApp Manager) and generate a permanent access token (System User token, not the 24-hour temporary one).',
-      'Meta requires Business Verification for full-scale sending — this can take a few days, so start it early.',
-      'Paste the access token + Phone Number ID into Admin Panel → API keys → WhatsApp.',
-    ] },
-  { id:'uber', title:'Uber Direct (delivery)', why:
-    'Books on-demand courier delivery to customers instead of running your own delivery fleet.',
-    steps:[
-      'Go to developer.uber.com and sign up / log in.',
-      'Apply for Uber Direct access — this is a business product, not the regular rider API, so there’s an approval step where Uber reviews your business.',
-      'Once approved, create an app in the Uber Direct dashboard to get a Customer ID, Client ID, and Client Secret.',
-      'Uber Direct also requires you to configure pickup location(s) — your dairy’s dispatch address(es) — in their dashboard.',
-      'Paste the Customer ID / Client ID / Client Secret into Admin Panel → API keys → Uber Direct.',
-    ] },
-];
-function scrAdminGuide(){
-  return `<div class="screen on">${navBar('How to get these keys')}
-    <div class="scroll section">
-      <div class="banner info mb-16">${icon('info',17)}
-        <div>Do these in order — the Google Cloud/Firebase project comes first since the backend,
-        database, and secure key storage all live inside it.</div></div>
-      ${SETUP_GUIDE.map((g,i)=>`
-        <div class="card mb-12" style="padding:16px;">
-          <div class="row gap-8 mb-4" style="align-items:center;">
-            <div style="width:24px;height:24px;border-radius:50%;background:var(--brand);color:#fff;
-              display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">${i+1}</div>
-            <div class="t-base" style="font-weight:700;">${esc(g.title)}</div>
-          </div>
-          <div class="t-sm muted mb-12" style="line-height:1.5;">${esc(g.why)}</div>
-          <ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px;">
-            ${g.steps.map(s=>`<li class="t-sm" style="line-height:1.5;">${esc(s)}</li>`).join('')}
-          </ol>
-        </div>`).join('')}
-    </div></div>`;
-}
-function adminApiKeyField(key, label, howTo){
-  const keys = loadAdminOverrides().apiKeys || {};
-  const configured = !!keys[key];
-  // SECURITY: the stored key used to be rendered back into value="…". A
-  // `type=password` input hides it from a shoulder-surfer and nothing else —
-  // it sits in the DOM in plaintext for any script, screen reader, autofill
-  // manager or DevTools session. Show only whether a key exists; a new value
-  // is write-only.
-  return `<div class="card mb-8" style="padding:14px;">
-    <div class="row between mb-4"><span class="t-base" style="font-weight:600;">${esc(label)}</span>
-      <span class="pill ${configured?'b':'n'}">${configured?'Configured':'Missing'}</span></div>
-    <div class="t-xs muted mb-8" style="line-height:1.5;">${esc(howTo)}</div>
-    <input id="adm-key-${esc(key)}" type="password" autocomplete="off"
-           placeholder="${configured?'Saved — paste a new key to replace it':'Paste key here'}" style="margin-bottom:8px;">
-    <button class="btn btn-quiet" onclick="saveAdminApiKey('${jsStr(key)}')">Save ${esc(label)} key</button>
-  </div>`;
-}
-async function saveAdminApiKey(key){
-  const el = document.getElementById(`adm-key-${key}`);
-  const val = (el?.value || '').trim();
-  if(!val){ toast('Enter a key to save','alert'); return; }
-  if(val.length > 4096){ toast('That value is too long to be an API key','alert'); return; }
-  if(el) el.value = '';                       // don't leave it sitting in the DOM
-  if(CONFIG.API_BASE){
-    // Real backend: the raw key is sent once over HTTPS and stored server-side
-    // (Secret Manager) — the app never keeps or displays the raw value again.
-    try{
-      const r = await API.post('/admin/secrets', {key, value: val});
-      if(!r.success){ toast(r.message||'Could not save key to server','alert'); return; }
-      toast('Key saved to server — integration is live','check');
-    }catch(e){ toast('Could not reach the server to save this key','alert'); return; }
-  } else {
-    const cur = loadAdminOverrides();
-    const apiKeys = {...(cur.apiKeys||{}), [key]: val};
-    saveAdminOverrides({apiKeys});
-    toast('Key saved locally (demo mode — no backend connected yet)','check');
-  }
-  paint();
-}
-async function changeAdminPassword(){
-  const cur = document.getElementById('adm-pw-cur').value;
-  const newUser = document.getElementById('adm-user-new').value.trim();
-  const next = document.getElementById('adm-pw-new').value;
-  const confirm = document.getElementById('adm-pw-confirm').value;
-  const sa = getSuperAdmin();
-  const locked = throttleCheck('adminLogin', 'device');
-  if(locked){ toast(locked,'alert'); return; }
-  // Re-authenticate before a credential change, even though the session is
-  // already signed in — otherwise anyone who walks up to an unlocked, open
-  // admin panel can lock the real owner out of it.
-  if(!await verifyPassword(sa, cur)){ throttleFail('adminLogin','device'); toast('Current password is incorrect','alert'); return; }
-  throttleReset('adminLogin', 'device');
-  if(!next && !newUser){ toast('Enter a new username and/or password to change','alert'); return; }
-  if(next && !isStrongEnough(next)){ toast(PW_RULE_TEXT,'alert'); return; }
-  if(next && next !== confirm){ toast('New passwords do not match','alert'); return; }
-  if(next){ await setSuperAdminPassword(newUser || sa.username, next); }
-  else { setSuperAdmin({ username: newUser || sa.username }); }
-  toast('Super admin account updated','check');
-  document.getElementById('adm-pw-cur').value='';
-  document.getElementById('adm-user-new').value='';
-  document.getElementById('adm-pw-new').value='';
-  document.getElementById('adm-pw-confirm').value='';
-  paint();
-}
-function adminConfirmOrder(orderNo){
-  const list = DB.orders;
-  const idx = list.findIndex(o=>o.orderNo===orderNo);
-  if(idx===-1) return;
-  list[idx] = {...list[idx], status:'confirmed', confirmedBy: getSuperAdmin().username, confirmedAt:new Date().toISOString()};
-  DB.orders = list;
-  S.orders = list;
-  toast(`${orderNo} confirmed`,'check');
-  paint();
-}
-function saveAdminBusiness(){
-  const val = id=>document.getElementById(id).value;
-  const patch = {
-    businessName: val('adm-businessName'), supportPhone: val('adm-supportPhone'),
-    whatsapp: val('adm-whatsapp'), email: val('adm-email'), instagram: val('adm-instagram'),
-    address: val('adm-address'), businessHours: val('adm-businessHours'),
-    minOrderValue: parseInt(val('adm-minOrderValue'))||0, announcement: val('adm-announcement'),
-  };
-  APPCFG = {...APPCFG, ...patch};
-  const cur = loadAdminOverrides();
-  saveAdminOverrides({appcfg: {...(cur.appcfg||{}), ...patch}});
-  toast('Business settings saved','check');
-}
-function saveAdminProduct(pid){
-  const p = CATALOGUE[pid];
-  const variantPatch = {};
-  p.variants.forEach(v=>{
-    const mrp = parseInt(document.getElementById(`adm-mrp-${pid}-${v.id}`).value)||0;
-    const b2b = parseInt(document.getElementById(`adm-b2b-${pid}-${v.id}`).value)||0;
-    const moq = parseInt(document.getElementById(`adm-moq-${pid}-${v.id}`).value)||1;
-    const stock = document.getElementById(`adm-stock-${pid}-${v.id}`).value;
-    v.mrp=mrp; v.b2b=b2b; v.moq=moq; v.stock=stock;
-    variantPatch[v.id] = {mrp,b2b,moq,stock};
-  });
-  const cur = loadAdminOverrides();
-  const products = {...(cur.products||{})};
-  products[pid] = {variants: {...(products[pid]?.variants||{}), ...variantPatch}};
-  saveAdminOverrides({products});
-  toast(`${p.name} saved`,'check');
-}
-function adminSignOut(){
-  ADMIN.authed = false;
-  sessionStorage.removeItem('mda_admin_authed');
-  go('account',{replace:true});
 }
 
 function showHours(){
@@ -3839,6 +3538,266 @@ async function fakeRazorpayPay(){
   if(cb) await cb();
 }
 
+
+/* ═══════════════════════════════════════════════════════════
+   22. RIDER MODE — live delivery tracking
+   ═══════════════════════════════════════════════════════════
+   Reached by five taps on the logo, then a real Firebase login whose uid must
+   be allowlisted in riders/{uid}. Both checks are enforced server-side by
+   backend/firestore.rules; the UI gate is convenience, not security.
+
+   THE HARD PART IS BACKGROUNDING. A rider cannot ride with the screen on, and
+   Android suspends timers and GPS in a backgrounded web view within seconds.
+   So tracking runs through @capacitor-community/background-geolocation, which
+   holds a real foreground service with a persistent notification — the only
+   way Android permits continuous location. The browser fallback below exists
+   for testing in a desktop browser and pauses the moment the tab is hidden,
+   which is exactly why it is not what ships to riders.
+
+   Tracking is scoped to ONE delivery and stops when it is delivered. The rules
+   also refuse any rider write once status leaves out_for_delivery, so tracking
+   cannot outlive the trip even if the app is left running. */
+const RIDER_SESSION_KEY = 'mda_rider_session';
+let RIDER = {
+  uid: null,
+  order: null,        // the delivery being tracked
+  deliveries: [],
+  watchId: null,      // background-geolocation watcher id
+  webWatchId: null,   // browser geolocation fallback
+  lastFix: null,
+  pushes: 0,
+  error: null,
+};
+
+function riderRestore(){
+  try{ return JSON.parse(localStorage.getItem(RIDER_SESSION_KEY) || 'null'); }
+  catch(e){ return null; }
+}
+function riderRemember(uid){
+  try{ localStorage.setItem(RIDER_SESSION_KEY, JSON.stringify({ uid, at: Date.now() })); }catch(e){}
+}
+function riderForget(){
+  try{ localStorage.removeItem(RIDER_SESSION_KEY); }catch(e){}
+}
+
+/* ── Login ─────────────────────────────────────────────── */
+function scrRiderLogin(){
+  return `<div class="screen on" style="background:var(--brand);">
+    <div style="padding:calc(var(--safe-t) + 8px) 20px 0;">
+      <button class="iconbtn" style="color:#fff;" onclick="back()" aria-label="Back">${icon('left',22)}</button>
+    </div>
+    <div style="padding:8px 24px 32px;">
+      <div style="width:52px;height:52px;border-radius:var(--r-sm);background:rgba(255,255,255,.12);
+                  display:flex;align-items:center;justify-content:center;color:#fff;margin-bottom:20px;">
+        ${icon('truck',26)}</div>
+      <div class="eyebrow" style="color:rgba(255,255,255,.6);letter-spacing:.08em;margin-bottom:6px;">RIDER</div>
+      <div class="t-2xl" style="color:#fff;">Delivery tracking</div>
+    </div>
+    <div class="scroll" style="background:var(--surface);border-radius:20px 20px 0 0;padding-top:4px;">
+      <div class="section">
+        <div class="banner info mb-16">${icon('info',17)}
+          <div>For delivery riders only. Sign in with the rider account the office gave you —
+          customers don't need this screen.</div></div>
+        <div class="field"><label class="label">Rider ID</label>
+          <input id="f-rider-user" placeholder="rider1" autocomplete="off" autocapitalize="none"></div>
+        <div class="field"><label class="label">Password</label>
+          <input id="f-rider-pw" type="password" placeholder="Password" autocomplete="off"></div>
+        <div id="rider-err" class="t-sm" style="color:var(--bad);margin-bottom:12px;display:none;"></div>
+        <button class="btn" id="btn-rider-login" onclick="doRiderLogin()">Sign in</button>
+        <button class="btn btn-quiet mt-8" onclick="back()">Not a rider? Go back</button>
+      </div>
+    </div></div>`;
+}
+
+async function doRiderLogin(){
+  const user = (document.getElementById('f-rider-user').value || '').trim();
+  const pw = document.getElementById('f-rider-pw').value;
+  const err = document.getElementById('rider-err');
+  const show = m => { if(err){ err.textContent = m; err.style.display = 'block'; } };
+  if(!user || !pw){ show('Enter your rider ID and password.'); return; }
+  busy('btn-rider-login', true, 'Signing in…');
+  try{
+    // Same convention the admin panel uses: a plain id, not a real mailbox.
+    const uid = await window.riderSignIn(user.toLowerCase().replace(/\s+/g,'_') + '@rider.local', pw);
+    if(!await window.riderIsEnrolled(uid)){
+      await window.riderSignOut();
+      show('That account is not set up as a rider. Ask the office to enrol it.');
+      return;
+    }
+    RIDER.uid = uid;
+    riderRemember(uid);
+    await riderLoadList();
+    go('rider', {replace:true});
+  }catch(e){
+    show('Incorrect rider ID or password.');
+  }finally{
+    busy('btn-rider-login', false, 'Sign in');
+  }
+}
+
+async function riderLoadList(){
+  try{
+    RIDER.deliveries = await window.riderLoadDeliveries();
+    RIDER.error = null;
+  }catch(e){
+    RIDER.deliveries = [];
+    RIDER.error = 'Could not load deliveries. Check your connection.';
+  }
+}
+
+/* ── Delivery list / tracking screen ───────────────────── */
+function scrRider(){
+  const t = RIDER.order;
+  return `<div class="screen on">
+    ${navBar('Rider', {sub: t ? 'Tracking ' + esc(t.orderNo || '') : `${RIDER.deliveries.length} out for delivery`,
+      action:`<button class="iconbtn" onclick="doRiderSignOut()" aria-label="Sign out">${icon('logout',20)}</button>`})}
+    <div class="scroll"><div class="section">
+      ${RIDER.error ? `<div class="banner alert mb-16">${icon('alert',17)}<div>${esc(RIDER.error)}</div></div>` : ''}
+      ${t ? riderTrackingCard(t) : riderListBody()}
+    </div></div>
+  </div>`;
+}
+
+function riderListBody(){
+  if(!RIDER.deliveries.length){
+    return `${stateBlock('truck','Nothing out for delivery','An order appears here once the office marks it out for delivery.','')}
+      <button class="btn btn-ghost mt-16" onclick="riderRefresh()">${icon('repeat',18)} Refresh</button>`;
+  }
+  return `<div class="eyebrow mb-12">Out for delivery</div>
+    ${RIDER.deliveries.map(d=>`
+      <div class="lrow" onclick="riderPick('${esc(d.firestoreId)}')" style="align-items:flex-start;">
+        <div class="lrow-ic">${icon('pin',17)}</div>
+        <div class="lrow-body">
+          <div class="t-base" style="font-weight:700;">${esc(d.orderNo || d.firestoreId)}</div>
+          <div class="t-sm muted mt-4">${esc(d.company || d.name || 'Customer')}</div>
+          ${d.address ? `<div class="t-sm muted mt-4">${esc(d.address)}</div>` : ''}
+          ${d.riderUid && d.riderUid !== RIDER.uid ? `<div class="t-xs mt-4" style="color:var(--warn);font-weight:600;">Another rider is tracking this</div>` : ''}
+        </div>
+        ${icon('right',18)}
+      </div>`).join('')}
+    <button class="btn btn-ghost mt-16" onclick="riderRefresh()">${icon('repeat',18)} Refresh</button>`;
+}
+
+function riderTrackingCard(t){
+  const live = RIDER.watchId || RIDER.webWatchId;
+  const fix = RIDER.lastFix;
+  return `<div class="card" style="padding:16px;">
+      <div class="row between mb-12">
+        <div><div class="t-base" style="font-weight:700;">${esc(t.orderNo || '')}</div>
+          <div class="t-sm muted mt-4">${esc(t.company || t.name || 'Customer')}</div></div>
+        ${live ? '<span class="rider-live"><i></i>Live</span>' : ''}
+      </div>
+      ${t.address ? `<div class="banner info mb-12">${icon('pin',17)}<div>${esc(t.address)}</div></div>` : ''}
+      ${t.phone ? `<a class="btn btn-quiet mb-12" href="tel:${esc(t.phone)}">${icon('phone',18)} Call the customer</a>` : ''}
+      ${live ? `
+        <div class="t-sm muted mb-12" style="line-height:1.5;">
+          Your location is going to the customer${fix ? ` · last sent ${esc(dtFmt(fix.at))}` : '…'}<br>
+          ${RIDER.pushes} update${RIDER.pushes===1?'':'s'} sent. Keep the app installed — you can lock the phone,
+          tracking continues in the background.
+        </div>
+        <button class="btn" style="background:var(--bad);border-color:var(--bad);" onclick="riderStopTracking()">Stop &amp; hand back</button>`
+      : `
+        <div class="t-sm muted mb-12" style="line-height:1.5;">
+          Start the trip and the customer sees you move on their map. Android will ask for location
+          <b>“Allow all the time”</b> — without that, tracking stops when your screen locks.
+        </div>
+        <button class="btn" id="btn-rider-start" onclick="riderStartTracking()">${icon('pin',18)} Start trip</button>`}
+      <button class="btn btn-quiet mt-8" onclick="riderBackToList()">Back to deliveries</button>
+    </div>`;
+}
+
+function riderPick(id){
+  RIDER.order = RIDER.deliveries.find(d => d.firestoreId === id) || null;
+  paint();
+}
+function riderBackToList(){
+  if(RIDER.watchId || RIDER.webWatchId){ toast('Stop the trip first','alert'); return; }
+  RIDER.order = null; paint();
+}
+async function riderRefresh(){ await riderLoadList(); paint(); }
+
+async function doRiderSignOut(){
+  await riderStopTracking(true);
+  try{ await window.riderSignOut(); }catch(e){}
+  riderForget();
+  RIDER = { uid:null, order:null, deliveries:[], watchId:null, webWatchId:null, lastFix:null, pushes:0, error:null };
+  go('account', {replace:true});
+}
+
+/* ── The tracking itself ───────────────────────────────── */
+async function riderPush(lat, lng, accuracy){
+  const t = RIDER.order;
+  if(!t) return;
+  try{
+    await window.riderPushLocation(t.firestoreId, lat, lng, accuracy);
+    RIDER.lastFix = { lat, lng, at: new Date().toISOString() };
+    RIDER.pushes++;
+    if(S.screen === 'rider') paint();
+  }catch(e){
+    // The rules reject writes once the order is no longer out for delivery —
+    // that is the delivery finishing, not a fault. Stop cleanly.
+    RIDER.error = 'Location updates stopped: ' + (e?.message || 'permission denied');
+    await riderStopTracking(true);
+    paint();
+  }
+}
+
+async function riderStartTracking(){
+  const t = RIDER.order;
+  if(!t) return;
+  RIDER.error = null;
+  const BG = window.Capacitor?.Plugins?.BackgroundGeolocation;
+  if(BG){
+    try{
+      RIDER.watchId = await BG.addWatcher({
+        // Android requires this text; it is what the rider sees in the
+        // persistent notification for as long as tracking runs.
+        backgroundMessage: 'Sharing your location with the customer',
+        backgroundTitle: 'Delivery in progress',
+        requestPermissions: true,
+        stale: false,
+        distanceFilter: 25,       // metres — moving, not jitter
+      }, (location, error) => {
+        if(error){
+          if(error.code === 'NOT_AUTHORIZED'){
+            RIDER.error = 'Location permission is off. Enable “Allow all the time” in Settings, then start again.';
+          }else{
+            RIDER.error = 'Location error: ' + (error.message || error.code);
+          }
+          paint();
+          return;
+        }
+        if(location) riderPush(location.latitude, location.longitude, location.accuracy);
+      });
+      paint();
+      return;
+    }catch(e){
+      RIDER.error = 'Could not start background tracking: ' + (e?.message || e);
+    }
+  }
+  // Browser fallback — for testing on a desktop only. This one DOES pause when
+  // the tab is hidden, which is precisely why the plugin above is what ships.
+  if(!navigator.geolocation){ RIDER.error = 'This device has no location support.'; paint(); return; }
+  RIDER.webWatchId = navigator.geolocation.watchPosition(
+    p => riderPush(p.coords.latitude, p.coords.longitude, p.coords.accuracy),
+    e => { RIDER.error = 'Location error: ' + e.message; paint(); },
+    { enableHighAccuracy:true, maximumAge:10000, timeout:20000 });
+  paint();
+}
+
+async function riderStopTracking(quiet){
+  const BG = window.Capacitor?.Plugins?.BackgroundGeolocation;
+  if(RIDER.watchId && BG){
+    try{ await BG.removeWatcher({ id: RIDER.watchId }); }catch(e){}
+    RIDER.watchId = null;
+  }
+  if(RIDER.webWatchId != null){
+    try{ navigator.geolocation.clearWatch(RIDER.webWatchId); }catch(e){}
+    RIDER.webWatchId = null;
+  }
+  if(!quiet){ toast('Tracking stopped','check'); paint(); }
+}
+
 /* ═══════════════════════════════════════════════════════════
    21. ROUTES + BOOT
    ═══════════════════════════════════════════════════════════ */
@@ -3849,7 +3808,7 @@ const ROUTES = {
   orders:scrOrders, order:scrOrder, reorder:scrReorder,
   invoices:scrInvoices, invoiceDetail:scrInvoiceDetail,
   account:scrAccount, wallet:scrWallet, about:scrAbout,
-  adminLogin:scrAdminLogin, admin:scrAdmin, adminGuide:scrAdminGuide,
+  riderLogin:scrRiderLogin, rider:scrRider,
   forgotPassword:scrForgotPassword,
 };
 window.addEventListener('popstate',()=>{ if(NAV.length) back(); });
@@ -3939,33 +3898,11 @@ async function loadLiveCatalogueAndConfig(){
     }
   }catch(e){ console.warn('Could not load live catalogue/config, using bundled defaults:', e); }
 }
-// Admin broadcasts (backend/firestore.rules: public read, admin-only write)
-// — plain unauthenticated REST fetch, same as products/app_config above.
-async function loadBroadcasts(){
-  try{
-    const res = await fetch('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/broadcasts?pageSize=50');
-    if(!res.ok) return;
-    const data = await res.json();
-    S.broadcasts = (data.documents||[]).map(doc=>{
-      const f = fromFirestoreDoc(doc.fields);
-      return { id: String(doc.name.split('/').pop()).slice(0,128),
-               message: String(f.message ?? '').slice(0, 500),
-               audience: ['all','b2b','b2c'].includes(f.audience) ? f.audience : 'all',
-               createdAt: doc.createTime };
-    }).sort((a,b)=> new Date(b.createdAt) - new Date(a.createdAt));
-  }catch(e){ console.warn('Could not load broadcasts:', e); }
-}
-function activeBroadcast(){
-  const dismissed = JSON.parse(localStorage.getItem('mda_dismissed_broadcasts')||'[]');
-  const audience = isB2B() ? 'b2b' : 'b2c';
-  return (S.broadcasts||[]).find(b => !dismissed.includes(b.id) && (b.audience==='all' || b.audience===audience));
-}
-function dismissBroadcast(id){
-  const dismissed = JSON.parse(localStorage.getItem('mda_dismissed_broadcasts')||'[]');
-  if(!dismissed.includes(id)) dismissed.push(id);
-  localStorage.setItem('mda_dismissed_broadcasts', JSON.stringify(dismissed));
-  paint();
-}
+// Admin broadcasts are NOT shown inside the app, by choice. They still go out
+// as push notifications (backend/scripts/send-broadcast-push.js, run by the
+// send-broadcast-push GitHub Action) and the admin Broadcasts tab still sends
+// and lists them — they simply never render as an in-app banner, so nothing
+// here fetches the broadcasts collection any more.
 async function boot(){
   FB = await (window.__fbReady || Promise.resolve(null));
 
@@ -3991,7 +3928,6 @@ async function boot(){
     // fetch fails (offline, etc).
     await loadLiveCatalogueAndConfig();
   }
-  applyAdminOverrides();
   // Block gate — maintenance, or a per-segment (b2c/b2b) disable from the admin
   // Controls tab. Lock the app here before rendering anything else, and keep
   // polling so it unlocks on its own when the admin flips it back.
@@ -3999,7 +3935,7 @@ async function boot(){
   if(evaluateAppBlock()) return;
   if(!S.user){ S.screen='login'; paint(); return; }
   S.screen='home'; S.tab='home'; paint();
-  await Promise.all([loadWallet(), loadOrders(), loadBroadcasts()]);
+  await Promise.all([loadWallet(), loadOrders()]);
   refreshOrderBlock();
   paint();
   initPushNotifications();
@@ -4063,11 +3999,6 @@ async function recheckMaintenance(){
    apps that are fully closed; this makes the in-app experience instant.
    ═══════════════════════════════════════════════════════════ */
 let LIVE_TIMER = null;
-let LAST_BROADCAST_SIG = '';
-function broadcastSig(){
-  const b = activeBroadcast();
-  return b ? b.id : '';
-}
 async function pollLiveState(){
   // 1) App-block flags (maintenance + per-segment disables) from app_config.
   try{
@@ -4090,17 +4021,6 @@ async function pollLiveState(){
     }
   }catch(e){ /* offline — keep current state */ }
   if(MAINTENANCE_LOCKED) return;
-  // 2) Broadcasts — refresh, and if the active one changed and the customer
-  //    is on a screen that shows it, repaint so the banner appears at once.
-  try{
-    const before = LAST_BROADCAST_SIG;
-    await loadBroadcasts();
-    const sig = broadcastSig();
-    if(sig !== before){
-      LAST_BROADCAST_SIG = sig;
-      if(S.user && (S.screen==='home' || S.tab==='home')) paint();
-    }
-  }catch(e){ /* offline */ }
   // 3) Credit hold — is this customer blocked from ordering? (opaque phone
   //    hashes, public-read; the real enforcement is in the Firestore rules.)
   await refreshOrderBlock();
@@ -4122,7 +4042,6 @@ async function refreshOrderBlock(){
 }
 function startMaintenancePolling(){
   if(LIVE_TIMER) return;
-  LAST_BROADCAST_SIG = broadcastSig();
   LIVE_TIMER = setInterval(pollLiveState, 20000);
   // Instant check when the app is brought back to the foreground (or a tab
   // becomes visible) — this is what makes it feel immediate in real use.

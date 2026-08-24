@@ -12,6 +12,7 @@
     "test:bills": "node tests/bills-print.test.mjs && node tests/gofrugal.test.mjs"
   },
   "dependencies": {
+    "@capacitor-community/background-geolocation": "^1.2.26",
     "@capacitor/android": "^6.1.2",
     "@capacitor/app": "^6.0.1",
     "@capacitor/core": "^6.1.2",
@@ -19,7 +20,8 @@
     "@capacitor/ios": "^6.1.2",
     "@capacitor/keyboard": "^6.0.4",
     "@capacitor/network": "^6.0.2",
-    "@capacitor/push-notifications": "^6.0.5"
+    "@capacitor/push-notifications": "^6.0.5",
+    "leaflet": "^1.9.4"
   },
   "devDependencies": {
     "@capacitor/cli": "^6.1.2"
