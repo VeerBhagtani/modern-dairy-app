@@ -4,9 +4,13 @@ Last updated: 2026-08-24
 
 ## Session of 2026-08-24 — READ THIS FIRST
 
-Four things shipped. Nothing here is merged to `master` yet — it all lives on
-branch **`bills-printing-gofrugal`** (PR #1). Hosting and Firestore rules ARE
-deployed live; only the git merge is outstanding.
+Four things shipped, all **merged to `master`** (PR #1, merge commit
+`23b263e`) and all deployed live: admin website, Firestore rules, and APK
+v5.13.0-debug. `master` is the source of truth and matches what is running —
+verified by hashing the served admin page against the local file (they differ
+only by CRLF line endings, which git introduces on checkout).
+
+The working branch `bills-printing-gofrugal` has been deleted.
 
 ### 1. Bills tab — bulk printing (admin website)
 New **Bills** tab between Orders and Products. One button builds every matching
@@ -129,6 +133,15 @@ sheet could be left floating over a screen whose button had vanished.
 - **Broadcasts no longer show as an in-app banner.** They still go out as push
   notifications, and the admin Broadcasts tab is unchanged.
 
+### Releases published this session
+All built by the `build-apk` GitHub Actions workflow (JDK 21) — local Gradle
+builds are impossible here, see the note at the end of this file.
+- **v5.10.0-debug** — rider live tracking, first cut
+- **v5.11.0-debug** — rider looks up one order instead of a list
+- **v5.12.0-debug** — cancel button hidden once out for delivery
+- **v5.13.0-debug** — rider signs in with a name, no password *(current;
+  `index.apk` in this folder is byte-identical to it)*
+
 ### Tests added
 - `npm run test:bills` — 137 bills + 27 GoFrugal adapter assertions
 - `npm run test:app` — 16 cancel-visibility assertions, including that the
@@ -142,7 +155,6 @@ sheet could be left floating over a screen whose button had vanished.
    items and widened every row instead of stacking it.
 
 ### Still outstanding
-- **Merge PR #1** — `master` has none of this.
 - **End-to-end rider test on real phones.** Never done: it needs a phone
   actually moving, and the Firestore emulator will not run here (needs Java 11+,
   this machine has 8). Rules compiled and deployed, all wiring checks pass, but
@@ -414,10 +426,6 @@ A real Node.js backend exists in the repo but is still not deployed.
   change).
 
 ## Next steps, in order
-0. **Merge PR #1** (branch `bills-printing-gofrugal`) — everything from
-   2026-08-24 is on it. Hosting and the Firestore rules are already deployed
-   live; only the git merge is outstanding, so `master` currently does not
-   contain the Bills tab, the rider tracking or the GoFrugal work.
 1. **Rotate the leaked credentials and set the CI secrets** (see the banner at
    the top) — the single most important launch blocker now. Until then any
    local/CI build is DEMO-mode. (The order-forgery rules hardening is already

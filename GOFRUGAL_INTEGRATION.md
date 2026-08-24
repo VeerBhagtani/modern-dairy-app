@@ -1,6 +1,8 @@
 # GoFrugal billing integration
 
-**Status as of 2026-08-24:** built and tested, **not live.** Two things block it:
+**Status as of 2026-08-24:** built, tested and merged to `master`, but
+**not live** — it stays inert until both a backend URL and the Settings toggle
+are set, and neither is. Two things block switching it on:
 the Cloud Run backend isn't deployed (Blaze-plan blocker), and API access isn't
 enabled on the Modern Dairy GoFrugal licence.
 

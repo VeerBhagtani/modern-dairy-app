@@ -76,9 +76,20 @@ secret shapes; working tree scans clean.
 **H1 — Hardcoded super-admin credential in the public APK + repo**
 (`moderndairy` / a literal password). Five taps on the logo + the two known
 values opened the admin panel on any device. *Fix:* default removed entirely;
-the panel is inaccessible until a per-device admin account is created at first
-run; only a **salted PBKDF2-SHA256 hash** is stored, never the password;
-credential change re-authenticates first. *Verified:* logic test.
+the panel became inaccessible until a per-device admin account was created at
+first run; only a **salted PBKDF2-SHA256 hash** was stored, never the password;
+credential change re-authenticated first. *Verified:* logic test.
+
+> **Superseded 2026-08-24 — this finding is now closed by removal, not by the
+> fix above.** The entire in-app admin panel was deleted from the app (478
+> lines). The first-run setup screen it describes no longer exists, so nothing
+> here should be read as a regression when it cannot be found. The reasoning:
+> the gate was never much of a boundary on a fresh install — it offered
+> "Create admin account" to whoever tapped the logo, so any customer could
+> enrol themselves — and the panel could override the prices *shown* on that
+> device and place an order at them. Removing it removes the surface. The only
+> admin is now the Firebase-authenticated website. The five-tap gesture opens
+> **rider mode** instead (name + phone, no password; see PROGRESS.md).
 
 **H2 — Plaintext password storage.** Customer and admin passwords were stored
 verbatim in `localStorage`, readable via `adb backup`, a stolen/rooted phone,
