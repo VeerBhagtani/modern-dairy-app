@@ -2919,7 +2919,13 @@ function startOrderStatusListener(o){
     if(S.screen==='order'){
       // A status change alters the markup, so repaint; a position change only
       // moves the marker, and repainting would rebuild (and re-centre) the map.
-      if(changed) paint();
+      if(changed){
+        // The cancel-confirm sheet is anchored to a button that may have just
+        // disappeared (e.g. the order went out for delivery). Don't leave it
+        // hanging over a screen that no longer offers the action.
+        if(!CANCELLABLE_STATUSES.includes(S.order?.status)) closeSheet();
+        paint();
+      }
       renderTrackMap();
     }
   });
@@ -2937,7 +2943,14 @@ async function openOrder(no){
 }
 async function doCancelOrder(){
   const o=S.order; if(!o?.firestoreId) return;
-  if(!CANCELLABLE_STATUSES.includes(o.status)) return;
+  if(!CANCELLABLE_STATUSES.includes(o.status)){
+    // Status moved on while this sheet was open (it repaints live). Silently
+    // doing nothing here reads as a broken button, so say what happened.
+    closeSheet();
+    toast('This order is already ' + ((STATUS[o.status]||STATUS.placed).l.toLowerCase()) + ' — please call us.','alert');
+    paint();
+    return;
+  }
   try{ await window.cancelOrderInFirestore(o.firestoreId); }
   catch(e){ closeSheet(); toast('Could not cancel — please call us instead.','alert'); return; }
   S.order = {...o, status:'cancelled'};
@@ -3027,7 +3040,18 @@ function scrOrder(){
       <div style="padding:0 16px calc(24px + var(--safe-b));">
         <button class="btn btn-ghost" onclick="reorder('${esc(o.orderNo)}')">${icon('repeat',18)} Reorder these items</button>
         <a class="btn btn-quiet mt-8" href="tel:${APPCFG.supportPhone}">${icon('phone',18)} Call about this order</a>
-        ${!['cancelled','delivered','denied'].includes(o.status) ? `<button class="btn btn-quiet mt-8" style="color:var(--bad);" onclick="confirmCancelOrder()">${icon('close',18)} Cancel order</button>` : ''}
+        <!-- Cancel is offered only while the order is genuinely still
+             cancellable. This used to be a not-in-[cancelled,delivered,denied]
+             test, which left the button on screen once the order was OUT FOR
+             DELIVERY — and tapping it then hit confirmCancelOrder(), which
+             refuses and shows a "call us" sheet instead. A button that cannot
+             do what it says is worse than no button.
+             CANCELLABLE_STATUSES matches isCancellable() in
+             backend/firestore.rules, which is the real enforcement — the server
+             rejects a late cancel whatever the UI shows. The live status listener
+             repaints on every change, so this disappears the moment the admin
+             marks the order out for delivery. -->
+        ${CANCELLABLE_STATUSES.includes(o.status) ? `<button class="btn btn-quiet mt-8" style="color:var(--bad);" onclick="confirmCancelOrder()">${icon('close',18)} Cancel order</button>` : ''}
       </div>
     </div>
   </div>`;
