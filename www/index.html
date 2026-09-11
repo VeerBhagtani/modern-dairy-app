@@ -188,10 +188,11 @@ svg{display:block;flex-shrink:0;}
   border:1px solid #e9d9b0;border-radius:8px;padding:7px 10px;font-size:.78rem;font-weight:600;line-height:1.4;}
 .map-empty{height:100%;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;
   color:var(--ink-3);font-size:.85rem;line-height:1.5;}
-.rider-dot{background:var(--brand);border:2.5px solid #fff;border-radius:50%;width:18px;height:18px;
-  box-shadow:0 1px 6px rgba(0,0,0,.4);}
-.dest-dot{background:var(--bad);border:2.5px solid #fff;border-radius:50%;width:14px;height:14px;
-  box-shadow:0 1px 6px rgba(0,0,0,.4);}
+/* Map pins that explain themselves: the rider is a scooter, the address a house. */
+.rider-dot,.dest-dot{display:flex;align-items:center;justify-content:center;border-radius:50%;background:#fff;
+  box-shadow:0 2px 8px rgba(0,0,0,.3);line-height:1;}
+.rider-dot{width:40px;height:40px;font-size:22px;border:3px solid var(--brand);}
+.dest-dot{width:34px;height:34px;font-size:18px;border:3px solid var(--crimson);}
 /* ── Rider mode ──────────────────────────────────────────── */
 .rider-live{display:inline-flex;align-items:center;gap:6px;font-size:.8rem;font-weight:700;color:var(--fresh);}
 .rider-live i{width:8px;height:8px;border-radius:50%;background:var(--fresh);display:block;animation:pulse 1.6s infinite;}
@@ -420,7 +421,9 @@ svg{display:block;flex-shrink:0;}
 .ticket-k{font-size:var(--t-xs);font-weight:600;color:var(--ink-3);}
 .ticket-v{font-family:var(--font-display);font-size:18px;font-weight:700;letter-spacing:-.015em;line-height:1.2;
   margin-top:2px;color:var(--brand);font-variant-numeric:tabular-nums;}
-.ticket-cut.soon .ticket-v{color:var(--crimson);}
+.ticket-cut .ticket-v{font-size:16px;}
+.ticket-cut.open .ticket-v{color:var(--fresh);}
+.ticket-cut.shut .ticket-v{color:var(--ink-2);}
 .home-body{padding-top:46px;}
 
 /* ── Promotions: one treatment for every slide ── */
@@ -441,11 +444,10 @@ svg{display:block;flex-shrink:0;}
 
 /* ── Category tiles: plain white, the photo is the colour ── */
 .cats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:0 16px;}
-.cat{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 6px 12px;background:var(--surface);
-  border:1px solid var(--line-2);border-radius:var(--r-lg);text-align:center;}
-.cat:active{background:var(--surface-2);}
+.cat{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 6px 12px;border-radius:var(--r-lg);text-align:center;}
+.cat:active{filter:brightness(.97);}
 .cat-plate{width:74%;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;margin-bottom:6px;color:var(--brand);}
-.cat-plate img{width:100%;height:100%;object-fit:contain;}
+.cat-plate img{width:100%;height:100%;object-fit:contain;mix-blend-mode:multiply;}   /* white studio ground takes the tile's tint */
 .cat-lbl{font-size:var(--t-md);font-weight:700;line-height:1.2;}
 .cat-n{font-size:var(--t-xs);color:var(--ink-3);}
 
@@ -480,6 +482,10 @@ svg{display:block;flex-shrink:0;}
 .util-ic{width:36px;height:36px;border-radius:var(--r);background:var(--brand-tint);color:var(--brand);
   display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .util-act{font-size:var(--t-sm);font-weight:700;color:var(--crimson);flex-shrink:0;}
+.util-ic.g{background:#E6F5EC;color:#1D6B45;}
+.util-ic.a{background:#FFF0DE;color:#8A5200;}
+.live-row{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding:0 16px;padding:0 16px 14px;}
+.live-row .live-card{flex:0 0 82%;scroll-snap-align:start;}
 .live-card{width:100%;text-align:left;padding:14px;border-color:var(--brand-line);background:var(--brand-tint);}
 .home-foot{padding:30px 16px calc(28px + var(--safe-b));text-align:center;font-size:var(--t-xs);color:var(--ink-3);}
 .home-foot img{display:block;width:32px;height:32px;object-fit:contain;opacity:.5;margin:0 auto 8px;}
@@ -491,9 +497,9 @@ svg{display:block;flex-shrink:0;}
 .cat-layout{flex:1;min-height:0;display:flex;}
 .rail{width:80px;flex-shrink:0;overflow-y:auto;background:var(--surface);border-right:1px solid var(--line-2);padding:4px 0 24px;}
 .rail-item{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;width:100%;padding:10px 4px;}
-.rail-plate{width:52px;height:52px;border-radius:var(--r);background:#fff;border:1px solid var(--line-2);
+.rail-plate{width:52px;height:52px;border-radius:var(--r);border:1.5px solid transparent;
   display:flex;align-items:center;justify-content:center;overflow:hidden;color:var(--brand);}
-.rail-plate img{width:86%;height:86%;object-fit:contain;}
+.rail-plate img{width:86%;height:86%;object-fit:contain;mix-blend-mode:multiply;}
 .rail-lbl{font-size:11px;font-weight:600;color:var(--ink-2);text-align:center;line-height:1.2;}
 .rail-item.on{background:var(--brand-tint);}
 .rail-item.on .rail-plate{border-color:var(--brand);}
@@ -1364,7 +1370,7 @@ let APPCFG = {
   platformFee:2,
   gstRate:0.05,
   orderCutoff:'6:00 PM',
-  businessHours:'Mon–Sat 8:00 AM – 9:00 PM · Sun 8:00 AM – 2:00 PM',
+  businessHours:'Mon–Sat 8 AM – 2 PM, 4 PM – 9 PM · Sun 8 AM – 2 PM',
   announcement:'',
   walletEnabled:true,
 };
@@ -2542,13 +2548,15 @@ function pimg(url, size = 400){
   if(!/^https:\/\/res\.cloudinary\.com\/[^/]+\/image\/upload\//.test(u)) return u;
   return u.replace('/image/upload/', `/image/upload/e_trim:10/c_pad,b_white,w_${size},h_${size}/f_auto,q_auto/`);
 }
-// The pack that stands for each category on its tile and in the rail.
+// Each category's soft tint and the pack that stands for it. The tints share
+// one lightness, so the tiles read as a set rather than a rainbow.
 const CAT_LOOK = {
-  dairy:     { pk:'paneer' },
-  curd:      { pk:'matka-dahi' },
-  frozen:    { pk:'samosa' },
-  beverages: { pk:'mango-crush' },
-  sweets:    { pk:'amrakhand' },
+  all:       { tint:'#EFEDFB' },
+  dairy:     { tint:'#E8F0FF', pk:'paneer' },
+  curd:      { tint:'#E6F5EC', pk:'matka-dahi' },
+  frozen:    { tint:'#E3F2F8', pk:'samosa' },
+  beverages: { tint:'#FFF0DE', pk:'mango-crush' },
+  sweets:    { tint:'#FCEBF0', pk:'amrakhand' },
 };
 function catPhoto(id){
   const pk = CAT_LOOK[id]?.pk;
@@ -2556,14 +2564,50 @@ function catPhoto(id){
           : Object.values(CATALOGUE).find(x => x.cat === id && !x.disabled);
   return p?.img || '';
 }
-// Home carousel slides, built from real packs. A slide whose product is
-// missing or switched off in the admin panel is simply left out.
-const PROMOS = [
-  { pk:'paneer',      kicker:'Kitchen staple', title:'Malai paneer in 200 g and 1 kg packs',          cta:'Order paneer' },
-  { pk:'mango-crush', kicker:'Beverages',      title:'Alphonso mango crush for shakes and lassi',     cta:'See drinks', cat:'beverages' },
-  { pk:'samosa',      kicker:'Frozen',         title:'Snacks that go straight from freezer to fryer', cta:'See frozen', cat:'frozen' },
-  { pk:'shrikhand',   kicker:'Desserts',       title:'Shrikhand and amrakhand for your dessert menu', cta:'See sweets', cat:'sweets' },
-];
+// A fresh shuffle once per app session: the highlights, "Popular" and the
+// category rows rotate every time the app opens, so every product gets its
+// turn instead of the same few.
+const SESSION_PICKS = {};
+function sessionPick(key, list, n){
+  if(!SESSION_PICKS[key]){
+    const a = list.slice();
+    for(let i = a.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+    SESSION_PICKS[key] = a;
+  }
+  return SESSION_PICKS[key].filter(k => list.includes(k)).slice(0, n);
+}
+// Products worth featuring: on sale, in stock, with a photo.
+function liveKeys(){
+  return Object.keys(CATALOGUE).filter(k => { const p = CATALOGUE[k]; return !p.disabled && p.img && p.variants.some(v => v.stock !== 'out'); });
+}
+// Banner colours: five deep tones at one depth, so they sit together.
+const PROMO_BG = ['#1B2A6B', '#1D5E47', '#7B2335', '#0F5B6B', '#6A3F22'];   // navy, forest, maroon, teal, cocoa
+// Five highlights: one from every category first, then any others.
+function promoSlides(){
+  const keys = sessionPick('promos', liveKeys(), 999);
+  const picks = [], cats = new Set();
+  for(const k of keys){ if(!cats.has(CATALOGUE[k].cat)){ cats.add(CATALOGUE[k].cat); picks.push(k); } }
+  for(const k of keys){ if(picks.length >= 5) break; if(!picks.includes(k)) picks.push(k); }
+  return picks.slice(0, 5);
+}
+// Every order still on its way, as a swipeable row: a second order must
+// never hide the first.
+function liveOrdersHtml(){
+  const live = S.orders.filter(o => !['delivered','cancelled','denied'].includes(o.status));
+  if(!live.length) return '';
+  const card = o => `<button class="card live-card" onclick="openOrder('${jsStr(o.orderNo)}')">
+      <div class="row between mb-8">
+        <span class="eyebrow" style="color:var(--brand);">${live.length > 1 ? 'Placed ' + esc(dtFmt(o.placedAt)) : 'Order in progress'}</span>
+        <span class="pill b">${(STATUS[o.status] || STATUS.placed).l}</span></div>
+      <div class="row between">
+        <div><div class="t-base num" style="font-weight:700;">${esc(o.orderNo)}</div>
+          <div class="t-sm muted mt-4">${o.items.length} items · ${money(o.total)}</div></div>
+        ${icon('right',18)}</div>
+    </button>`;
+  if(live.length === 1) return `<div style="padding:0 16px 14px;">${card(live[0])}</div>`;
+  return `<div class="shead" style="padding-top:0;"><h2>Orders in progress</h2><span class="t-sm muted">${live.length} orders</span></div>
+    <div class="live-row">${live.map(card).join('')}</div>`;
+}
 
 // Time left before today's order cutoff (APPCFG.orderCutoff, e.g. "6:00 PM").
 function cutoffInfo(){
@@ -2576,34 +2620,50 @@ function cutoffInfo(){
   const left = Math.max(0, Math.round((cut - now) / 60000));
   return { open: left > 0, mins: left, left: left >= 60 ? `${Math.floor(left / 60)}h ${left % 60}m` : `${left}m` };
 }
-// The right half of the delivery card. A countdown only appears in the last
-// three hours, when it actually helps someone decide.
-function cutoffLabel(){
-  const cut = cutoffInfo();
-  if(cut && !cut.open) return { k:"Today's orders", v:'Closed', soon:false };
-  if(cut && cut.mins <= 180) return { k:'Closes in', v:cut.left, soon:true };
-  return { k:'Order by', v:esc(APPCFG.orderCutoff), soon:false };
+/* Shop hours: Monday–Saturday 8 AM–2 PM and 4 PM–9 PM; Sunday 8 AM–2 PM.
+   Minutes from midnight, by day of the week (0 = Sunday). */
+const SHOP_HOURS = { 0: [[480, 840]], week: [[480, 840], [960, 1260]] };
+function clockLabel(mins){
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return `${h % 12 || 12}${m ? ':' + String(m).padStart(2, '0') : ''} ${h < 12 ? 'AM' : 'PM'}`;
+}
+function shopStatus(now = new Date()){
+  const slots = d => SHOP_HOURS[d] || SHOP_HOURS.week;
+  const day = now.getDay(), mins = now.getHours() * 60 + now.getMinutes();
+  const cur = slots(day).find(([a, b]) => mins >= a && mins < b);
+  if(cur) return { open: true, text: `Open till ${clockLabel(cur[1])}` };
+  const later = slots(day).find(([a]) => mins < a);
+  if(later) return { open: false, text: `Opens ${clockLabel(later[0])}` };
+  return { open: false, text: `Opens ${clockLabel(slots((day + 1) % 7)[0][0])} tomorrow` };
+}
+// The right half of the delivery card: is the shop open right now?
+function shopLabel(){
+  const s = shopStatus();
+  return { k: s.open ? 'Shop open' : 'Shop closed', v: s.text, tone: s.open ? 'open' : 'shut' };
 }
 function dispatchTicket(){
-  const cut = cutoffInfo(), c = cutoffLabel();
+  const cut = cutoffInfo(), c = shopLabel();
   return `<div class="ticket" role="status">
     <div class="ticket-slot"><div class="ticket-k">Next delivery</div>
       <div class="ticket-v">${!cut || cut.open ? 'Tomorrow' : 'Day after'}, 7–11 AM</div></div>
-    <div class="ticket-cut ${c.soon ? 'soon' : ''}" id="cut"><div class="ticket-k">${c.k}</div>
+    <div class="ticket-cut ${c.tone}" id="cut"><div class="ticket-k">${c.k}</div>
       <div class="ticket-v">${c.v}</div></div>
   </div>`;
 }
 function promoCarousel(){
-  const slides = PROMOS.filter(s => CATALOGUE[s.pk] && !CATALOGUE[s.pk].disabled);
+  const slides = promoSlides();
   if(!slides.length) return '';
-  return `<div class="promos" id="promos">${slides.map(s => {
-      const act = s.cat ? `S.cat='${jsStr(s.cat)}';switchTab('catalogue')` : `openProduct('${jsStr(s.pk)}')`;
-      return `<button class="promo" onclick="${act}">
+  return `<div class="promos" id="promos">${slides.map((k, i) => {
+      const p = CATALOGUE[k];
+      const cat = CATEGORIES.find(c => c.id === p.cat)?.label || '';
+      const packs = p.variants.map(v => v.label).slice(0, 3).join(' · ');
+      const from = Math.min(...p.variants.map(unitPrice));
+      return `<button class="promo" style="background:${PROMO_BG[i % PROMO_BG.length]};" onclick="openProduct('${jsStr(k)}')">
         <span class="promo-copy">
-          <span><span class="promo-k">${esc(s.kicker)}</span><span class="promo-t">${esc(s.title)}</span></span>
-          <span class="promo-cta">${esc(s.cta)} ${icon('right',14,2)}</span>
+          <span><span class="promo-k">${esc(cat)}${packs ? ' · ' + esc(packs) : ''}</span><span class="promo-t">${esc(p.name)}</span></span>
+          <span class="promo-cta">From ${money(from)} ${icon('right',14,2)}</span>
         </span>
-        <span class="promo-plate"><img src="${esc(pimg(CATALOGUE[s.pk].img, 360))}" alt="" loading="lazy" onerror="this.style.opacity=0"></span>
+        <span class="promo-plate"><img src="${esc(pimg(p.img, 360))}" alt="" loading="lazy" onerror="this.style.opacity=0"></span>
       </button>`;
     }).join('')}</div>
     ${slides.length > 1 ? `<div class="promo-dots" id="promo-dots">${slides.map((_, i) => `<i class="${i ? '' : 'on'}"></i>`).join('')}</div>` : ''}`;
@@ -2611,7 +2671,7 @@ function promoCarousel(){
 function catTile(c){
   const live = Object.values(CATALOGUE).filter(p => !p.disabled && (c.id === 'all' || p.cat === c.id));
   const ph = c.id === 'all' ? '' : catPhoto(c.id);
-  return `<button class="cat" onclick="S.cat='${jsStr(c.id)}';switchTab('catalogue')">
+  return `<button class="cat" style="background:${(CAT_LOOK[c.id] || CAT_LOOK.all).tint};" onclick="S.cat='${jsStr(c.id)}';switchTab('catalogue')">
     <span class="cat-plate">${ph ? `<img src="${esc(pimg(ph, 240))}" alt="" loading="lazy" onerror="this.style.opacity=0">` : icon('grid',32)}</span>
     <span class="cat-lbl">${esc(c.id === 'all' ? 'All products' : c.label)}</span>
     <span class="cat-n">${live.length} item${live.length === 1 ? '' : 's'}</span>
@@ -2622,11 +2682,11 @@ function homeUtility(){
   const rows = [];
   const last = S.orders[0];
   if(last) rows.push(`<button class="util" onclick="reorder('${jsStr(last.orderNo)}')">
-      <span class="util-ic">${icon('repeat',19)}</span>
+      <span class="util-ic g">${icon('repeat',19)}</span>
       <span class="grow"><b>Repeat last order</b><span>${last.items.length} items · ${money(last.total)}</span></span>
       ${icon('right',18)}</button>`);
   if(APPCFG.walletEnabled) rows.push(`<button class="util" onclick="go('wallet')">
-      <span class="util-ic">${icon('wallet',19)}</span>
+      <span class="util-ic a">${icon('wallet',19)}</span>
       <span class="grow"><b>${isB2B() ? 'Business credit' : 'Wallet'}</b><span>${money(S.wallet.balance)} available</span></span>
       ${icon('right',18)}</button>`);
   if(isB2B()) rows.push(rfdRowHtml());
@@ -2676,8 +2736,8 @@ function wireHome(){
     if(S.screen !== 'home' || !document.getElementById('home-scroll')){ clearInterval(HOME_TIMER); return; }
     tick++;
     if(tick % 12 === 0){
-      const el = document.getElementById('cut'), c = cutoffLabel();
-      if(el){ el.classList.toggle('soon', c.soon); el.innerHTML = `<div class="ticket-k">${c.k}</div><div class="ticket-v">${c.v}</div>`; }
+      const el = document.getElementById('cut'), c = shopLabel();
+      if(el){ el.className = 'ticket-cut ' + c.tone; el.innerHTML = `<div class="ticket-k">${c.k}</div><div class="ticket-v">${c.v}</div>`; }
     }
     if(track && !touched && !still && dots.length > 1){
       const next = (Math.round(track.scrollLeft / step()) + 1) % dots.length;
@@ -2688,7 +2748,6 @@ function wireHome(){
 
 function scrHome(){
   const t = cartTotals();
-  const live = S.orders.find(o => !['delivered','cancelled'].includes(o.status));
   const hour = new Date().getHours();
   const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const first = (S.user?.name || 'there').split(' ')[0];
@@ -2714,16 +2773,7 @@ function scrHome(){
         ${APPCFG.announcement ? `<div style="padding:0 16px 14px;">
           <div class="banner info">${icon('info',17)}<div>${esc(APPCFG.announcement)}</div></div></div>` : ''}
 
-        ${live ? `<div style="padding:0 16px 14px;">
-          <button class="card live-card" onclick="openOrder('${jsStr(live.orderNo)}')">
-            <div class="row between mb-8">
-              <span class="eyebrow" style="color:var(--brand);">Order in progress</span>
-              <span class="pill b">${(STATUS[live.status] || STATUS.placed).l}</span></div>
-            <div class="row between">
-              <div><div class="t-base num" style="font-weight:700;">${esc(live.orderNo)}</div>
-                <div class="t-sm muted mt-4">${live.items.length} items · ${money(live.total)}</div></div>
-              ${icon('right',18)}</div>
-          </button></div>` : ''}
+        ${liveOrdersHtml()}
 
         ${promoCarousel()}
 
@@ -2752,8 +2802,7 @@ function homeQuickAdd(){
   let list = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 8)
     .map(([key]) => key.split('::')).filter(([pk]) => CATALOGUE[pk] && !CATALOGUE[pk].disabled);
   const title = list.length ? 'Your regular items' : (isB2B() ? 'Popular with restaurants' : 'Popular right now');
-  if(!list.length) list = ['paneer','curd-cup','ghee','samosa','butter','cream','matka-dahi','lassi']
-    .filter(k => CATALOGUE[k] && !CATALOGUE[k].disabled).map(k => [k]);
+  if(!list.length) list = sessionPick('popular', liveKeys(), 8).map(k => [k]);
   return shelf(title, list);
 }
 
@@ -2787,7 +2836,7 @@ function railItem(c){
   const on = S.cat === c.id;
   const ph = c.id === 'all' ? '' : catPhoto(c.id);
   return `<button class="rail-item ${on ? 'on' : ''}" onclick="S.cat='${jsStr(c.id)}';paint()" aria-pressed="${on}">
-    <span class="rail-plate">${ph ? `<img src="${esc(pimg(ph, 160))}" alt="" loading="lazy" onerror="this.style.opacity=0">` : icon('grid',24)}</span>
+    <span class="rail-plate" style="background:${(CAT_LOOK[c.id] || CAT_LOOK.all).tint};">${ph ? `<img src="${esc(pimg(ph, 160))}" alt="" loading="lazy" onerror="this.style.opacity=0">` : icon('grid',24)}</span>
     <span class="rail-lbl">${esc(c.id === 'all' ? 'All' : c.label)}</span>
   </button>`;
 }
@@ -2842,8 +2891,9 @@ function shelf(title, entries, action){
     <div class="shelf">${cards.join('')}</div>`;
 }
 function categoryShelf(cat, title){
-  const keys = Object.entries(CATALOGUE).filter(([, p]) => p.cat === cat && !p.disabled).slice(0, 10).map(([k]) => [k]);
-  return shelf(title, keys, `<button onclick="S.cat='${jsStr(cat)}';switchTab('catalogue')">See all</button>`);
+  const keys = liveKeys().filter(k => CATALOGUE[k].cat === cat);
+  return shelf(title, sessionPick('shelf-' + cat, keys, 10).map(k => [k]),
+    `<button onclick="S.cat='${jsStr(cat)}';switchTab('catalogue')">See all</button>`);
 }
 
 /* One product row = image, name, packs, price, action. Nothing else. */
@@ -3560,7 +3610,7 @@ function renderTrackMap(){
     }).addTo(TRACK_MAP);
     TRACK_MAP.setView([o.riderLat, o.riderLng], 15);
   }
-  const riderIcon = L.divIcon({ className:'', html:'<div class="rider-dot"></div>', iconSize:[18,18], iconAnchor:[9,9] });
+  const riderIcon = L.divIcon({ className:'', html:'<div class="rider-dot">🛵</div>', iconSize:[40,40], iconAnchor:[20,20] });
   if(!TRACK_RIDER) TRACK_RIDER = L.marker([o.riderLat, o.riderLng], { icon:riderIcon }).addTo(TRACK_MAP);
   else TRACK_RIDER.setLatLng([o.riderLat, o.riderLng]);
 
@@ -3570,7 +3620,7 @@ function renderTrackMap(){
   const dLat = S.user?.lat, dLng = S.user?.lng;
   if(dLat && dLng && !TRACK_DEST){
     TRACK_DEST = L.marker([dLat, dLng], {
-      icon: L.divIcon({ className:'', html:'<div class="dest-dot"></div>', iconSize:[14,14], iconAnchor:[7,7] }),
+      icon: L.divIcon({ className:'', html:'<div class="dest-dot">🏠</div>', iconSize:[34,34], iconAnchor:[17,17] }),
     }).addTo(TRACK_MAP);
   }
   // Fit both points once, then leave the view alone so the map doesn't fight
@@ -4265,9 +4315,9 @@ function renderRiderMap(){
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19, attribution:'© OpenStreetMap' }).addTo(RIDER_MAP);
     RIDER_MAP.setView(me || dest, 15);
   }
-  if(dest && !RIDER_DEST) RIDER_DEST = L.marker(dest, { icon: L.divIcon({ className:'', html:'<div class="dest-dot"></div>', iconSize:[14,14], iconAnchor:[7,7] }) }).addTo(RIDER_MAP);
+  if(dest && !RIDER_DEST) RIDER_DEST = L.marker(dest, { icon: L.divIcon({ className:'', html:'<div class="dest-dot">🏠</div>', iconSize:[34,34], iconAnchor:[17,17] }) }).addTo(RIDER_MAP);
   if(me){
-    if(!RIDER_ME) RIDER_ME = L.marker(me, { icon: L.divIcon({ className:'', html:'<div class="rider-dot"></div>', iconSize:[18,18], iconAnchor:[9,9] }) }).addTo(RIDER_MAP);
+    if(!RIDER_ME) RIDER_ME = L.marker(me, { icon: L.divIcon({ className:'', html:'<div class="rider-dot">🛵</div>', iconSize:[40,40], iconAnchor:[20,20] }) }).addTo(RIDER_MAP);
     else RIDER_ME.setLatLng(me);
   }
   if(me && dest && !RIDER_FITTED){ RIDER_MAP.fitBounds(L.latLngBounds([me, dest]).pad(0.3)); RIDER_FITTED = true; }

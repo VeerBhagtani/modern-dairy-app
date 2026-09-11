@@ -44,8 +44,10 @@ input{width:100%;height:46px;border:1px solid var(--line);border-radius:10px;pad
 @keyframes pulse{50%{opacity:.25;}}
 @media (prefers-reduced-motion: reduce){.live i{animation:none;}}
 .center{text-align:center;padding:36px 16px;}
-.me{width:18px;height:18px;border-radius:50%;background:var(--brand);border:2.5px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.4);}
-.dest{width:16px;height:16px;border-radius:50%;background:var(--crimson);border:2.5px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.4);}
+/* The rider is a scooter, the delivery address a house. */
+.me,.dest{display:flex;align-items:center;justify-content:center;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.3);line-height:1;}
+.me{width:40px;height:40px;font-size:22px;border:3px solid var(--brand);}
+.dest{width:34px;height:34px;font-size:18px;border:3px solid var(--crimson);}
 a.link{color:var(--brand);font-weight:700;}
 </style>
 </head>
@@ -190,12 +192,12 @@ function drawMap(){
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19, attribution:'© OpenStreetMap' }).addTo(R.map);
     R.map.setView(R.pos || dest || [18.5204, 73.8567], (R.pos || dest) ? 15 : 11);   // Pune until we know better
   }
-  if (dest && !R.dest) R.dest = L.marker(dest, { icon: L.divIcon({ className:'', html:'<div class="dest"></div>', iconSize:[16,16], iconAnchor:[8,8] }) }).addTo(R.map);
+  if (dest && !R.dest) R.dest = L.marker(dest, { icon: L.divIcon({ className:'', html:'<div class="dest">🏠</div>', iconSize:[34,34], iconAnchor:[17,17] }) }).addTo(R.map);
   moveMe();
 }
 function moveMe(){
   if (!R.map || !R.pos) return;
-  if (!R.me) R.me = L.marker(R.pos, { icon: L.divIcon({ className:'', html:'<div class="me"></div>', iconSize:[18,18], iconAnchor:[9,9] }) }).addTo(R.map);
+  if (!R.me) R.me = L.marker(R.pos, { icon: L.divIcon({ className:'', html:'<div class="me">🛵</div>', iconSize:[40,40], iconAnchor:[20,20] }) }).addTo(R.map);
   else R.me.setLatLng(R.pos);
   if (!R.fitted) {
     const dest = destOf(R.d);
