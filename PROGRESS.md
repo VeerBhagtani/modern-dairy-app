@@ -142,11 +142,12 @@ were rebuilt; every other screen picked up the new colour tokens.
   the new APK. The web link works now.
 
 ### Still to do
-1. **APK v5.14.0-debug is released** at
-   https://github.com/VeerBhagtani/modern-dairy-app/releases/tag/v5.14.0-debug
+1. **APK v5.15.0-debug is the latest release** (v5.14.0-debug plus the
+   design consistency pass):
+   https://github.com/VeerBhagtani/modern-dairy-app/releases/tag/v5.15.0-debug
    (direct download:
-   https://github.com/VeerBhagtani/modern-dairy-app/releases/download/v5.14.0-debug/modern-dairy-v5.14.0-debug.apk).
-   It was built by GitHub Actions run 34551687532 from branch
+   https://github.com/VeerBhagtani/modern-dairy-app/releases/download/v5.15.0-debug/modern-dairy-v5.15.0-debug.apk).
+   It was built by GitHub Actions run 34590502487 from branch
    `storefront-rider-link-accounts`, PR #2, which is **not merged into
    master yet**. The same file is `index.apk` in this folder (git ignores
    it). The owner chose a public release knowing the APK carries the real
