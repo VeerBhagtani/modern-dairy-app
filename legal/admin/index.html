@@ -1045,7 +1045,7 @@ function riderLinkHtml(o){
     + `Delivery code (for the Modern Dairy app): ${prettyCode(o.deliveryCode)}`;
   return `<div class="card" style="margin:14px 0 4px;padding:12px;background:var(--bg);">
     <div style="font-weight:700;margin-bottom:4px;">Rider link</div>
-    <div class="muted" style="font-size:.82rem;line-height:1.5;margin-bottom:8px;">Send this to whoever is carrying the order. It opens in any phone browser — nothing to install — and on a phone with the Modern Dairy app it opens in the app. In the app, riders type the delivery code <b>${esc(prettyCode(o.deliveryCode))}</b>, not the order number.</div>
+    <div class="muted" style="font-size:.82rem;line-height:1.5;margin-bottom:8px;">Send this to whoever is carrying the order. It opens in the phone's browser (Chrome) — nothing to install. Riders using the Modern Dairy app instead type the delivery code <b>${esc(prettyCode(o.deliveryCode))}</b>, not the order number.</div>
     <div style="font-family:ui-monospace,Consolas,monospace;font-size:.8rem;word-break:break-all;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px;">${esc(link)}</div>
     <div style="display:flex;gap:8px;">
       <a class="btn-primary btn-sm" style="flex:1;text-align:center;text-decoration:none;background:#1DA851;border-color:#1DA851;" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">Send on WhatsApp</a>

@@ -243,26 +243,22 @@ Five problems the owner reported, fixed on branch `v5-19-fixes`:
   a plain explanation instead of "not found", and:
   - The admin's WhatsApp message ends with "Delivery code (for the Modern
     Dairy app): XXXXX-XXXXX".
-  - **Android App Links:** tapping the rider link on a phone with the app
-    opens the app straight to that delivery. A rider not yet in rider mode
-    gives their name first; the code is kept meanwhile.
-    - The intent filter covers `/ride` on both hosting domains.
-    - `legal/.well-known/assetlinks.json` names `in.moderndairy.app` and the
-      debug-keystore SHA-256. `firebase.json` no longer ignores dot-folders,
-      so it deploys.
-    - When the app is signed with a different key, add its SHA-256 there.
+  - v5.19.0 also made the rider link open in the app (Android App Links).
+    **The owner wants it to open in Chrome only**, so v5.19.1 removed the
+    `/ride` intent filter, `legal/.well-known/assetlinks.json`, the
+    `appUrlOpen` handling and the "opens in the app" wording, and put the
+    `firebase.json` ignore rule back. Don't add App Links back.
 
 ### Still to do
 0. **v5.19 is merged (PR #5) and released:**
    https://github.com/VeerBhagtani/modern-dairy-app/releases/download/v5.19.0-debug/modern-dairy-v5.19.0-debug.apk
    (also `index.apk` here). Hosting and Firestore rules were deployed on
    2026-09-11, with the owner's go-ahead.
-   - `/invoice/` returns 200 and `/.well-known/assetlinks.json` is served as
-     JSON; Google's Digital Asset Links API lists `in.moderndairy.app`.
-   - The admin page has the new WhatsApp wording.
-   - Not yet tried on a real phone: the rider link opening the app, and a
-     B2C driver request, which was not probed live to keep test rows out of
-     the office's Driver requests tab.
+   - `/invoice/` returns 200 and the admin page has the new WhatsApp wording.
+   - v5.19.1 takes the rider link back to Chrome-only (see above) and removes
+     `assetlinks.json` from Hosting.
+   - Not yet tried on a real phone: a B2C driver request, which was not
+     probed live to keep test rows out of the office's Driver requests tab.
 1. **Merged and released (up to v5.18).** PR #4 is merged into `master`, so `master`
    matches what is live (Hosting, Firestore rules) and the APK. The latest
    APK is **v5.18.0-debug**, built from `master`:
