@@ -26,8 +26,8 @@
   script-src 'self' 'unsafe-inline' https://www.gstatic.com https://checkout.razorpay.com https://*.razorpay.com;
   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
   font-src 'self' data: https://fonts.gstatic.com;
-  img-src 'self' data: blob: https://res.cloudinary.com https://*.googleapis.com https://*.razorpay.com https://*.tile.openstreetmap.org https://*.basemaps.cartocdn.com;
-  connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://cpaas.messagecentral.com https://api.sandbox.co.in https://*.razorpay.com https://fonts.googleapis.com https://fonts.gstatic.com https://api.bigdatacloud.net https://nominatim.openstreetmap.org;
+  img-src 'self' data: blob: https://res.cloudinary.com https://*.googleapis.com https://*.razorpay.com https://tiles.openfreemap.org;
+  connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://cpaas.messagecentral.com https://api.sandbox.co.in https://*.razorpay.com https://fonts.googleapis.com https://fonts.gstatic.com https://api.bigdatacloud.net https://nominatim.openstreetmap.org https://tiles.openfreemap.org;
   frame-src https://*.razorpay.com https://modern-dairy-pune.firebaseapp.com;
   media-src 'self';
   object-src 'none';
@@ -36,10 +36,11 @@
   frame-ancestors 'none'
 ">
 <title>Modern Dairy — Business Ordering</title>
-<!-- Leaflet, bundled rather than CDN-loaded: script-src is 'self' only.
-     Tile images come from OSM/Carto, which img-src above now allows. -->
-<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
-<script src="vendor/leaflet/leaflet.js" defer></script>
+<!-- MapLibre (CSP build), bundled rather than CDN-loaded: script-src is 'self'
+     only, and its worker loads from vendor/ too. The maps themselves come from
+     OpenFreeMap (tiles.openfreemap.org), which connect-src and img-src allow. -->
+<link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css">
+<script src="vendor/maplibre/maplibre-gl-csp.js" defer></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Plus+Jakarta+Sans:opsz,wght@8..144,400;8..144,500;8..144,600;8..144,700;8..144,800&display=swap" rel="stylesheet">
@@ -179,11 +180,15 @@ svg{display:block;flex-shrink:0;}
 .search:focus-within{border-color:var(--brand-line);background:var(--surface);}
 
 /* ── Live tracking map ───────────────────────────────────── */
-.map-wrap{position:relative;height:230px;border-radius:var(--r-md);overflow:hidden;border:1px solid var(--line);background:var(--surface-2);}
-.map-wrap .leaflet-container{height:100%;width:100%;background:var(--surface-2);}
-/* Leaflet writes inline z-index values that would otherwise sit above the
-   app's own sheets and toasts. */
-.map-wrap .leaflet-pane,.map-wrap .leaflet-control{z-index:1 !important;}
+.map-wrap{position:relative;height:260px;border-radius:var(--r-lg);overflow:hidden;border:1px solid var(--line-2);background:#EEF1F5;}
+.map-wrap .maplibregl-ctrl-attrib{font-size:10px;}
+/* Who is bringing the order: under the customer's live map. */
+.rider-card{display:flex;align-items:center;gap:12px;margin-top:10px;padding:12px 14px;background:var(--surface);
+  border:1px solid var(--line-2);border-radius:var(--r-lg);}
+.rider-av{width:40px;height:40px;border-radius:50%;background:var(--brand-tint);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}
+.rider-card b{display:block;font-size:var(--t-base);font-weight:700;}
+.rider-card .grow span{display:block;font-size:var(--t-sm);color:var(--ink-2);margin-top:1px;}
+.rider-call{width:42px;height:42px;border-radius:50%;background:var(--fresh);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .map-stale{position:absolute;left:8px;right:8px;bottom:8px;z-index:2;background:var(--warn-tint);color:var(--warn);
   border:1px solid #e9d9b0;border-radius:8px;padding:7px 10px;font-size:.78rem;font-weight:600;line-height:1.4;}
 .map-empty{height:100%;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;
@@ -1851,7 +1856,7 @@ function paint(){
   APP().innerHTML = r();
   if(S.screen==='catalogue'||S.screen==='reorder'){ renderOrderBar(); renderTabBadge(); }
   if(S.screen==='cart') renderTabBadge();
-  // The map's container is destroyed by the innerHTML above, so the Leaflet
+  // The map's container is destroyed by the innerHTML above, so the map
   // instance has to be rebuilt (and torn down when leaving the screen).
   if(typeof renderTrackMap === 'function'){
     if(S.screen==='order') renderTrackMap(); else destroyTrackMap();
@@ -3501,6 +3506,7 @@ function scrOrder(){
             ${o.riderLat ? '<span class="rider-live"><i></i>Rider on the way</span>' : ''}</div>
           <div class="map-wrap" id="track-map">${o.riderLat ? '' :
             '<div class="map-empty">Waiting for the rider to start their trip.<br>The map appears as soon as they do.</div>'}</div>
+          ${o.riderLat ? `<div class="rider-card" id="rider-card">${riderCardHtml(o)}</div>` : ''}
         </div>` : ''}
         ${o.address?`<div class="banner info mb-16">${icon('pin',17)}<div><b>Delivering to</b><br>${esc(o.address)}</div></div>`:''}
         ${o.status!=='denied' && o.status!=='cancelled' ? steps.map((s,i)=>`<div class="row gap-12" style="align-items:flex-start;">
@@ -3551,13 +3557,53 @@ function scrOrder(){
     </div>
   </div>`;
 }
-/* ── Live tracking map ────────────────────────────────────────────────────
-   Leaflet + OpenStreetMap tiles — no API key, no billing account, no usage
-   contract to sign. The map only exists while an order is out for delivery.
+/* ── Maps: MapLibre + OpenFreeMap ─────────────────────────────────────────
+   OpenFreeMap serves free vector maps — streets, buildings, place names —
+   with no API key, no account and no usage cap, and MapLibre draws them
+   sharply at any zoom. mdMap() and friends wrap it with the lat-first calls
+   the screens use (MapLibre itself speaks lng-first). A phone that can't run
+   WebGL gets null back, and the screen says so instead of breaking.
 
-   Coordinates arrive on the order document itself, written by the rider and
-   pushed here by the same Firestore listener that already drives status, so
-   there is no polling: the dot moves when the rider moves. */
+   Customer tracking: coordinates arrive from the delivery record through a
+   Firestore listener, so there is no polling — the scooter moves when the
+   rider moves. */
+const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+function mdMap(el, center, zoom){
+  if(!window.maplibregl) return null;
+  try{
+    if(!mdMap.worker){ maplibregl.setWorkerUrl('vendor/maplibre/maplibre-gl-csp-worker.js'); mdMap.worker = true; }
+    const map = new maplibregl.Map({ container: el, style: MAP_STYLE, center: [center[1], center[0]], zoom,
+      attributionControl: { compact: true }, dragRotate: false, pitchWithRotate: false });
+    map.touchZoomRotate.disableRotation();
+    // Credit stays one tap away on the ⓘ button instead of covering the map.
+    map.once('load', () => el.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show'));
+    return map;
+  }catch(e){ console.warn('Map unavailable on this device:', e); return null; }
+}
+function mdPin(map, at, html){
+  const box = document.createElement('div'); box.innerHTML = html;
+  return new maplibregl.Marker({ element: box.firstElementChild }).setLngLat([at[1], at[0]]).addTo(map);
+}
+function mdMove(marker, at){ marker.setLngLat([at[1], at[0]]); }
+function mdFit(map, a, b){
+  map.fitBounds([[Math.min(a[1], b[1]), Math.min(a[0], b[0])], [Math.max(a[1], b[1]), Math.max(a[0], b[0])]],
+    { padding: 60, maxZoom: 16, duration: 0 });
+}
+// Who is bringing the order, roughly how far and how soon, and how fresh
+// that position is. Distance is a straight line; the time assumes ~20 km/h
+// through city traffic, so it is labelled "about".
+function riderCardHtml(o){
+  const dest = (typeof S.user?.lat === 'number' && typeof S.user?.lng === 'number') ? [S.user.lat, S.user.lng] : null;
+  const km = dest && o.riderLat ? distKm([o.riderLat, o.riderLng], dest) : null;
+  const eta = km != null ? Math.max(1, Math.round(km / 20 * 60)) : null;
+  const at = riderAtMs(o), secs = at ? Math.max(0, Math.round((Date.now() - at) / 1000)) : null;
+  const fresh = secs == null ? '' : secs < 60 ? 'updated just now' : `updated ${Math.round(secs / 60)} min ago`;
+  const away = km == null ? 'Heading to you' : `${km < 1 ? Math.round(km * 1000) + ' m' : km.toFixed(1) + ' km'} away · about ${eta} min`;
+  return `<div class="rider-av">🛵</div>
+    <div class="grow"><b>${esc(o.riderName || 'Your rider')} is on the way</b>
+      <span>${away}${fresh ? ' · ' + fresh : ''}</span></div>
+    ${o.riderPhone ? `<a class="rider-call" href="tel:${esc(o.riderPhone)}" aria-label="Call the rider">${icon('phone',18)}</a>` : ''}`;
+}
 let TRACK_MAP = null, TRACK_RIDER = null, TRACK_DEST = null, TRACK_FITTED = false;
 let DELIVERY_UNSUB = null;   // the rider-position listener, separate from status
 // Older than this and we say so rather than showing a stale dot as if live.
@@ -3578,7 +3624,7 @@ function startDeliveryListener(o){
     const moved = d.riderLat !== S.order?.riderLat || d.riderLng !== S.order?.riderLng;
     if(!moved) return;
     S.order = {...S.order, riderLat: d.riderLat ?? null, riderLng: d.riderLng ?? null,
-               riderAt: d.riderAt ?? null, riderName: d.riderName ?? null};
+               riderAt: d.riderAt ?? null, riderName: d.riderName ?? null, riderPhone: d.riderPhone ?? null};
     // Only the marker moves — a repaint would rebuild and re-centre the map.
     if(S.screen==='order') renderTrackMap();
   });
@@ -3598,39 +3644,28 @@ function renderTrackMap(){
   const o = S.order;
   const el = document.getElementById('track-map');
   // Screen changed, or the delivery ended — tear the map down so it can't
-  // hold a stale position or leak a Leaflet instance.
+  // hold a stale position or leak a map instance.
   if(!el || !o || o.status !== 'out_for_delivery'){ destroyTrackMap(); return; }
-  if(!o.riderLat || !window.L){ return; }
-
+  const card = document.getElementById('rider-card');
+  if(card) card.innerHTML = riderCardHtml(o);
+  if(!o.riderLat) return;
+  if(TRACK_MAP && TRACK_MAP.getContainer() !== el) destroyTrackMap();
+  const rider = [o.riderLat, o.riderLng];
+  // The customer's own saved pin; the order document carries no coordinates.
+  const dest = (typeof S.user?.lat === 'number' && typeof S.user?.lng === 'number') ? [S.user.lat, S.user.lng] : null;
   if(!TRACK_MAP){
     el.innerHTML = '';
-    TRACK_MAP = L.map(el, { zoomControl:false, attributionControl:true, dragging:true, tap:true });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19, attribution: '© OpenStreetMap',
-    }).addTo(TRACK_MAP);
-    TRACK_MAP.setView([o.riderLat, o.riderLng], 15);
+    TRACK_MAP = mdMap(el, rider, 15);
+    if(!TRACK_MAP){ el.innerHTML = '<div class="map-empty">This phone can’t show the map, but your rider is on the way.</div>'; return; }
   }
-  const riderIcon = L.divIcon({ className:'', html:'<div class="rider-dot">🛵</div>', iconSize:[40,40], iconAnchor:[20,20] });
-  if(!TRACK_RIDER) TRACK_RIDER = L.marker([o.riderLat, o.riderLng], { icon:riderIcon }).addTo(TRACK_MAP);
-  else TRACK_RIDER.setLatLng([o.riderLat, o.riderLng]);
-
-  // Destination pin, when the customer's saved coordinates are known. The
-  // order document itself carries no coordinates (the Firestore create rule
-  // pins the allowed field set), so this comes from the local profile.
-  const dLat = S.user?.lat, dLng = S.user?.lng;
-  if(dLat && dLng && !TRACK_DEST){
-    TRACK_DEST = L.marker([dLat, dLng], {
-      icon: L.divIcon({ className:'', html:'<div class="dest-dot">🏠</div>', iconSize:[34,34], iconAnchor:[17,17] }),
-    }).addTo(TRACK_MAP);
-  }
+  if(!TRACK_RIDER) TRACK_RIDER = mdPin(TRACK_MAP, rider, '<div class="rider-dot">🛵</div>');
+  else mdMove(TRACK_RIDER, rider);
+  if(dest && !TRACK_DEST) TRACK_DEST = mdPin(TRACK_MAP, dest, '<div class="dest-dot">🏠</div>');
   // Fit both points once, then leave the view alone so the map doesn't fight
   // a customer who has panned or zoomed it themselves.
-  if(!TRACK_FITTED && TRACK_DEST){
-    TRACK_MAP.fitBounds(L.latLngBounds([[o.riderLat,o.riderLng],[dLat,dLng]]).pad(0.35));
-    TRACK_FITTED = true;
-  }
+  if(!TRACK_FITTED && dest){ mdFit(TRACK_MAP, rider, dest); TRACK_FITTED = true; }
   // Honesty about staleness: a rider who loses signal or force-quits leaves a
-  // last-known dot behind, and showing that as "live" is worse than saying so.
+  // last-known position behind, and showing that as "live" is worse than saying so.
   const age = Date.now() - riderAtMs(o);
   const old = el.querySelector('.map-stale');
   if(age > RIDER_STALE_MS){
@@ -4301,7 +4336,7 @@ function destroyRiderMap(){
 function renderRiderMap(){
   const el = document.getElementById('rider-map');
   const d = RIDER.delivery;
-  if(!el || !d || !window.L){ destroyRiderMap(); return; }
+  if(!el || !d){ destroyRiderMap(); return; }
   if(RIDER_MAP && RIDER_MAP.getContainer() !== el) destroyRiderMap();
   const dest = riderDest(d);
   const me = RIDER.lastFix ? [RIDER.lastFix.lat, RIDER.lastFix.lng] : null;
@@ -4311,16 +4346,12 @@ function renderRiderMap(){
   }
   if(!RIDER_MAP){
     el.innerHTML = '';
-    RIDER_MAP = L.map(el, { zoomControl:false, attributionControl:true });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19, attribution:'© OpenStreetMap' }).addTo(RIDER_MAP);
-    RIDER_MAP.setView(me || dest, 15);
+    RIDER_MAP = mdMap(el, me || dest, 15);
+    if(!RIDER_MAP){ el.innerHTML = '<div class="map-empty">This phone can’t show the map — use Navigate for directions.</div>'; return; }
   }
-  if(dest && !RIDER_DEST) RIDER_DEST = L.marker(dest, { icon: L.divIcon({ className:'', html:'<div class="dest-dot">🏠</div>', iconSize:[34,34], iconAnchor:[17,17] }) }).addTo(RIDER_MAP);
-  if(me){
-    if(!RIDER_ME) RIDER_ME = L.marker(me, { icon: L.divIcon({ className:'', html:'<div class="rider-dot">🛵</div>', iconSize:[40,40], iconAnchor:[20,20] }) }).addTo(RIDER_MAP);
-    else RIDER_ME.setLatLng(me);
-  }
-  if(me && dest && !RIDER_FITTED){ RIDER_MAP.fitBounds(L.latLngBounds([me, dest]).pad(0.3)); RIDER_FITTED = true; }
+  if(dest && !RIDER_DEST) RIDER_DEST = mdPin(RIDER_MAP, dest, '<div class="dest-dot">🏠</div>');
+  if(me){ if(!RIDER_ME) RIDER_ME = mdPin(RIDER_MAP, me, '<div class="rider-dot">🛵</div>'); else mdMove(RIDER_ME, me); }
+  if(me && dest && !RIDER_FITTED){ mdFit(RIDER_MAP, me, dest); RIDER_FITTED = true; }
 }
 
 function riderClearOrder(){
