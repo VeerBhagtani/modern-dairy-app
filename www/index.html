@@ -4616,6 +4616,48 @@ function startMaintenancePolling(){
     try{ window.Capacitor.Plugins.App.addListener('appStateChange', st=>{ if(st && st.isActive) pollLiveState(); }); }catch(e){}
   }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   ANDROID BACK BUTTON
+   With @capacitor/app installed, Android hands the back button to the app
+   only if the app listens for it; otherwise it closes the app, because a
+   single-page app like this never adds browser history for the WebView to
+   go back through. So back is handled here, in this order: close whatever
+   sits on top (zoomed photo, bottom sheet), step back inside a multi-step
+   form, walk back through the screens the customer came through, fall back
+   to Home from any other tab, and only leave the app from Home — on a
+   second press, so one stray tap never closes it.
+   ═══════════════════════════════════════════════════════════ */
+let BACK_EXIT_AT = 0;
+function appExit(){
+  const App = window.Capacitor?.Plugins?.App;
+  if(App?.exitApp) App.exitApp(); else if(App?.minimizeApp) App.minimizeApp();
+}
+function handleHardwareBack(){
+  if(document.getElementById('zoom')){ closeZoom(); return; }
+  if(document.getElementById('sheet')?.classList.contains('on')){ closeSheet(); return; }
+  if(MAINTENANCE_LOCKED){ appExit(); return; }
+  // Multi-step forms live on one screen; back steps through them first.
+  if(S.screen === 'login' && LOGIN.step !== 'entry'){
+    LOGIN.step = (LOGIN.step === 'otp' && LOGIN.mode === 'b2b' && LOGIN.authMode === 'signup') ? 'contact'
+               : LOGIN.step === 'contact' ? 'bank' : 'entry';
+    paint(); return;
+  }
+  if(S.screen === 'forgotPassword' && RESET.step !== 'entry'){ RESET.step = 'entry'; paint(); return; }
+  // A rider mid-trip keeps tracking: back only sends the app to the background.
+  if(S.screen === 'rider' && (RIDER.watchId || RIDER.webWatchId)){ window.Capacitor?.Plugins?.App?.minimizeApp?.(); return; }
+  if(S.screen === 'rider' && RIDER.delivery){ riderClearOrder(); return; }
+  // The order is placed — back from the confirmation goes home, not to checkout.
+  if(S.screen === 'placed'){ switchTab('home'); return; }
+  if(NAV.length){ back(); return; }
+  if(S.user && S.screen !== 'home'){ switchTab('home'); return; }
+  if(Date.now() - BACK_EXIT_AT < 2000){ appExit(); return; }
+  BACK_EXIT_AT = Date.now();
+  toast('Press back again to exit');
+}
+if(window.Capacitor?.Plugins?.App){
+  try{ window.Capacitor.Plugins.App.addListener('backButton', handleHardwareBack); }catch(e){}
+}
 boot();
 
 /* Keep the focused input visible when the keyboard opens. With the native

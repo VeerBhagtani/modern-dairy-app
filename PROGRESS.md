@@ -141,15 +141,31 @@ were rebuilt; every other screen picked up the new colour tokens.
   numbers and v5.13 customers look up `deliveries/{orderNo}`, and both need
   the new APK. The web link works now.
 
+### Android back button — fixed
+The app never listened for Android's back button. With `@capacitor/app`
+installed, an unhandled back press makes Android close the app, because this
+single-page app keeps no browser history to go back through.
+`handleHardwareBack()` now works in this order:
+1. Closes a zoomed photo or a bottom sheet first.
+2. Steps back through business signup (OTP → contact → bank → GSTIN) and
+   password reset.
+3. Walks back through the screens the customer visited (cart → product →
+   catalogue → home).
+4. Goes Home from any other tab, and from the order-placed screen (never
+   back into checkout).
+5. Keeps a rider's trip running: back only sends the app to the background.
+6. On Home, asks "Press back again to exit".
+
+Simulated end to end in headless Chrome: 18/18.
+
 ### Still to do
-1. **APK v5.15.0-debug is the latest release** (v5.14.0-debug plus the
-   design consistency pass):
-   https://github.com/VeerBhagtani/modern-dairy-app/releases/tag/v5.15.0-debug
+1. **Merged and released.** PR #2 is merged into `master`, so `master`
+   matches what is live (Hosting, Firestore rules) and the APK. The final
+   APK is **v5.16.0-debug**, built from `master` (v5.15 plus the
+   back-button fix):
+   https://github.com/VeerBhagtani/modern-dairy-app/releases/tag/v5.16.0-debug
    (direct download:
-   https://github.com/VeerBhagtani/modern-dairy-app/releases/download/v5.15.0-debug/modern-dairy-v5.15.0-debug.apk).
-   It was built by GitHub Actions run 34590502487 from branch
-   `storefront-rider-link-accounts`, PR #2, which is **not merged into
-   master yet**. The same file is `index.apk` in this folder (git ignores
+   https://github.com/VeerBhagtani/modern-dairy-app/releases/download/v5.16.0-debug/modern-dairy-v5.16.0-debug.apk). The same file is `index.apk` in this folder (git ignores
    it). The owner chose a public release knowing the APK carries the real
    OTP/GST credentials from the Actions secrets. **Rotate them soon**, since
    anyone downloading the APK can extract them.
