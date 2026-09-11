@@ -116,6 +116,25 @@ service cloud.firestore {
                     && strOk(request.resource.data.payment, 40)
                     && notBlocked(request.resource.data);
 
+      // Owner can read their own order (powers live status sync back to the
+      // phone) and can self-cancel it — but ONLY while still cancellable,
+      // ONLY by setting status to 'cancelled', and ONLY that field (plus a
+      // cancelledAt timestamp) may change. No human — including the admin —
+      // can set an order to cancelled; that status is customer-triggered only.
+      allow read: if isAdmin() || isOwner();
+      allow update: if isAdmin()
+                    || (isOwner()
+                        && isCancellable(resource.data.status)
+                        && request.resource.data.status == 'cancelled'
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelledAt']));
+      allow delete: if isAdmin();
+    }
+    // The three blocks below used to sit INSIDE /orders/{orderId}, which made
+    // them rules for orders/{id}/deliveries/... sub-collections. The real
+    // top-level collections then fell through to the admin-only catch-all, so
+    // riders and customers were refused every delivery read (tracking never
+    // worked) and the app could never read the public hold list.
+
     // Admin-only credit-hold / block list (read via get() by the order rule
     // above; never exposed to customers). Public hash list lives separately.
     match /order_blocks/{docId} {
@@ -123,9 +142,11 @@ service cloud.firestore {
     }
 
     // ── Deliveries: the rider's entire world ────────────────────────────
-    // A rider signs in with nothing. They type the order number the office
-    // gave them, and that number IS the key: the document id here is the
-    // order number.
+    // A rider signs in with nothing. They open the link (or type the code)
+    // the office sent them, and that code IS the key: the document id is a
+    // random 10-character delivery code, never the guessable order number.
+    // The customer reaches the same record through the code the office
+    // writes onto their own order.
     //
     // This exists so a rider never touches an order document. An order holds
     // the customer's full record — name, phone, address, GSTIN, items, totals.
@@ -168,20 +189,6 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-      // Owner can read their own order (powers live status sync back to the
-      // phone) and can self-cancel it — but ONLY while still cancellable,
-      // ONLY by setting status to 'cancelled', and ONLY that field (plus a
-      // cancelledAt timestamp) may change. No human — including the admin —
-      // can set an order to cancelled; that status is customer-triggered only.
-      allow read: if isAdmin() || isOwner();
-      allow update: if isAdmin()
-                    || (isOwner()
-                        && isCancellable(resource.data.status)
-                        && request.resource.data.status == 'cancelled'
-                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelledAt']));
-      allow delete: if isAdmin();
-    }
-
     // Catalogue/config: public read (so the app could fetch these directly
     // in future), admin-only write.
     match /products/{productId} {
@@ -221,6 +228,73 @@ service cloud.firestore {
                    && request.resource.data.audience in ['b2b', 'b2c']
                    && request.resource.data.uid == request.auth.uid
                    && (resource == null || resource.data.uid == request.auth.uid);
+    }
+
+    // ── Driver requests ("Request a driver", business customers) ─────────
+    // A hotel asks the office for a driver: to collect a payment (cash or
+    // cheque), for an urgent delivery, or for other help. Customers can only
+    // create one — pinned field set, pinned to 'open' — and withdraw it while
+    // it is still open. The office moves it on from the admin website.
+    match /driver_requests/{requestId} {
+      allow create: if request.auth != null
+                    && request.resource.data.keys().hasAll(['reason', 'phone', 'customerType', 'status', 'createdByUid', 'createdAt'])
+                    && request.resource.data.keys().hasOnly(['reason', 'note', 'company', 'name', 'phone', 'address', 'gstin', 'customerType', 'status', 'createdByUid', 'createdAt'])
+                    && request.resource.data.createdByUid == request.auth.uid
+                    && request.resource.data.status == 'open'
+                    && request.resource.data.customerType == 'b2b'
+                    && request.resource.data.reason in ['collect_payment', 'urgent_delivery', 'other']
+                    && request.resource.data.createdAt == request.time
+                    && request.resource.data.phone is string
+                    && request.resource.data.phone.matches('^[6-9][0-9]{9}$')
+                    && strOk(request.resource.data.get('note', null), 300)
+                    && strOk(request.resource.data.get('company', null), 200)
+                    && strOk(request.resource.data.get('name', null), 120)
+                    && strOk(request.resource.data.get('address', null), 500)
+                    && strOk(request.resource.data.get('gstin', null), 20);
+      allow read: if isAdmin() || isOwner();
+      allow update: if isAdmin()
+                    || (isOwner()
+                        && resource.data.status == 'open'
+                        && request.resource.data.status == 'cancelled'
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']));
+      allow delete: if isAdmin();
+    }
+
+    // ── Customer accounts (the admin Account Center) ─────────────────────
+    // Accounts still live on each phone; the app copies the profile here so
+    // the office can see and manage every customer. Passwords never come
+    // here. The id must be "<this install's uid>_<phone>", so a client can
+    // only ever write its own records. The `admin` map holds the office's
+    // edits: customers can't create or change it, and the app applies it
+    // back to the phone.
+    function accountFieldsOk(d) {
+      return d.phone is string && d.phone.matches('^[6-9][0-9]{9}$')
+             && d.type in ['b2b', 'b2c']
+             && strOk(d.get('name', null), 120)
+             && strOk(d.get('company', null), 200)
+             && strOk(d.get('gstin', null), 20)
+             && strOk(d.get('address', null), 500)
+             && strOk(d.get('acctLast4', null), 4)
+             && (d.get('lat', null) == null || d.get('lat', null) is number)
+             && (d.get('lng', null) == null || d.get('lng', null) is number)
+             && d.get('bankVerified', false) is bool;
+    }
+    match /customer_accounts/{accountId} {
+      allow create: if request.auth != null
+                    && accountId == request.auth.uid + '_' + request.resource.data.phone
+                    && request.resource.data.keys().hasOnly(['phone', 'type', 'name', 'company', 'gstin', 'address', 'lat', 'lng', 'bankVerified', 'acctLast4', 'createdAt', 'updatedAt'])
+                    && accountFieldsOk(request.resource.data);
+      allow update: if isAdmin()
+                    || (request.auth != null
+                        && accountId == request.auth.uid + '_' + resource.data.phone
+                        && request.resource.data.phone == resource.data.phone
+                        && request.resource.data.keys().hasOnly(['phone', 'type', 'name', 'company', 'gstin', 'address', 'lat', 'lng', 'bankVerified', 'acctLast4', 'createdAt', 'updatedAt', 'admin'])
+                        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['admin', 'createdAt'])
+                        && accountFieldsOk(request.resource.data));
+      // A get of a missing doc must succeed (the app checks before its first
+      // write), so this matches the id pattern rather than reading resource.
+      allow get: if isAdmin() || (request.auth != null && accountId.matches(request.auth.uid + '_[0-9]{10}'));
+      allow list, delete: if isAdmin();
     }
 
     // Everything else (customers, wallet ledgers, admin audit log, OTP

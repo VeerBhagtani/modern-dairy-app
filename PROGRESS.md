@@ -1,8 +1,213 @@
 # Modern Dairy App — Progress
 
-Last updated: 2026-08-24
+Last updated: 2026-09-11
 
-## Session of 2026-08-24 — READ THIS FIRST
+## Session of 2026-09-11 — tracking fix, Request a driver, Account Center — READ THIS FIRST
+
+**Nothing from the 2026-09-10 or 2026-09-11 sessions is committed yet**, but
+the Firestore rules and Hosting (admin site + privacy policy) are live from the
+working tree. Commit before anything else.
+
+### Rider tracking had never worked — fixed and deployed
+`match /orders/{orderId}` in `backend/firestore.rules` was never closed where
+it looked closed, so the `order_blocks`, `deliveries` and `order_blocks_public`
+blocks sat INSIDE it and only applied to sub-collections. The real top-level
+collections fell to the admin-only catch-all. Proven live with an anonymous
+probe: riders and customers got 403 on every delivery (the rider screen said
+"Could not look that up", the customer map never appeared), and the app could
+never read the public hold list, so the "account on hold" banner never showed
+(the hold itself was still enforced by the order rule). Fixed and deployed;
+re-probed: fetching one delivery is allowed, listing them is not.
+**Before trusting any rules change, check every `match` sits at brace depth 2.**
+
+### Decisions
+- **Uber:** Uber Direct for all deliveries. Still blocked on Uber's side
+  (`invalid_scope` — the Direct product isn't enabled for the app); own riders
+  plus the free Leaflet tracking stay as the fallback until it is.
+- **Request a driver:** business customers only. The card says "a small extra
+  charge applies" until an amount is set in Settings.
+- **Cash on delivery for B2C:** brainstormed, nothing built. On the table: UPI
+  to the business QR at the door, a rider "cash collected" button with
+  per-rider end-of-day totals, a delivery OTP, a COD cap for new customers, a
+  COD fee or prepaid discount.
+
+### Request a driver (business customers) — built
+Home-screen card for B2B accounts: Request a driver → Collect payment (cash or
+cheque) / Urgent delivery / Other help, plus optional details (required for
+Other). Lands live in the admin **Driver requests** tab (the tab counts new
+ones). The office assigns a driver (name + mobile), marks it done or cancels
+it, and the customer's card shows the driver live. The customer can withdraw
+while it's still open. Charge: Settings → "Driver request charge" (0 = no
+amount shown). Collection `driver_requests`; rules deployed.
+
+### Account Center — built
+Admin **Accounts** tab: every customer account, filters All / B2B / B2C /
+Supply held or stopped, search by name, business, phone or GSTIN. Each account
+shows contact, GSTIN, bank check, address + map pin, first/last seen and recent
+orders, with **Hold supply / Stop supply / Resume** (the credit-hold list the
+order rule already enforces; the entry now records hold vs stop) and edits to
+name, business name and address.
+- Accounts still live on the phone. The app copies each profile — never the
+  password — to `customer_accounts/{installUid}_{phone}` on launch, after
+  sign-in and after an address change. **A customer only appears once they
+  open the new APK.**
+- Office edits go into the doc's `admin` map (customers can't write it); the
+  app applies them to the phone on its next launch.
+- Live rules probe, 26/26 (scratch script, not in the repo): valid writes
+  allowed; forged owner, extra fields, preset status, back-dated time, office
+  edits, password hash, phone change and listing all refused.
+- Privacy policy section 6 now says account profiles and driver requests are
+  stored in Firebase and passwords stay on the phone. Deployed.
+
+### Business signup was impossible on the demo APK — fixed in code
+The bank-account step always failed ("Bank verification is not configured in
+this build") and had no test shortcut. Fixed test login for a business account:
+- GSTIN `27AAPFM1234A1ZV`, any business name
+- Bank account `000123456789`, IFSC `TEST0000001` (accepted only with that GSTIN)
+- Any contact name and address, mobile `9000000000`, code `0000`
+
+### Storefront redesign (customer app) — built, needs a new APK
+The owner benchmarked the app against Zomato's Hyperpure and asked for a
+far more attractive, photo-led front end. Home, Catalogue and the Product page
+were rebuilt; every other screen picked up the new colour tokens.
+- **Brand:** colours taken off the packaging — "Modern" navy `#1B2A6B`
+  (`--brand`), crest red `#D7262F` (`--crimson`, ADD buttons and steppers),
+  butter `#FFC928` (`--butter`, money-off and the cutoff only), frost blue
+  `#125C8C` (frozen). Headings and prices in Bricolage Grotesque; body stays
+  Plus Jakarta Sans.
+- **Home:** navy masthead with search; a "dispatch ticket" (tomorrow's
+  7–11 AM slot plus a live "order within 17h 19m" countdown to
+  `APPCFG.orderCutoff`); a swipeable promo carousel built from real packs
+  (`PROMOS` — a slide hides itself if its product is disabled); photo
+  category tiles; product shelves (regular items / popular, frozen, drinks);
+  the driver card and credit as slim rows.
+- **Catalogue:** photo category rail on the left, two-column product cards
+  with the ADD button on the photo, butter "% OFF" tags.
+- **Product page:** full-width photo, tap for a full-screen zoom, pack
+  sizes, "More in <category>" shelf.
+- **Photos:** `pimg()` rewrites Cloudinary URLs to
+  `e_trim:10/c_pad,b_white,w_N,h_N/f_auto,q_auto` — the white studio
+  margin is trimmed so packs fill their tiles, and images arrive 20–35×
+  smaller (butter 730 KB → 20 KB). Non-Cloudinary URLs pass through `safeUrl`.
+- `repaintRows()` now refreshes every `[data-act]` ADD/stepper on screen, so
+  shelves on Home update when an item is added.
+- Checked in headless Chrome at 412×915 (screenshots seeded a test business
+  account in localStorage and blocked Firebase sign-up, so nothing was
+  written to Firestore). All test suites pass.
+
+### Rider link, delivery codes and rider maps — built; website side live
+- **Delivery codes:** marking an order "Out for delivery" now issues a fresh
+  random 10-character code (32-symbol alphabet, about 50 bits, no 0/O/1/I)
+  and publishes `deliveries/{code}` instead of `deliveries/{orderNo}`.
+  Order numbers run in sequence, so the old key let anyone guess their way
+  to customers' addresses. The code is also written onto the order
+  (`deliveryCode`), which is how the customer's app finds the live map.
+  Re-marking an order, or moving it on, closes the previous trip, so old
+  links stop working.
+- **Rider link, nothing to install:** `https://modern-dairy-pune.web.app/ride/#CODE`
+  (`legal/ride/index.html`). The code sits after `#`, so it never reaches a
+  server log or a Referer header. The page shows the address, a map with the
+  rider and the customer's pin, the straight-line distance, Navigate (Google
+  Maps directions) and Call. It shares location while open and asks the
+  phone to keep the screen awake. **Honest limit:** a browser can't share
+  location with the screen locked or while Google Maps is in front, so the
+  customer sees the last position until the rider comes back to the page.
+- **Admin:** the moment an order goes out for delivery, its screen shows a
+  Rider link card (Send on WhatsApp / Copy link). The customer's saved map
+  pin (from the Account Center) is copied into the delivery as
+  `destLat`/`destLng`. With no pin, Navigate goes by the address text.
+- **App rider mode:** takes the code or a pasted link (any case, dashes
+  optional) and gets the same map, distance, Navigate and Call. Tracking
+  keeps running in the background while Google Maps navigates.
+- Hosting `Permissions-Policy` now allows `geolocation=(self)` (it was blocked
+  site-wide). Leaflet is also served from `/vendor/leaflet/`.
+- Tested: rider end-to-end 9/9 against the live project (web link and app
+  rider mode on a throwaway delivery, cleaned up afterwards); frontend tests
+  52.
+- **Not yet exercised in a browser:** the admin's code-issuing path (needs
+  the admin login) and the customer app following `deliveryCode` to its map.
+  Run one real trip end to end.
+- **The current APK's rider flow stops working:** v5.13 riders type order
+  numbers and v5.13 customers look up `deliveries/{orderNo}`, and both need
+  the new APK. The web link works now.
+
+### Still to do
+1. Commit, then build a new APK with the `build-apk` workflow. The redesign,
+   rider codes and maps, driver card, account sync and test bank account
+   only reach phones in a new APK.
+2. First real rider trip end to end, now that the rules allow it.
+3. `tests/bills-print.test.mjs` fails 3 "today" checks between 00:00 and 05:30
+   IST (passes with `TZ=UTC`, and fails the same on the committed code). The
+   test's idea of "today" crosses the UTC date line; not yet looked into
+   whether the Bills tab's own "Today" filter has the same problem.
+
+## Session of 2026-09-10 — admin login + password recovery
+
+### Admin login changed (live)
+- Username is now **`modern-dairy`** (Firebase account
+  `modern-dairy@admin.local`, the same trusted uid
+  `63cH4Dduh4WS7okdV0s0DcJtD7q2`). `Veer` no longer works. The password was
+  reset and is deliberately not written anywhere in this repo.
+- The admin website asks for the ID and password **on every visit** — reload,
+  new tab, reopened browser. Firebase Auth runs on `inMemoryPersistence`, so no
+  session is ever saved in the browser. Deployed to Hosting.
+- `set-admin-login.sh`, which older notes below tell you to use, **never
+  existed**. To reset the password by hand, with gcloud signed in as the project
+  owner: POST
+  `https://identitytoolkit.googleapis.com/v1/projects/modern-dairy-pune/accounts:update`
+  with `{ localId: <uid>, password: ... }` (or `email`), bearer
+  `gcloud auth print-access-token`, header `x-goog-user-project: modern-dairy-pune`.
+  Never create a new user — a new uid is rejected by the rules, the panel and
+  the backend.
+
+### Forgot / change password by SMS code — BUILT, NOT LIVE
+"Forgot password?" on the sign-in screen and "Change password" in Settings:
+pick one of the two recovery numbers (shown only as `••••••0666` /
+`••••••2966`), receive an SMS code, set a new password. It all runs on the
+backend — `backend/src/routes/adminRecovery.js`, mounted at `/admin-recovery`.
+
+- The recovery numbers live only in Secret Manager (`admin-recovery-phones`).
+  The page sends an index, never a number, so a code can only reach those
+  phones. That secret and the OTP credentials (`otp-customer-id`,
+  `otp-auth-token`) are deliberately **outside `KNOWN_SECRETS`**, so the
+  admin website's API-keys endpoint cannot change them — only the GCP project
+  owner can. (Otherwise a stolen admin session could repoint recovery at the
+  thief's phone.)
+- The new password goes straight to Firebase Auth, which keeps a salted hash.
+  It is never stored, logged or echoed. Every admin session is revoked after a
+  change.
+- A code lasts 10 minutes; 5 wrong tries burn it; a code sent to one number
+  can't be redeemed as the other; all recovery texts share one budget of
+  5/hour regardless of IP.
+- SMS goes through Message Central (`backend/src/services/messageCentralClient.js`),
+  the same provider as the app.
+- Hosting CSP `connect-src` now allows `https://*.run.app` — without it the
+  GoFrugal backend call would have been blocked by the browser too.
+- The admin page and CSP changes went live with the 2026-09-11 Hosting
+  deploy. Until the backend is live, the recovery screen says the server
+  isn't live yet.
+- Tests: `tests/admin-recovery.test.mjs` (19 checks, drives the real route
+  over HTTP with stubbed Firestore/Secret Manager/SMS), now part of
+  `npm run test:security`.
+
+**To make it live (needs Blaze — see `backend/DEPLOY.md`):**
+1. Create secrets `admin-recovery-phones` (the two numbers, comma-separated),
+   `otp-customer-id` and `otp-auth-token` (the **rotated** Message Central
+   values).
+2. Deploy the backend with
+   `ALLOWED_ORIGINS=https://modern-dairy-pune.web.app,https://modern-dairy-pune.firebaseapp.com`.
+   Its runtime service account needs Secret Manager access and Firebase
+   Authentication Admin.
+3. Admin → Settings → Backend URL = the Cloud Run URL, then
+   `firebase deploy --only hosting`.
+4. Run one real reset end to end.
+
+**Known gap:** anyone who already knows the password can still change it
+through Firebase's own API without an SMS code. Closing that means routing
+sign-in through the backend and switching off email/password sign-in in
+Firebase. Not done.
+
+## Session of 2026-08-24
 
 Four things shipped, all **merged to `master`** (PR #1, merge commit
 `23b263e`) and all deployed live: admin website, Firestore rules, and APK
@@ -224,14 +429,13 @@ A real Node.js backend exists in the repo but is still not deployed.
   (see above) and let the `build-apk` workflow build it.
   All releases: https://github.com/VeerBhagtani/modern-dairy-app/releases
 - **Admin website (live):** https://modern-dairy-pune.web.app/admin/ — sign in
-  with username **`Veer`**. The password is deliberately NOT written down
-  here; it must stay out of the repo. (2026-08-24: the account behind the
-  trusted uid was `modern dairy@admin.local` — with a SPACE, which the login
-  box converts to an underscore — which is why it appeared that no password
-  worked. It is now `veer@admin.local`. To change it, re-run
-  `set-admin-login.sh USERNAME PASSWORD`, which repoints the EXISTING uid;
-  creating a new user in the Firebase console gets a new uid that the rules,
-  the panel and the backend all reject.)
+  with username **`modern-dairy`** (since 2026-09-10; account
+  `modern-dairy@admin.local`). The password is deliberately NOT written down
+  here; it must stay out of the repo. It asks for the ID and password on every
+  visit. To change the login by hand, update the EXISTING uid through the
+  Identity Toolkit API — see the 2026-09-10 section at the top. Creating a new
+  user in the Firebase console gets a new uid that the rules, the panel and the
+  backend all reject.
   Tabs: Dashboard, Orders, **Bills**, Products, Broadcasts, Controls,
   Settings, Maintenance, Assistant. Responsive — the data tables restack as
   cards on a phone.

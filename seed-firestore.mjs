@@ -10,8 +10,8 @@ const API_KEY = 'AIzaSyD-3RNHrI9ZPmdTioLiuCi2gjwdNXZH8HI';
 // Admin credentials come from the environment now — NEVER hardcode them here.
 // This file used to carry the real admin password in plaintext and was
 // committed to a public repo (full admin access to the live site). Run with:
-//   ADMIN_EMAIL=modern_dairy@admin.local ADMIN_PASSWORD=... node seed-firestore.mjs
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'modern_dairy@admin.local';
+//   ADMIN_EMAIL=modern-dairy@admin.local ADMIN_PASSWORD=... node seed-firestore.mjs
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'modern-dairy@admin.local';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 if (!ADMIN_PASSWORD) {
   console.error('Set ADMIN_PASSWORD in the environment before running this script.');

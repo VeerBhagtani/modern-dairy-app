@@ -293,7 +293,7 @@
 
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut }
+import { initializeAuth, inMemoryPersistence, signInWithEmailAndPassword, onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFirestore, collection, query, orderBy, limit, onSnapshot, doc, updateDoc, setDoc, getDoc, getDocs, addDoc, deleteDoc, serverTimestamp, writeBatch, increment }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
@@ -307,7 +307,9 @@ const firebaseConfig = {
   appId: "1:711745048614:web:29e8641911c62c1bb856e7",
 };
 const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
+// In-memory only: the session never touches IndexedDB/localStorage, so every
+// visit (new tab, reload, reopened browser) asks for the ID and password again.
+const auth = initializeAuth(app, { persistence: inMemoryPersistence });
 const db = getFirestore(app);
 
 const STATUS_LABEL = {
@@ -353,13 +355,15 @@ async function writeBlocks(phones, entries){
   await setDoc(doc(db,'order_blocks_public','hashes'), { hashes });
   blockList = { blockedPhones:phones, entries };
 }
-async function blockCustomer(phone, gstin, name, reason){
+// kind is 'hold' (temporary, e.g. payment pending) or 'stop' (supply ended).
+// Both block ordering the same way; the Account Center shows which it was.
+async function blockCustomer(phone, gstin, name, reason, kind = 'hold'){
   phone = String(phone||'').replace(/\D/g,'').slice(-10);
   if(!/^[6-9]\d{9}$/.test(phone)){ alert('Enter a valid 10-digit mobile number.'); return false; }
   if((blockList.blockedPhones||[]).includes(phone)){ alert('That customer is already on hold.'); return false; }
   const phones=[...(blockList.blockedPhones||[]), phone];
-  const entries=[...(blockList.entries||[]), { phone, gstin:gstin||'', name:name||'', reason:reason||'', at:new Date().toISOString() }];
-  try{ await writeBlocks(phones, entries); logAdmin('customer_order_blocked', phone+(reason?(' — '+reason):'')); render(); return true; }
+  const entries=[...(blockList.entries||[]), { phone, gstin:gstin||'', name:name||'', reason:reason||'', kind: kind==='stop'?'stop':'hold', at:new Date().toISOString() }];
+  try{ await writeBlocks(phones, entries); logAdmin(kind==='stop'?'customer_supply_stopped':'customer_order_blocked', phone+(reason?(' — '+reason):'')); render(); return true; }
   catch(e){ alert('Could not block: '+e.message); return false; }
 }
 async function unblockCustomer(phone){
@@ -383,23 +387,114 @@ function fmtDate(ts){
   return d.toLocaleString('en-IN', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
 }
 
+// Set by the recovery flow so the sign-in screen can confirm the change.
+let loginNote = '';
 function renderLogin(err){
+  const note = loginNote; loginNote = '';
   $app.innerHTML = `
     <div class="center-wrap">
       <img src="logo.png" alt="Modern Dairy" class="login-logo">
       <h1 style="text-align:center;">Modern Dairy Admin</h1>
       <div class="muted" style="margin-bottom:20px;text-align:center;">Super admin panel — sign in to manage the store.</div>
-      <div class="card">
+      <div class="card" id="login-card">
         <label>Username</label>
         <input id="f-user" autocomplete="off" placeholder="Username">
         <label>Password</label>
         <input id="f-pass" type="password" placeholder="Password">
         ${err ? `<div class="err">${esc(err)}</div>` : ''}
+        ${note ? `<div class="ok-msg" style="display:block;margin:0 0 10px;">${esc(note)}</div>` : ''}
         <button class="btn-primary" id="btn-login" style="width:100%;">Sign in</button>
+        <button class="btn-quiet btn-sm" id="btn-forgot" style="width:100%;margin-top:10px;">Forgot password?</button>
       </div>
     </div>`;
   document.getElementById('btn-login').onclick = doLogin;
   document.getElementById('f-pass').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+  document.getElementById('btn-forgot').onclick = () =>
+    renderRecovery(document.getElementById('login-card'), { title: 'Reset admin password', onCancel: () => renderLogin() });
+}
+
+/* ── Password recovery ──────────────────────────────────────
+   Runs entirely through the backend: the server holds the recovery numbers
+   (this page only ever sees their last four digits), sends and checks the
+   SMS code, and hands the new password to Firebase Auth. Nothing here stores
+   the password or a phone number. */
+async function recoveryApi(path, body){
+  let base = (cfg.backendUrl || '').trim();
+  // Signed out, cfg hasn't loaded yet — app_config is public-read.
+  if(!base){
+    try{ const s = await getDoc(doc(db, 'app_config', 'singleton')); base = String((s.exists() && s.data().backendUrl) || '').trim(); }
+    catch(e){ /* treated as not configured below */ }
+  }
+  base = base.replace(/\/+$/, '');
+  if(!base) throw new Error('Password reset needs the Modern Dairy server, which is not live yet.');
+  let res;
+  try{
+    res = await fetch(base + '/admin-recovery' + path, body
+      ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+      : {});
+  }catch(e){ throw new Error('Could not reach the Modern Dairy server. Check the connection and try again.'); }
+  let data = {};
+  try{ data = await res.json(); }catch(e){ /* non-JSON error body */ }
+  if(!res.ok || !data.success) throw new Error(data.message || `Server error (HTTP ${res.status})`);
+  return data.data;
+}
+function renderRecovery(box, { title, onCancel }){
+  const head = `<b style="font-size:1.05rem;">${esc(title)}</b>`;
+  const back = label => `<button class="btn-quiet btn-sm" id="rc-cancel" style="width:100%;margin-top:10px;">${label}</button>`;
+  box.innerHTML = `${head}<div class="muted" style="margin-top:8px;">Loading…</div>`;
+  recoveryApi('/options').then(opts => {
+    box.innerHTML = `
+      ${head}
+      <div class="muted" style="font-size:.85rem;margin:6px 0 12px;line-height:1.5;">A code is texted to the recovery number you pick. Codes only ever go to these numbers.</div>
+      ${opts.map((o, i) => `<label style="display:flex;align-items:center;gap:8px;margin:8px 0;"><input type="radio" name="rc-which" class="tick" value="${Number(o.id)}" ${i===0?'checked':''}> ${esc(o.label)}</label>`).join('')}
+      <button class="btn-primary" id="rc-send" style="width:100%;margin-top:6px;">Send code</button>
+      <div id="rc-step2" style="display:none;margin-top:12px;">
+        <label>Code from the SMS</label><input id="rc-otp" inputmode="numeric" autocomplete="one-time-code" maxlength="8">
+        <label>New password</label><input id="rc-pass" type="password" autocomplete="new-password">
+        <label>Repeat new password</label><input id="rc-pass2" type="password" autocomplete="new-password">
+        <div class="muted" style="font-size:.8rem;margin-bottom:8px;">At least 8 characters, with a letter and a number.</div>
+        <button class="btn-primary" id="rc-reset" style="width:100%;">Set new password</button>
+      </div>
+      <div id="rc-msg" style="margin-top:8px;"></div>
+      ${back('Cancel')}`;
+    const msg = (text, good) => { document.getElementById('rc-msg').innerHTML = text ? `<div class="${good?'ok-msg':'err'}" style="display:block;">${esc(text)}</div>` : ''; };
+    // The code is tied to the number it went to, so remember which one was
+    // actually sent rather than whatever radio is ticked at submit time.
+    let sentWhich = null;
+    const send = document.getElementById('rc-send');
+    send.onclick = async () => {
+      const which = Number(box.querySelector('input[name="rc-which"]:checked')?.value);
+      send.disabled = true; msg('');
+      try{
+        await recoveryApi('/send-otp', { which });
+        sentWhich = which;
+        msg(`Code sent to ${opts.find(o => Number(o.id) === which)?.label || 'the recovery number'}. It is valid for 10 minutes.`, true);
+        send.textContent = 'Send a new code';
+        document.getElementById('rc-step2').style.display = 'block';
+        document.getElementById('rc-otp').focus();
+      }catch(e){ msg(e.message); }
+      finally{ send.disabled = false; }
+    };
+    const reset = document.getElementById('rc-reset');
+    reset.onclick = async () => {
+      const otp = document.getElementById('rc-otp').value.trim();
+      const p1 = document.getElementById('rc-pass'), p2 = document.getElementById('rc-pass2');
+      if(!/^\d{4,8}$/.test(otp)){ msg('Enter the code from the SMS.'); return; }
+      if(p1.value !== p2.value){ msg('The two passwords do not match.'); return; }
+      reset.disabled = true; msg('');
+      try{
+        await recoveryApi('/reset', { which: sentWhich, otp, newPassword: p1.value });
+        p1.value = ''; p2.value = '';
+        loginNote = 'Password changed. Sign in with the new password.';
+        // The server has already ended every session; signing out makes this tab agree.
+        if(auth.currentUser){ closeModal(); await signOut(auth); } else renderLogin();
+      }catch(e){ msg(e.message); reset.disabled = false; }
+    };
+    document.getElementById('rc-cancel').onclick = onCancel;
+  }).catch(e => {
+    box.innerHTML = `${head}<div class="err" style="margin-top:8px;">${esc(e.message)}</div>${back('Back')}`;
+    document.getElementById('rc-cancel').onclick = onCancel;
+  });
 }
 
 async function doLogin(){
@@ -431,7 +526,9 @@ function renderShell(bodyHtml){
       <div class="tabs">
         <button class="tab ${tab==='dashboard'?'on':''}" data-tab="dashboard">Dashboard</button>
         <button class="tab ${tab==='orders'?'on':''}" data-tab="orders">Orders</button>
+        <button class="tab ${tab==='drivers'?'on':''}" data-tab="drivers">${esc(rfdTabLabel())}</button>
         <button class="tab ${tab==='bills'?'on':''}" data-tab="bills">Bills</button>
+        <button class="tab ${tab==='accounts'?'on':''}" data-tab="accounts">Accounts</button>
         <button class="tab ${tab==='products'?'on':''}" data-tab="products">Products</button>
         <button class="tab ${tab==='broadcasts'?'on':''}" data-tab="broadcasts">Broadcasts</button>
         <button class="tab ${tab==='controls'?'on':''}" data-tab="controls" style="color:var(--bad);">Controls</button>
@@ -447,8 +544,274 @@ function renderShell(bodyHtml){
   document.getElementById('modal-bg').onclick = (e) => { if(e.target.id==='modal-bg') closeModal(); };
 }
 
+/* ═══════════════════════════════════════════════════════════
+   ACCOUNT CENTER
+   Customer accounts still live on each phone; the app copies every profile
+   (never the password) to customer_accounts/{installUid}_{phone}. One person
+   can have several docs (reinstalled app, second phone), so the list groups
+   by phone and shows the most recently seen copy.
+   Office edits go into each doc's `admin` map — customers can't write it —
+   and the app applies them back to the phone on its next launch.
+   Hold/stop supply reuses the credit-hold list, which the order rules enforce.
+   ═══════════════════════════════════════════════════════════ */
+let accounts = [];
+let unsubAccounts = null;
+let acctFilter = 'all';
+let acctSearch = '';
+const ACCT_FILTERS = [
+  { id:'all', label:'All' }, { id:'b2b', label:'Business (B2B)' },
+  { id:'b2c', label:'Personal (B2C)' }, { id:'hold', label:'Supply held or stopped' },
+];
+function tsMs(ts){ return ts?.toMillis ? ts.toMillis() : (ts ? (new Date(ts).getTime() || 0) : 0); }
+function startAccountsListener(){
+  unsubAccounts = onSnapshot(query(collection(db, 'customer_accounts'), limit(2000)), snap => {
+    accounts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if(tab==='accounts'){ refreshAcctChips(); refreshAcctList(); }
+  }, err => console.error(err));
+}
+function accountPeople(){
+  const byPhone = new Map();
+  for(const a of accounts){
+    if(!a.phone) continue;
+    const seen = tsMs(a.updatedAt);
+    const cur = byPhone.get(a.phone);
+    if(!cur) byPhone.set(a.phone, { ...a, docIds:[a.id], seen });
+    else{
+      cur.docIds.push(a.id);
+      if(seen > cur.seen) Object.assign(cur, { ...a, docIds:cur.docIds, seen });
+    }
+  }
+  return [...byPhone.values()];
+}
+// The office's edits win over whatever the phone last sent.
+function effective(p){
+  const e = p.admin || {};
+  return { ...p, name: e.name || p.name, company: e.company || p.company, address: e.address || p.address };
+}
+function holdEntry(phone){ return (blockList.entries||[]).find(e => e.phone === phone) || null; }
+function supplyPill(phone){
+  const h = holdEntry(phone);
+  return h ? `<span class="pill cancelled">${h.kind==='stop'?'Supply stopped':'Supply on hold'}</span>` : '<span class="pill delivered">Supplying</span>';
+}
+function acctMatches(p, f){ return f==='all' || (f==='hold' ? !!holdEntry(p.phone) : p.type===f); }
+function ordersFor(phone){ return orders.filter(o => o.phone === phone); }
+function acctChipsHtml(){
+  const people = accountPeople();
+  return ACCT_FILTERS.map(f => `<button class="btn-quiet btn-sm" data-acct-filter="${f.id}" style="background:${acctFilter===f.id?'var(--brand)':'var(--bg)'};color:${acctFilter===f.id?'#fff':'var(--ink)'};">${f.label} (${people.filter(p=>acctMatches(p,f.id)).length})</button>`).join('');
+}
+function filteredPeople(){
+  const q = acctSearch.trim().toLowerCase();
+  return accountPeople()
+    .filter(p => acctMatches(p, acctFilter))
+    .filter(p => { if(!q) return true; const v = effective(p); return [v.name, v.company, p.phone, p.gstin].some(x => String(x||'').toLowerCase().includes(q)); })
+    .sort((a, b) => b.seen - a.seen);
+}
+function acctListHtml(){
+  const list = filteredPeople();
+  return `
+    <div class="muted" style="margin-bottom:10px;">${list.length} account${list.length===1?'':'s'}${acctFilter!=='all'||acctSearch?' matching':''}</div>
+    <div class="card" style="padding:0;overflow:auto;">
+      ${!list.length ? `<div class="empty">${accounts.length?'No accounts match this filter/search.':'No accounts yet. Each customer appears here the first time they open the updated app.'}</div>` : `
+      <table class="stacked">
+        <thead><tr><th>Customer</th><th>Type</th><th>Phone</th><th>GSTIN</th><th>Recent orders</th><th>Supply</th><th>Last seen</th></tr></thead>
+        <tbody>
+          ${list.map(p => { const v = effective(p); const os = ordersFor(p.phone); return `
+            <tr data-acct="${esc(p.phone)}">
+              <td data-l="Customer"><b>${esc(v.company||v.name||'—')}</b>${v.company&&v.name?`<br><span class="muted">${esc(v.name)}</span>`:''}</td>
+              <td data-l="Type"><span class="pill ${p.type==='b2b'?'placed':'info'}">${p.type==='b2b'?'Business':'Personal'}</span></td>
+              <td data-l="Phone">+91 ${esc(p.phone)}</td>
+              <td data-l="GSTIN">${esc(p.gstin||'—')}</td>
+              <td data-l="Recent orders">${os.length} · ${money(os.reduce((s,o)=>s+(Number(o.total)||0),0))}</td>
+              <td data-l="Supply">${supplyPill(p.phone)}</td>
+              <td data-l="Last seen" class="muted">${fmtDate(p.updatedAt)}</td>
+            </tr>`; }).join('')}
+        </tbody>
+      </table>`}
+    </div>`;
+}
+function accountsBody(){
+  return `
+    <div class="muted" style="font-size:.85rem;line-height:1.55;margin-bottom:12px;">
+      Every customer account made in the app. A customer appears here the first time they open the updated app.
+      <b>Hold</b> or <b>Stop</b> supply blocks their new orders on the server straight away, and their app shows an "account on hold" message.
+    </div>
+    <div id="acct-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">${acctChipsHtml()}</div>
+    <input id="acct-search" placeholder="Search name, business, phone or GSTIN" value="${esc(acctSearch)}" style="margin-bottom:12px;">
+    <div id="acct-list">${acctListHtml()}</div>`;
+}
+function refreshAcctChips(){ const el = document.getElementById('acct-chips'); if(el){ el.innerHTML = acctChipsHtml(); wireAcctChips(); } }
+function refreshAcctList(){ const el = document.getElementById('acct-list'); if(el){ el.innerHTML = acctListHtml(); wireAcctRows(); } }
+function wireAcctChips(){ document.querySelectorAll('[data-acct-filter]').forEach(b => b.onclick = () => { acctFilter = b.dataset.acctFilter; refreshAcctChips(); refreshAcctList(); }); }
+function wireAcctRows(){ document.querySelectorAll('tr[data-acct]').forEach(tr => tr.onclick = () => openAccount(tr.dataset.acct)); }
+function wireAccountsEvents(){
+  wireAcctChips(); wireAcctRows();
+  const s = document.getElementById('acct-search');
+  if(s) s.oninput = () => { acctSearch = s.value; refreshAcctList(); };
+}
+function openAccount(phone){
+  const p = accountPeople().find(x => x.phone === phone);
+  if(!p) return;
+  const v = effective(p), h = holdEntry(phone), os = ordersFor(phone);
+  const hasPin = typeof p.lat === 'number' && typeof p.lng === 'number';
+  document.getElementById('modal-content').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+      <div><b style="font-size:1.1rem;">${esc(v.company||v.name||'Customer')}</b>
+        <div class="muted">${p.type==='b2b'?'Business (B2B)':'Personal (B2C)'} · +91 ${esc(p.phone)}</div></div>
+      <button class="close-x" id="btn-close">×</button>
+    </div>
+    <div style="margin:12px 0;">${supplyPill(phone)}${h?` <span class="muted" style="font-size:.85rem;">${esc(h.reason||'no reason given')}${h.at?' · since '+fmtDate(h.at):''}</span>`:''}</div>
+    <div class="row"><span class="muted">Contact</span><span>${esc(v.name||'—')}</span></div>
+    ${p.type==='b2b'?`
+    <div class="row"><span class="muted">GSTIN</span><span>${esc(p.gstin||'—')}</span></div>
+    <div class="row"><span class="muted">Bank check</span><span>${p.bankVerified?`Verified${p.acctLast4?` · a/c ending ${esc(p.acctLast4)}`:''}`:'Not verified'}</span></div>`:''}
+    <div class="row" style="align-items:flex-start;"><span class="muted">Address</span><span style="text-align:right;max-width:70%;">${esc(v.address||'—')}${hasPin?`<br><a href="https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lng}#map=17/${p.lat}/${p.lng}" target="_blank" rel="noopener">Open location pin</a>`:''}</span></div>
+    <div class="row"><span class="muted">First seen</span><span>${fmtDate(p.createdAt)}</span></div>
+    <div class="row"><span class="muted">Last seen</span><span>${fmtDate(p.updatedAt)}</span></div>
+    <div class="row"><span class="muted">Recent orders</span><span>${os.length} · ${money(os.reduce((s,o)=>s+(Number(o.total)||0),0))}</span></div>
+    ${os.slice(0, 5).map(o => `<div class="row" style="font-size:.85rem;"><span>${esc(o.orderNo||o.id)} · ${fmtDate(o.placedAt)}</span><span>${money(o.total)} <span class="pill ${esc(o.status||'placed')}">${esc(STATUS_LABEL[o.status]||o.status||'')}</span></span></div>`).join('')}
+
+    <div class="muted" style="margin:16px 0 6px;font-weight:600;font-size:.85rem;">SUPPLY</div>
+    ${h ? `<button class="btn-primary" id="acct-resume" style="width:100%;background:var(--fresh);">Resume supply</button>` : `
+    <input id="acct-reason" placeholder="Reason (private) — e.g. payment pending">
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button class="btn-sm" id="acct-hold" style="flex:1;background:var(--warn);color:#fff;border-color:var(--warn);">Hold supply</button>
+      <button class="btn-sm" id="acct-stop" style="flex:1;background:var(--bad);color:#fff;border-color:var(--bad);">Stop supply</button>
+    </div>`}
+
+    <div class="muted" style="margin:16px 0 6px;font-weight:600;font-size:.85rem;">EDIT DETAILS</div>
+    <label>Contact name</label><input id="acct-name" value="${esc(v.name||'')}">
+    ${p.type==='b2b'?`<label>Business name</label><input id="acct-company" value="${esc(v.company||'')}">`:''}
+    <label>Delivery address</label>
+    <textarea id="acct-address" rows="2" style="width:100%;margin:0 0 8px;padding:8px;border:1px solid var(--line);border-radius:8px;font:inherit;">${esc(v.address||'')}</textarea>
+    <div class="muted" style="font-size:.8rem;margin-bottom:8px;">Changes reach the customer's phone the next time they open the app.</div>
+    <button class="btn-primary" id="acct-save" style="width:100%;">Save changes</button>`;
+  document.getElementById('btn-close').onclick = closeModal;
+  const reason = () => (document.getElementById('acct-reason')?.value || '').trim();
+  // blockCustomer re-renders the tab (closing this modal), so reopen it after.
+  const block = async kind => { if(await blockCustomer(phone, p.gstin||'', v.company||v.name||'', reason(), kind)) openAccount(phone); };
+  const holdBtn = document.getElementById('acct-hold'); if(holdBtn) holdBtn.onclick = () => block('hold');
+  const stopBtn = document.getElementById('acct-stop'); if(stopBtn) stopBtn.onclick = () => block('stop');
+  const resume = document.getElementById('acct-resume'); if(resume) resume.onclick = async () => { await unblockCustomer(phone); openAccount(phone); };
+  document.getElementById('acct-save').onclick = () => saveAccountEdits(p);
+  document.getElementById('modal-bg').classList.add('on');
+}
+async function saveAccountEdits(p){
+  const val = id => (document.getElementById(id)?.value || '').trim();
+  const edits = { name: val('acct-name').slice(0, 120), address: val('acct-address').slice(0, 500), editedAt: Date.now() };
+  if(p.type==='b2b') edits.company = val('acct-company').slice(0, 200);
+  try{
+    // Every copy of this person (one per install) gets the same edits.
+    await Promise.all(p.docIds.map(id => updateDoc(doc(db, 'customer_accounts', id), { admin: edits })));
+    logAdmin('account_edited', p.phone);
+    closeModal();
+  }catch(e){ alert('Could not save: ' + e.message); }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   DRIVER REQUESTS
+   Business customers press "Request a driver" in the app — to collect a
+   payment (cash or cheque), for an urgent delivery, or for other help. The
+   office assigns a driver here and the customer's app shows the driver's
+   name and number live.
+   ═══════════════════════════════════════════════════════════ */
+let driverRequests = [];
+let unsubDriverReqs = null;
+let rfdFilter = 'active';
+const RFD_REASONS = { collect_payment:'Collect payment', urgent_delivery:'Urgent delivery', other:'Other help' };
+const RFD_STATUS = { open:'New', assigned:'Driver assigned', done:'Done', cancelled:'Cancelled' };
+const RFD_PILL = { open:'pending_confirmation', assigned:'placed', done:'delivered', cancelled:'cancelled' };
+const RFD_FILTERS = [{ id:'active', label:'Active' }, { id:'closed', label:'Done or cancelled' }, { id:'all', label:'All' }];
+function rfdMatches(r, f){ return f==='all' || (f==='active' ? ['open','assigned'].includes(r.status) : ['done','cancelled'].includes(r.status)); }
+function rfdTabLabel(){ const n = driverRequests.filter(r => r.status==='open').length; return 'Driver requests' + (n ? ` (${n})` : ''); }
+function startDriverRequestsListener(){
+  unsubDriverReqs = onSnapshot(query(collection(db, 'driver_requests'), orderBy('createdAt', 'desc'), limit(300)), snap => {
+    driverRequests = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const t = document.querySelector('.tab[data-tab="drivers"]');
+    if(t) t.textContent = rfdTabLabel();
+    // Don't rebuild the tab under an open request — that would close it.
+    if(tab==='drivers' && !document.getElementById('modal-bg')?.classList.contains('on')) render();
+  }, err => console.error(err));
+}
+function driversBody(){
+  const list = driverRequests.filter(r => rfdMatches(r, rfdFilter));
+  return `
+    <div class="muted" style="font-size:.85rem;line-height:1.55;margin-bottom:12px;">
+      Business customers who pressed <b>Request a driver</b> in the app. New requests appear here live.
+      Assign a driver and the customer's app shows the driver's name and number.
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      ${RFD_FILTERS.map(f => `<button class="btn-quiet btn-sm" data-rfd-filter="${f.id}" style="background:${rfdFilter===f.id?'var(--brand)':'var(--bg)'};color:${rfdFilter===f.id?'#fff':'var(--ink)'};">${f.label} (${driverRequests.filter(r=>rfdMatches(r,f.id)).length})</button>`).join('')}
+    </div>
+    <div class="card" style="padding:0;overflow:auto;">
+      ${!list.length ? `<div class="empty">${driverRequests.length?'Nothing here for this filter.':'No driver requests yet.'}</div>` : `
+      <table class="stacked">
+        <thead><tr><th>Business</th><th>Reason</th><th>Phone</th><th>Requested</th><th>Status</th></tr></thead>
+        <tbody>
+          ${list.map(r => `
+            <tr data-rfd="${esc(r.id)}">
+              <td data-l="Business"><b>${esc(r.company||r.name||'—')}</b>${r.company&&r.name?`<br><span class="muted">${esc(r.name)}</span>`:''}</td>
+              <td data-l="Reason">${esc(RFD_REASONS[r.reason]||r.reason||'—')}${r.note?`<br><span class="muted">${esc(r.note)}</span>`:''}</td>
+              <td data-l="Phone">+91 ${esc(r.phone||'')}</td>
+              <td data-l="Requested" class="muted">${fmtDate(r.createdAt)}</td>
+              <td data-l="Status"><span class="pill ${RFD_PILL[r.status]||'info'}">${esc(RFD_STATUS[r.status]||r.status||'')}</span>${r.driverName?`<br><span class="muted">${esc(r.driverName)}</span>`:''}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`}
+    </div>`;
+}
+function wireDriversEvents(){
+  document.querySelectorAll('[data-rfd-filter]').forEach(b => b.onclick = () => { rfdFilter = b.dataset.rfdFilter; render(); });
+  document.querySelectorAll('tr[data-rfd]').forEach(tr => tr.onclick = () => openDriverRequest(tr.dataset.rfd));
+}
+function openDriverRequest(id){
+  const r = driverRequests.find(x => x.id === id);
+  if(!r) return;
+  const live = ['open','assigned'].includes(r.status);
+  document.getElementById('modal-content').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+      <div><b style="font-size:1.1rem;">${esc(r.company||r.name||'Customer')}</b><div class="muted">${fmtDate(r.createdAt)}</div></div>
+      <button class="close-x" id="btn-close">×</button>
+    </div>
+    <div style="margin:12px 0;"><span class="pill ${RFD_PILL[r.status]||'info'}">${esc(RFD_STATUS[r.status]||r.status||'')}</span></div>
+    <div class="row"><span class="muted">Reason</span><span>${esc(RFD_REASONS[r.reason]||r.reason||'—')}</span></div>
+    ${r.note?`<div class="row" style="align-items:flex-start;"><span class="muted">Details</span><span style="text-align:right;max-width:70%;">${esc(r.note)}</span></div>`:''}
+    <div class="row"><span class="muted">Contact</span><span>${esc(r.name||'—')}</span></div>
+    <div class="row"><span class="muted">Phone</span><span><a href="tel:+91${esc(r.phone||'')}">+91 ${esc(r.phone||'')}</a></span></div>
+    ${r.gstin?`<div class="row"><span class="muted">GSTIN</span><span>${esc(r.gstin)}</span></div>`:''}
+    ${r.address?`<div class="row" style="align-items:flex-start;"><span class="muted">Address</span><span style="text-align:right;max-width:70%;">${esc(r.address)}</span></div>`:''}
+    ${live ? `
+    <div class="muted" style="margin:16px 0 6px;font-weight:600;font-size:.85rem;">DRIVER</div>
+    <div class="grid2">
+      <div><label>Driver name</label><input id="rfd-driver" value="${esc(r.driverName||'')}"></div>
+      <div><label>Driver mobile</label><input id="rfd-driver-phone" inputmode="numeric" value="${esc(r.driverPhone||'')}"></div>
+    </div>
+    <button class="btn-primary" id="rfd-assign" style="width:100%;">${r.status==='assigned'?'Update driver':'Assign driver'}</button>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button class="btn-quiet btn-sm" id="rfd-done" style="flex:1;color:var(--fresh);">Mark done</button>
+      <button class="btn-quiet btn-sm" id="rfd-cancel" style="flex:1;color:var(--bad);">Cancel request</button>
+    </div>` : (r.driverName?`<div class="row"><span class="muted">Driver</span><span>${esc(r.driverName)}${r.driverPhone?' · '+esc(r.driverPhone):''}</span></div>`:'')}`;
+  document.getElementById('btn-close').onclick = closeModal;
+  const set = async (patch, action) => {
+    try{ await updateDoc(doc(db, 'driver_requests', id), patch); logAdmin(action, `${r.company||r.name||''} ${r.phone||''}`); closeModal(); render(); }
+    catch(e){ alert('Could not update: ' + e.message); }
+  };
+  const assign = document.getElementById('rfd-assign');
+  if(assign) assign.onclick = () => {
+    const name = document.getElementById('rfd-driver').value.trim();
+    const ph = document.getElementById('rfd-driver-phone').value.replace(/\D/g, '').slice(-10);
+    if(!name){ alert("Enter the driver's name."); return; }
+    if(ph && !/^[6-9]\d{9}$/.test(ph)){ alert('Enter a valid 10-digit mobile number, or leave it blank.'); return; }
+    set({ status:'assigned', driverName:name.slice(0, 80), driverPhone:ph || null, assignedAt:serverTimestamp() }, 'driver_request_assigned');
+  };
+  const done = document.getElementById('rfd-done'); if(done) done.onclick = () => set({ status:'done', doneAt:serverTimestamp() }, 'driver_request_done');
+  const cancel = document.getElementById('rfd-cancel'); if(cancel) cancel.onclick = () => set({ status:'cancelled', cancelledAt:serverTimestamp(), cancelledBy:'office' }, 'driver_request_cancelled');
+  document.getElementById('modal-bg').classList.add('on');
+}
+
 function render(){
   if(tab==='dashboard'){ renderShell(dashboardBody()); wireDashboardEvents(); }
+  else if(tab==='accounts'){ renderShell(accountsBody()); wireAccountsEvents(); }
+  else if(tab==='drivers'){ renderShell(driversBody()); wireDriversEvents(); }
   else if(tab==='controls'){ renderShell(controlsBody()); wireControlsEvents(); }
   else if(tab==='orders'){ renderShell(ordersBody()); wireOrdersEvents(); }
   else if(tab==='bills'){ renderShell(billsBody()); wireBillsEvents(); }
@@ -575,6 +938,7 @@ function openModal(id){
     <div class="status-btns"><button class="on" disabled style="background:#fbe4e2;color:var(--bad);border-color:#f3c6c2;cursor:default;">Denied</button></div>
     <div class="row" style="align-items:flex-start;"><span class="muted">Denied by</span><span>${esc(o.deniedBy||'—')}</span></div>
     <div class="row" style="align-items:flex-start;"><span class="muted">Reason</span><span style="text-align:right;max-width:70%;">${esc(o.deniedReason||'—')}</span></div>` : `
+    ${o.status==='out_for_delivery' && o.deliveryCode ? riderLinkHtml(o) : ''}
     <div class="muted" style="margin:14px 0 4px;font-weight:600;font-size:.85rem;">UPDATE STATUS</div>
     <div class="status-btns">
       ${STATUS_FLOW.map(s=>`<button data-status="${s}" class="${o.status===s?'on':''}">${STATUS_LABEL[s]}</button>`).join('')}
@@ -603,51 +967,88 @@ function closeModal(){ document.getElementById('modal-bg')?.classList.remove('on
 async function setStatus(id, status){
   try{
     await updateDoc(doc(db, 'orders', id), { status, statusUpdatedAt: serverTimestamp() });
-    await syncDelivery(id, status);
+    const code = await syncDelivery(id, status);
     closeModal();
+    if(code) openModal(id);   // the rider link is right there to send
   }catch(e){ alert('Could not update status: ' + e.message); }
 }
 
 /* The rider's copy of a delivery.
    Riders sign in with nothing, so they must never touch an order document —
    an order carries the customer's full record (GSTIN, items, totals, the lot).
-   Instead, marking an order OUT FOR DELIVERY publishes a deliveries/{orderNo}
-   doc holding only what someone on a doorstep needs. The order number is the
-   document id, so a rider who knows the number can fetch exactly that one and
-   nothing else (rules allow get, never list).
+   Marking an order OUT FOR DELIVERY publishes deliveries/{code} holding only
+   what someone on a doorstep needs. {code} is a fresh random delivery code,
+   not the order number — order numbers run in sequence, so anyone could
+   guess the next one. The rules allow get but never list, so only whoever
+   holds the code (the rider's link, or the customer through their own order,
+   where the code is written) can open that one record.
 
    Moving the status on sets active:false, which is what makes the rules stop
-   accepting the rider's location writes — tracking cannot outlive the trip. */
+   accepting the rider's location writes — tracking cannot outlive the trip.
+   Returns the new code when one is issued. */
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // 32 symbols: no 0/O or 1/I to misread
+function newDeliveryCode(){
+  return Array.from(crypto.getRandomValues(new Uint8Array(10)), b => CODE_CHARS[b & 31]).join('');
+}
+function prettyCode(c){ return String(c || '').replace(/(.{5})(?=.)/g, '$1-'); }
+function riderLink(code){ return `${location.origin}/ride/#${code}`; }
+// The customer's saved map pin, if their app has sent one (Account Center sync).
+function customerPin(phone){
+  const a = accounts.filter(x => x.phone === phone && typeof x.lat === 'number' && typeof x.lng === 'number')
+    .sort((x, y) => tsMs(y.updatedAt) - tsMs(x.updatedAt))[0];
+  return a ? { destLat: a.lat, destLng: a.lng } : { destLat: null, destLng: null };
+}
+async function closeTrip(key){
+  if(!key) return;
+  const snap = await getDoc(doc(db, 'deliveries', key));
+  if(snap.exists() && snap.data().active !== false) await setDoc(snap.ref, { active: false, endedAt: serverTimestamp() }, { merge: true });
+}
 async function syncDelivery(id, status){
   const o = orders.find(x => x.id === id);
-  if(!o) return;
-  const orderNo = String(o.orderNo || o.id);
-  const ref = doc(db, 'deliveries', orderNo);
+  if(!o) return null;
   try{
-    if(status === 'out_for_delivery'){
-      await setDoc(ref, {
-        orderNo, orderId: id, active: true,
-        customer: o.company || o.name || 'Customer',
-        contact: (o.company && o.name) ? o.name : null,
-        phone: o.phone || null,
-        address: o.address || null,
-        items: (o.items || []).length,
-        total: Number(o.total) || 0,
-        startedAt: serverTimestamp(),
-        // Cleared so a re-delivery never opens on the previous trip's dot.
-        riderLat: null, riderLng: null, riderAt: null,
-        riderName: null, riderPhone: null, riderAccuracy: null,
-      }, { merge: true });
-    }else{
-      // Only if it exists — most status changes never had a delivery doc.
-      const snap = await getDoc(ref);
-      if(snap.exists()) await setDoc(ref, { active: false, endedAt: serverTimestamp() }, { merge: true });
-    }
+    // Whatever happens next, an earlier trip's link stops working. Trips from
+    // before delivery codes existed were keyed by the order number.
+    await closeTrip(o.deliveryCode || String(o.orderNo || o.id));
+    if(status !== 'out_for_delivery') return null;
+    const code = newDeliveryCode();
+    await setDoc(doc(db, 'deliveries', code), {
+      orderNo: String(o.orderNo || o.id), orderId: id, active: true,
+      customer: o.company || o.name || 'Customer',
+      contact: (o.company && o.name) ? o.name : null,
+      phone: o.phone || null,
+      address: o.address || null,
+      ...customerPin(o.phone),
+      items: (o.items || []).length,
+      total: Number(o.total) || 0,
+      startedAt: serverTimestamp(),
+      riderLat: null, riderLng: null, riderAt: null,
+      riderName: null, riderPhone: null, riderAccuracy: null,
+    });
+    await updateDoc(doc(db, 'orders', id), { deliveryCode: code });
+    o.deliveryCode = code;
+    return code;
   }catch(e){
     // The status change already succeeded; tracking is the secondary effect.
     console.warn('Could not sync the delivery doc:', e);
     alert('Status updated, but the rider tracking record could not be written: ' + e.message);
+    return null;
   }
+}
+// Shown on an order that is out for delivery: the link to send to the rider.
+function riderLinkHtml(o){
+  const link = riderLink(o.deliveryCode);
+  const msg = `Modern Dairy delivery ${o.orderNo || ''} for ${o.company || o.name || 'a customer'}.\n`
+    + `Open this link for the address and directions, and to share your location with the customer:\n${link}`;
+  return `<div class="card" style="margin:14px 0 4px;padding:12px;background:var(--bg);">
+    <div style="font-weight:700;margin-bottom:4px;">Rider link</div>
+    <div class="muted" style="font-size:.82rem;line-height:1.5;margin-bottom:8px;">Send this to whoever is carrying the order. It opens in any phone browser — nothing to install. Riders with the Modern Dairy app can type the code <b>${esc(prettyCode(o.deliveryCode))}</b> instead.</div>
+    <div style="font-family:ui-monospace,Consolas,monospace;font-size:.8rem;word-break:break-all;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px;">${esc(link)}</div>
+    <div style="display:flex;gap:8px;">
+      <a class="btn-primary btn-sm" style="flex:1;text-align:center;text-decoration:none;background:#1DA851;border-color:#1DA851;" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">Send on WhatsApp</a>
+      <button class="btn-quiet btn-sm" style="flex:1;" onclick="navigator.clipboard.writeText('${esc(link)}').then(()=>{this.textContent='Copied ✓';})">Copy link</button>
+    </div>
+  </div>`;
 }
 async function denyOrder(id, deniedBy, deniedReason){
   try{
@@ -1750,17 +2151,28 @@ function settingsBody(){
         <div><label>Minimum order value (₹)</label><input id="s-minOrderValue" type="number" value="${cfg.minOrderValue||0}"></div>
         <div><label>Delivery fee (₹)</label><input id="s-deliveryFee" type="number" value="${cfg.deliveryFee||0}"></div>
         <div><label>Platform fee (₹, per order)</label><input id="s-platformFee" type="number" value="${cfg.platformFee??2}"></div>
+        <div><label>Driver request charge (₹, 0 = show no amount)</label><input id="s-rfdFee" type="number" min="0" value="${Number(cfg.rfdFee)||0}"></div>
         <div><label>GST rate (e.g. 0.05 = 5%)</label><input id="s-gstRate" type="number" step="0.01" value="${cfg.gstRate??0.05}"></div>
         <div><label>Order cutoff time</label><input id="s-orderCutoff" value="${esc(cfg.orderCutoff||'')}"></div>
       </div>
       <label>Announcement banner (leave blank to hide)</label><textarea id="s-announcement" rows="2">${esc(cfg.announcement||'')}</textarea>
       <button class="btn-primary" id="btn-save-settings">Save settings</button>
       <span class="ok-msg" id="saved-settings" style="display:none;margin-left:10px;">Saved ✓</span>
+    </div>
+    <div class="card">
+      <b>Admin password</b>
+      <div class="muted" style="font-size:.85rem;margin:6px 0 10px;line-height:1.5;">Changing it needs a code texted to one of the recovery numbers. Every signed-in admin session is signed out afterwards.</div>
+      <button class="btn-quiet btn-sm" id="btn-change-pass">Change password</button>
     </div>`;
 }
 function wireSettingsEvents(){
   const btn = document.getElementById('btn-save-settings');
   if(btn) btn.onclick = saveSettings;
+  const cp = document.getElementById('btn-change-pass');
+  if(cp) cp.onclick = () => {
+    renderRecovery(document.getElementById('modal-content'), { title: 'Change admin password', onCancel: closeModal });
+    document.getElementById('modal-bg').classList.add('on');
+  };
 }
 async function saveSettings(){
   const val = id => document.getElementById(id).value;
@@ -1779,6 +2191,7 @@ async function saveSettings(){
     bankIfsc: val('s-bankIfsc').trim().toUpperCase(), upi: val('s-upi').trim(),
     jurisdiction: val('s-jurisdiction').trim(), terms: val('s-terms').trim(),
     minOrderValue: Number(val('s-minOrderValue'))||0, deliveryFee: Number(val('s-deliveryFee'))||0, platformFee: Number(val('s-platformFee'))||0,
+    rfdFee: Math.max(0, Number(val('s-rfdFee'))||0),
     gstRate: Number(val('s-gstRate'))||0, orderCutoff: val('s-orderCutoff'), announcement: val('s-announcement'),
   };
   try{
@@ -2390,8 +2803,13 @@ onAuthStateChanged(auth, user => {
     loadReverifyState();
     loadAdminActivity();
     loadBlocks();
+    startAccountsListener();
+    startDriverRequestsListener();
     render();
   }else{
+    if(unsubAccounts){ unsubAccounts(); unsubAccounts = null; }
+    if(unsubDriverReqs){ unsubDriverReqs(); unsubDriverReqs = null; }
+    accounts = []; driverRequests = [];
     if(unsubOrders){ unsubOrders(); unsubOrders = null; }
     if(unsubProducts){ unsubProducts(); unsubProducts = null; }
     if(unsubBroadcasts){ unsubBroadcasts(); unsubBroadcasts = null; }

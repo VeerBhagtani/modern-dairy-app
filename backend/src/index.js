@@ -7,6 +7,7 @@ const authRoutes = require('./routes/auth');
 const ordersRoutes = require('./routes/orders');
 const walletRoutes = require('./routes/wallet');
 const adminRoutes = require('./routes/admin');
+const adminRecoveryRoutes = require('./routes/adminRecovery');
 const { generalLimiter } = require('./middleware/rateLimit');
 
 const app = express();
@@ -66,6 +67,7 @@ app.use('/auth', authRoutes);
 app.use('/orders', ordersRoutes);
 app.use('/wallet', walletRoutes);
 app.use('/admin', adminRoutes);
+app.use('/admin-recovery', adminRecoveryRoutes);
 
 app.use((req, res) => res.status(404).json({ success: false, message: 'Not found' }));
 
