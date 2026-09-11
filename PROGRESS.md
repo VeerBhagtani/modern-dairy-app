@@ -256,7 +256,9 @@ Five problems the owner reported, fixed on branch `v5-19-fixes`:
    2026-09-11, with the owner's go-ahead.
    - `/invoice/` returns 200 and the admin page has the new WhatsApp wording.
    - v5.19.1 takes the rider link back to Chrome-only (see above) and removes
-     `assetlinks.json` from Hosting.
+     `assetlinks.json` from Hosting (the address now returns Firebase's
+     default `[]`). **Latest APK: v5.19.1-debug**, merged as PR #7:
+     https://github.com/VeerBhagtani/modern-dairy-app/releases/download/v5.19.1-debug/modern-dairy-v5.19.1-debug.apk
    - Not yet tried on a real phone: a B2C driver request, which was not
      probed live to keep test rows out of the office's Driver requests tab.
 1. **Merged and released (up to v5.18).** PR #4 is merged into `master`, so `master`
