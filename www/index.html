@@ -4326,40 +4326,6 @@ function doRiderStart(){
   RIDER.error = null;
   riderRemember();
   go('rider', {replace:true});
-  riderOpenPending();
-}
-/* Android App Links: on a phone with this app, tapping the rider link from
-   WhatsApp (…/ride/#CODE) opens the app instead of the browser, straight to
-   that delivery. A rider not yet signed in to rider mode gives their name
-   first; the code waits in RIDER.pendingCode meanwhile. */
-let BOOTED = false, PENDING_OPEN_URL = null, LAST_OPEN_URL = { url:null, at:0 };
-function handleOpenUrl(url){
-  if(!url) return;
-  // Before boot has picked the first screen, opening one would be overwritten.
-  if(!BOOTED){ PENDING_OPEN_URL = url; return; }
-  // A cold start can report the same link twice (the launch URL and the event).
-  if(url === LAST_OPEN_URL.url && Date.now() - LAST_OPEN_URL.at < 5000) return;
-  LAST_OPEN_URL = { url, at: Date.now() };
-  const m = String(url || '').match(/\/ride\/?#(.+)$/);
-  const code = m && riderCode(m[1]);
-  if(!code || MAINTENANCE_LOCKED) return;
-  if(RIDER.watchId || RIDER.webWatchId){
-    if(RIDER.delivery?.code !== code) toast('Finish the delivery you are tracking first','alert');
-    if(S.screen !== 'rider') go('rider');
-    return;
-  }
-  RIDER.pendingCode = code;
-  RIDER.delivery = null; RIDER.error = null;
-  riderRestore();
-  if(RIDER.name){ go('rider'); riderOpenPending(); }
-  else go('riderLogin');
-}
-function riderOpenPending(){
-  const code = RIDER.pendingCode;
-  if(!code) return;
-  RIDER.pendingCode = null;
-  RIDER.lookupTried = code;
-  riderLookup(code);
 }
 
 /* ── Find the delivery ─────────────────────────────────── */
@@ -4373,7 +4339,7 @@ async function riderLookup(typed){
   // Say so plainly instead of a bare "not found".
   if(raw.length !== 10){
     RIDER.error = /^(MD)?\d+$/.test(raw)
-      ? 'That is the order / bill number. For the customer’s safety the app finds a delivery by its delivery code instead — the 10 letters and numbers in the office’s WhatsApp message (like K7QMP-4XA9R). Or just tap the link in that message: it opens straight here.'
+      ? 'That is the order / bill number. For the customer’s safety the app finds a delivery by its delivery code instead — the 10 letters and numbers in the office’s WhatsApp message (like K7QMP-4XA9R). Or just tap the link in that message: it opens in the browser, no app needed.'
       : 'A delivery code has 10 letters and numbers, like K7QMP-4XA9R. Check the office’s WhatsApp message, or tap the link in it.';
     RIDER.lookupTried = raw;
     paint(); return;
@@ -4420,7 +4386,7 @@ function riderLookupBody(){
       <div class="eyebrow mb-8">Which delivery?</div>
       <div class="t-sm muted mb-16" style="line-height:1.5;">
         Type the delivery code from the office’s WhatsApp message — for example <b>K7QMP-4XA9R</b> — or paste the whole link.
-        Not the order or bill number: that won’t work. Tapping the link in the message opens this screen with the code filled in.
+        Not the order or bill number: that won’t work.
       </div>
       <div class="field"><label class="label">Delivery code</label>
         <input id="f-rider-order" placeholder="K7QMP-4XA9R" autocomplete="off" autocapitalize="characters"
@@ -4907,16 +4873,8 @@ function handleHardwareBack(){
 }
 if(window.Capacitor?.Plugins?.App){
   try{ window.Capacitor.Plugins.App.addListener('backButton', handleHardwareBack); }catch(e){}
-  // A rider link tapped while the app is already running…
-  try{ window.Capacitor.Plugins.App.addListener('appUrlOpen', e => handleOpenUrl(e && e.url)); }catch(e){}
 }
-Promise.resolve(boot()).finally(() => {
-  // …or one that launched it: wait for boot to pick the first screen, then open it.
-  BOOTED = true;
-  if(PENDING_OPEN_URL){ const u = PENDING_OPEN_URL; PENDING_OPEN_URL = null; handleOpenUrl(u); }
-  window.Capacitor?.Plugins?.App?.getLaunchUrl?.()
-    .then(r => { if(r && r.url) handleOpenUrl(r.url); }).catch(() => {});
-});
+boot();
 
 /* Keep the focused input visible when the keyboard opens. With the native
    resize configured above this is mostly automatic, but centering the focused
