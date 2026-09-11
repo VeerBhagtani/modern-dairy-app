@@ -5,7 +5,7 @@
   },
   "hosting": {
     "public": "legal",
-    "ignore": ["firebase.json", "**/.*"],
+    "ignore": ["firebase.json", "**/.DS_Store", "**/.git/**", "**/.gitkeep", "**/Thumbs.db"],
     "headers": [
       {
         "source": "**/*.html",

@@ -49,6 +49,7 @@ const money2 = n => 'Rs' + n;
 const dtFmt = () => '';
 const navBar = () => '';
 const stateBlock = () => '';
+const rfdBlockHtml = () => '';
 const APPCFG = { supportPhone:'+910000000000' };
 const S = { order: null };
 `;
@@ -81,7 +82,7 @@ ok('cancel is gone once denied', !shows('denied'));
 
 /* ── The live listener must repaint, or "immediately" isn't true ──────────── */
 ok('a status change repaints the order screen',
-   /if\(changed\)\{[\s\S]{0,400}paint\(\);/.test(html));
+   /if\(changed( \|\| whyChanged)?\)\{[\s\S]{0,400}paint\(\);/.test(html));
 ok('the confirm sheet is closed when the order stops being cancellable',
    /if\(!CANCELLABLE_STATUSES\.includes\(S\.order\?\.status\)\) closeSheet\(\);/.test(html));
 ok('doCancelOrder refuses (and says so) if the status moved on',

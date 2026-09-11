@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Invoice · Modern Dairy</title>
+<!--
+  Printable invoice for the Modern Dairy app.
+
+  The app's WebView cannot print, so its "Print / Save as PDF" button opens
+  this page in the phone's browser. The invoice arrives in the link after
+  "#" as base64url JSON. Browsers never send that part to a server, so the
+  page draws the invoice on the phone and nothing is uploaded or stored.
+-->
+<style>
+  :root{
+    --ink:#141A33; --ink-2:#4A5270; --ink-3:#7A8199; --line:#E3E6EE;
+    --brand:#1B2A6B; --crimson:#D7262F; --bg:#F3F4F8; --paper:#fff;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;}
+  .bar{position:sticky;top:0;z-index:2;display:flex;gap:10px;align-items:center;justify-content:space-between;
+    padding:12px 16px;background:var(--brand);color:#fff;}
+  .bar b{font-size:15px;}
+  .bar button{appearance:none;border:0;border-radius:10px;background:#fff;color:var(--brand);
+    font:600 14px/1 inherit;font-family:inherit;padding:11px 16px;cursor:pointer;}
+  .tip{max-width:760px;margin:12px auto 0;padding:0 16px;color:var(--ink-3);font-size:12.5px;}
+  .paper{max-width:760px;margin:12px auto 32px;background:var(--paper);border:1px solid var(--line);
+    border-radius:12px;padding:28px 24px;}
+  .head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap;
+    padding-bottom:18px;border-bottom:2px solid var(--brand);}
+  .biz{font-size:22px;font-weight:800;color:var(--brand);letter-spacing:-.01em;}
+  .small{font-size:12px;color:var(--ink-2);}
+  .meta{text-align:right;}
+  .meta .label{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);}
+  .meta .no{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums;}
+  .to{margin:18px 0;display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .to h4{margin:0 0 4px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);}
+  .to .name{font-weight:700;font-size:15px;}
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;}
+  th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);text-align:left;
+    padding:8px 6px;border-bottom:1px solid var(--line);}
+  td{padding:9px 6px;border-bottom:1px solid var(--line);vertical-align:top;}
+  .r{text-align:right;white-space:nowrap;}
+  .totals{margin-left:auto;margin-top:12px;width:min(100%,300px);}
+  .totals div{display:flex;justify-content:space-between;padding:4px 6px;}
+  .totals .grand{border-top:2px solid var(--ink);margin-top:6px;padding-top:9px;font-size:17px;font-weight:800;}
+  .foot{margin-top:24px;padding-top:12px;border-top:1px solid var(--line);text-align:center;color:var(--ink-3);font-size:12px;}
+  .err{max-width:520px;margin:48px auto;padding:0 16px;text-align:center;color:var(--ink-2);}
+  @media (max-width:520px){ .to{grid-template-columns:1fr;} .meta{text-align:left;} .paper{padding:20px 16px;} }
+  @media print{
+    html,body{background:#fff;}
+    .bar,.tip{display:none;}
+    .paper{border:0;border-radius:0;margin:0;max-width:none;padding:0;}
+    @page{size:A4;margin:14mm;}
+  }
+</style>
+</head>
+<body>
+<div class="bar"><b>Invoice</b><button id="print" type="button">Save as PDF / Print</button></div>
+<div class="tip">In the print screen, pick <b>Save as PDF</b> as the printer to keep a copy on your phone.</div>
+<main id="out"></main>
+<script>
+(function(){
+  const out = document.getElementById('out');
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const num = v => Number(v) || 0;
+  const rs = v => '₹' + num(v).toLocaleString('en-IN', { minimumFractionDigits:2, maximumFractionDigits:2 });
+  const when = v => { const d = new Date(v); return isNaN(d) ? '' : d.toLocaleString('en-IN', { day:'numeric', month:'short', year:'numeric', hour:'numeric', minute:'2-digit' }); };
+
+  function read(){
+    const h = location.hash.slice(1);
+    if(!h) return null;
+    try{
+      const b64 = h.replace(/-/g,'+').replace(/_/g,'/');
+      const bin = atob(b64 + '==='.slice((b64.length + 3) % 4));
+      const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+      const d = JSON.parse(new TextDecoder().decode(bytes));
+      return d && d.v === 1 && Array.isArray(d.items) ? d : null;
+    }catch(e){ return null; }
+  }
+
+  const d = read();
+  if(!d){
+    document.getElementById('print').hidden = true;
+    out.innerHTML = '<div class="err"><h2>No invoice to show</h2><p>Open this page from <b>Invoices</b> in the Modern Dairy app, then tap “Print / Save as PDF”.</p></div>';
+    return;
+  }
+  const b = d.biz || {}, t = d.to || {};
+  document.title = 'Invoice ' + (d.no || '') + ' · ' + (b.n || 'Modern Dairy');
+  out.innerHTML = `<article class="paper">
+    <div class="head">
+      <div>
+        <div class="biz">${esc(b.n || 'Modern Dairy')}</div>
+        <div class="small">${esc(b.a)}</div>
+        <div class="small">${esc(b.e)}${b.e && b.p ? ' · ' : ''}${esc(b.p)}</div>
+      </div>
+      <div class="meta">
+        <div class="label">Invoice</div>
+        <div class="no">${esc(d.no)}</div>
+        <div class="small">${esc(when(d.at))}</div>
+      </div>
+    </div>
+    <div class="to">
+      <div>
+        <h4>Billed to</h4>
+        <div class="name">${esc(t.c || t.n || 'Customer')}</div>
+        ${t.c && t.n ? `<div class="small">${esc(t.n)}</div>` : ''}
+        ${t.p ? `<div class="small">+91 ${esc(t.p)}</div>` : ''}
+        ${t.g ? `<div class="small">GSTIN: ${esc(t.g)}</div>` : ''}
+      </div>
+      <div>
+        ${t.a ? `<h4>Delivered to</h4><div class="small">${esc(t.a)}</div>` : ''}
+        ${d.pay ? `<h4 style="margin-top:10px;">Payment</h4><div class="small">${esc(d.pay)}</div>` : ''}
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Item</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead>
+      <tbody>${d.items.map(i => `<tr>
+        <td>${esc(i[0])}${i[1] ? ` <span class="small">${esc(i[1])}</span>` : ''}</td>
+        <td class="r">${esc(num(i[2]))}</td><td class="r">${rs(i[3])}</td><td class="r">${rs(num(i[2]) * num(i[3]))}</td>
+      </tr>`).join('')}</tbody>
+    </table>
+    <div class="totals">
+      <div><span>Subtotal</span><span>${rs(d.sub)}</span></div>
+      <div><span>GST</span><span>${rs(d.gst)}</span></div>
+      ${num(d.del) ? `<div><span>Delivery</span><span>${rs(d.del)}</span></div>` : ''}
+      ${num(d.plat) ? `<div><span>Platform fee</span><span>${rs(d.plat)}</span></div>` : ''}
+      <div class="grand"><span>Total</span><span>${rs(d.tot)}</span></div>
+    </div>
+    <div class="foot">FSSAI licensed · Thank you for your business</div>
+  </article>`;
+
+  const print = () => { try{ window.print(); }catch(e){} };
+  document.getElementById('print').onclick = print;
+  // Straight to the print screen once the page has drawn; the button stays
+  // for a second try or after the dialog is dismissed.
+  setTimeout(print, 700);
+})();
+</script>
+</body>
+</html>

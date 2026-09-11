@@ -28,6 +28,17 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Rider links (…/ride/#CODE) sent on WhatsApp open in this app
+                 when it is installed; otherwise they open in the browser as
+                 before. autoVerify checks /.well-known/assetlinks.json on the
+                 site, which names this package and its signing key. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="modern-dairy-pune.web.app" android:pathPrefix="/ride" />
+                <data android:scheme="https" android:host="modern-dairy-pune.firebaseapp.com" android:pathPrefix="/ride" />
+            </intent-filter>
         </activity>
 
         <provider
