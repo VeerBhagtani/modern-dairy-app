@@ -132,15 +132,16 @@ were rebuilt; every other screen picked up the new colour tokens.
   the new APK. The web link works now.
 
 ### Still to do
-1. **APK v5.14.0-debug is built but shared privately only.** It came from
-   GitHub Actions run 34551687532 (artifact `modern-dairy-debug-apk`), off
-   branch `storefront-rider-link-accounts`, PR #2, which is **not merged
-   into master yet**. The same file is `index.apk` in this folder (git
-   ignores it). It was deliberately **not** published as a public GitHub
-   release: the repo is public and the APK carries the real OTP/GST
-   credentials (the Actions secrets are set), so a public release would hand
-   them out. Keep sharing it privately until the credentials move
-   server-side or the repo goes private.
+1. **APK v5.14.0-debug is released** at
+   https://github.com/VeerBhagtani/modern-dairy-app/releases/tag/v5.14.0-debug
+   (direct download:
+   https://github.com/VeerBhagtani/modern-dairy-app/releases/download/v5.14.0-debug/modern-dairy-v5.14.0-debug.apk).
+   It was built by GitHub Actions run 34551687532 from branch
+   `storefront-rider-link-accounts`, PR #2, which is **not merged into
+   master yet**. The same file is `index.apk` in this folder (git ignores
+   it). The owner chose a public release knowing the APK carries the real
+   OTP/GST credentials from the Actions secrets. **Rotate them soon**, since
+   anyone downloading the APK can extract them.
 2. First real rider trip end to end, now that the rules allow it.
 3. `tests/bills-print.test.mjs` fails 3 "today" checks between 00:00 and 05:30
    IST (passes with `TZ=UTC`, and fails the same on the committed code). The
