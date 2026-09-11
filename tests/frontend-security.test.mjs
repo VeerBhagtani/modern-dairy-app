@@ -56,12 +56,13 @@ const src = grab([
   'GSTIN_CHARS', 'GSTIN_RE', 'isWellFormedGSTIN', 'PW_RULE_TEXT', 'isStrongEnough',
   'APPCFG_FIELDS', 'PRODUCT_FIELDS', 'MAX_REMOTE_STR', 'coerce', 'pickFields',
   'TEST_GSTIN', 'TEST_BANK', 'verifyBankAccount', 'riderCode', 'distKm',
+  'SHOP_HOURS', 'clockLabel', 'shopStatus',
 ]) +'\nconst GST_READY = false; const LOGIN = { gstin: "" };'   // a demo build, as shipped
    + '\nfunction setLoginGstin(g){ LOGIN.gstin = g; }';
 
 const exportLine = '\nexport {esc,safeUrl,jsStr,hashPassword,verifyPassword,timingSafeEqual,'
   + 'throttleCheck,throttleFail,throttleReset,isWellFormedGSTIN,isStrongEnough,coerce,pickFields,'
-  + 'APPCFG_FIELDS,PRODUCT_FIELDS,TEST_GSTIN,TEST_BANK,verifyBankAccount,setLoginGstin,riderCode,distKm};';
+  + 'APPCFG_FIELDS,PRODUCT_FIELDS,TEST_GSTIN,TEST_BANK,verifyBankAccount,setLoginGstin,riderCode,distKm,clockLabel,shopStatus};';
 const T = await import('data:text/javascript,' + encodeURIComponent(src + exportLine));
 
 let pass = 0, fail = 0;
@@ -150,6 +151,16 @@ ok(T.riderCode('https://modern-dairy-pune.web.app/ride/#k7qmp-4xa9r') === 'K7QMP
 ok(T.riderCode(' k7qmp 4xa9r ') === 'K7QMP4XA9R', 'rider code: spaces, dashes and case are ignored');
 ok(T.riderCode('../orders/x"><img>') === 'ORDERSXIMG', 'rider code: only letters and digits survive (no path or markup)');
 ok(Math.abs(T.distKm([18.5204, 73.8567], [19.0760, 72.8777]) - 120) < 5, 'rider distance: Pune to Mumbai comes out near 120 km');
+
+// ---- shop hours: Mon–Sat 8–2 and 4–9, Sunday 8–2 (2026-09-14 is a Monday) ----
+const at = (day, h, m = 0) => new Date(2026, 8, 13 + day, h, m);   // day 0 = Sunday 13 Sep
+ok(T.shopStatus(at(1, 10)).open && T.shopStatus(at(1, 10)).text === 'Open till 2 PM', 'shop hours: Monday 10 AM is open till 2 PM');
+ok(!T.shopStatus(at(1, 15)).open && T.shopStatus(at(1, 15)).text === 'Opens 4 PM', 'shop hours: Monday 3 PM is the break, opens 4 PM');
+ok(T.shopStatus(at(1, 20, 30)).text === 'Open till 9 PM', 'shop hours: Monday 8:30 PM is open till 9 PM');
+ok(T.shopStatus(at(1, 21, 30)).text === 'Opens 8 AM tomorrow', 'shop hours: Monday 9:30 PM opens 8 AM tomorrow');
+ok(!T.shopStatus(at(0, 15)).open && T.shopStatus(at(0, 15)).text === 'Opens 8 AM tomorrow', 'shop hours: Sunday is a half day, shut at 3 PM');
+ok(T.shopStatus(at(6, 21, 30)).text === 'Opens 8 AM tomorrow', 'shop hours: Saturday night rolls to Sunday 8 AM');
+ok(T.clockLabel(8 * 60) === '8 AM' && T.clockLabel(14 * 60) === '2 PM' && T.clockLabel(12 * 60 + 30) === '12:30 PM', 'shop hours: clock labels read naturally');
 
 console.log('\nFRONTEND PEN-TEST: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

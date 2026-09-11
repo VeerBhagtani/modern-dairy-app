@@ -158,14 +158,39 @@ single-page app keeps no browser history to go back through.
 
 Simulated end to end in headless Chrome: 18/18.
 
+### Owner feedback pass (v5.17.0-debug)
+- **Shop hours, not the order cutoff.** The delivery card showed "Closes in
+  1h 22m", a countdown to the 6 PM order cutoff, which read as the shop
+  closing. It now shows real shop status from `SHOP_HOURS`:
+  - Mon–Sat 8 AM–2 PM and 4 PM–9 PM; Sunday 8 AM–2 PM.
+  - Shown as "Open till 2 PM" (green) or "Opens 4 PM" / "Opens 8 AM tomorrow".
+  - The `businessHours` text was corrected in the live `app_config` and in
+    the app's default.
+  - Seven frontend tests cover the schedule.
+- **Map pins that explain themselves:** 🛵 for the rider and 🏠 for the
+  delivery address, on the customer's map, in app rider mode and on the
+  rider web page.
+- **Every order in progress** shows on Home as a swipeable row. A second
+  order used to hide the first.
+- **Highlights rotate.** The banners (five, one per category first), the
+  "Popular" row and the category rows are reshuffled on every app open
+  (`sessionPick`), so every product gets its turn.
+- **Colour variety, still coordinated:**
+  - Banners in five deep tones (navy, forest, maroon, teal, cocoa).
+  - A soft pastel per category tile and rail plate (`CAT_LOOK`).
+  - Green and amber tints on the shortcut icons.
+  - Red still means ADD and discounts only.
+- **Google Maps look:** not done. Real Google Maps needs a Maps API key on
+  a billing-enabled project. The maps are still OpenStreetMap, and
+  Navigate opens the Google Maps app.
+
 ### Still to do
-1. **Merged and released.** PR #2 is merged into `master`, so `master`
-   matches what is live (Hosting, Firestore rules) and the APK. The final
-   APK is **v5.16.0-debug**, built from `master` (v5.15 plus the
-   back-button fix):
-   https://github.com/VeerBhagtani/modern-dairy-app/releases/tag/v5.16.0-debug
+1. **Merged and released.** PR #3 is merged into `master`, so `master`
+   matches what is live (Hosting, Firestore rules) and the APK. The latest
+   APK is **v5.17.0-debug**, built from `master`:
+   https://github.com/VeerBhagtani/modern-dairy-app/releases/tag/v5.17.0-debug
    (direct download:
-   https://github.com/VeerBhagtani/modern-dairy-app/releases/download/v5.16.0-debug/modern-dairy-v5.16.0-debug.apk). The same file is `index.apk` in this folder (git ignores
+   https://github.com/VeerBhagtani/modern-dairy-app/releases/download/v5.17.0-debug/modern-dairy-v5.17.0-debug.apk). The same file is `index.apk` in this folder (git ignores
    it). The owner chose a public release knowing the APK carries the real
    OTP/GST credentials from the Actions secrets. **Rotate them soon**, since
    anyone downloading the APK can extract them.
