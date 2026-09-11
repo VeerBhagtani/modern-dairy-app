@@ -70,19 +70,29 @@ this build") and had no test shortcut. Fixed test login for a business account:
 The owner benchmarked the app against Zomato's Hyperpure and asked for a
 far more attractive, photo-led front end. Home, Catalogue and the Product page
 were rebuilt; every other screen picked up the new colour tokens.
-- **Brand:** colours taken off the packaging — "Modern" navy `#1B2A6B`
-  (`--brand`), crest red `#D7262F` (`--crimson`, ADD buttons and steppers),
-  butter `#FFC928` (`--butter`, money-off and the cutoff only), frost blue
-  `#125C8C` (frozen). Headings and prices in Bricolage Grotesque; body stays
-  Plus Jakarta Sans.
-- **Home:** navy masthead with search; a "dispatch ticket" (tomorrow's
-  7–11 AM slot plus a live "order within 17h 19m" countdown to
-  `APPCFG.orderCutoff`); a swipeable promo carousel built from real packs
-  (`PROMOS` — a slide hides itself if its product is disabled); photo
-  category tiles; product shelves (regular items / popular, frozen, drinks);
-  the driver card and credit as slim rows.
+- **One strict system** (tightened the same day, after the owner said the
+  first pass looked "vibe coded"):
+  - "Modern" navy `#1B2A6B` (`--brand`) for structure and navigation.
+  - Crest red `#D7262F` (`--crimson`) only where money moves: ADD, the
+    stepper, discounts, the cart badge.
+  - Neutrals everywhere else; green only for "in stock".
+  - Butter yellow and the per-category pastels are gone from the storefront.
+  - One discount chip (`.save`); radius tokens 8/12/16 px (`--r-sm/--r/--r-lg`).
+  - `.eyebrow` is a sentence-case label on every screen; `.divider` is
+    plain spacing; inner top bars show back + title only, no logo.
+  - Headings and prices in Bricolage Grotesque; body stays Plus Jakarta Sans.
+  - No gimmicks: no ticket notches, rotated plates or glow shadows.
+- **Home:** navy masthead with search. A delivery card shows tomorrow's
+  7–11 AM slot and "Order by 6:00 PM"; it switches to a red "Closes in 1h
+  59m" countdown only in the last three hours. Below it:
+  - a promo carousel of real packs, all navy (`PROMOS`; a slide hides itself
+    if its product is disabled)
+  - white photo category tiles
+  - product shelves (regular items / popular, frozen, drinks)
+  - one grouped shortcuts list: repeat last order, business credit, request
+    a driver
 - **Catalogue:** photo category rail on the left, two-column product cards
-  with the ADD button on the photo, butter "% OFF" tags.
+  with a full-width ADD button under the photo, so it never covers the pack.
 - **Product page:** full-width photo, tap for a full-screen zoom, pack
   sizes, "More in <category>" shelf.
 - **Photos:** `pimg()` rewrites Cloudinary URLs to

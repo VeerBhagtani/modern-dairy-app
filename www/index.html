@@ -73,7 +73,7 @@
   --t-lg:16.5px; --t-xl:19px; --t-h3:21px; --t-h2:25px; --t-h1:30px; --t-display:34px;
   --t-price:20px;
   /* ── RADIUS · restrained, product-not-toy ────────────────── */
-  --r-sm:6px; --r:10px; --r-lg:14px;
+  --r-sm:8px; --r:12px; --r-lg:16px;
   /* ── ELEVATION · low-contrast, functional not decorative ── */
   --e-1:0 1px 2px rgba(5,20,15,.06);
   --e-2:0 1px 2px rgba(5,20,15,.05), 0 4px 10px rgba(5,20,15,.06);
@@ -149,16 +149,16 @@ svg{display:block;flex-shrink:0;}
 .muted{color:var(--ink-2);}
 .muted-2{color:var(--ink-3);}
 .num{font-variant-numeric:tabular-nums;font-feature-settings:'tnum';}
-.eyebrow{font-size:var(--t-xs);font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
+.eyebrow{font-size:var(--t-md);font-weight:700;color:var(--ink-2);}
 
 /* ── HEADER ────────────────────────────────────────────── */
 .appbar{
   background:var(--brand);color:#fff;padding:calc(var(--safe-t) + 12px) 16px 12px;
-  flex-shrink:0;position:relative;z-index:10;border-bottom:2px solid var(--crimson);
+  flex-shrink:0;position:relative;z-index:10;
 }
 .appbar-row{display:flex;align-items:center;gap:12px;}
 .topbar{
-  display:flex;align-items:center;gap:12px;padding:calc(var(--safe-t) + 10px) 12px 10px;
+  display:flex;align-items:center;gap:12px;padding:calc(var(--safe-t) + 10px) 16px 10px;
   border-bottom:1px solid var(--line);background:var(--surface);flex-shrink:0;z-index:20;
 }
 .iconbtn{
@@ -200,7 +200,7 @@ svg{display:block;flex-shrink:0;}
 /* ── BUTTONS · flat, functional, no lift/glow gimmicks ───── */
 .btn{
   display:inline-flex;align-items:center;justify-content:center;gap:8px;
-  height:46px;padding:0 18px;border-radius:var(--r-sm);font-size:var(--t-base);font-weight:700;
+  height:48px;padding:0 18px;border-radius:var(--r);font-size:var(--t-base);font-weight:700;
   letter-spacing:-.005em;background:var(--brand);color:#fff;width:100%;
   border:1px solid var(--brand);
   transition:background var(--fast) linear,opacity var(--fast) linear;
@@ -266,7 +266,7 @@ svg{display:block;flex-shrink:0;}
 .pprice{display:flex;align-items:baseline;gap:6px;margin-top:5px;}
 .price{font-size:var(--t-lg);font-weight:700;letter-spacing:-.01em;font-variant-numeric:tabular-nums;}
 .mrp{font-size:var(--t-sm);color:var(--ink-3);text-decoration:line-through;font-variant-numeric:tabular-nums;}
-.save{font-size:var(--t-xs);font-weight:700;color:var(--fresh);background:var(--fresh-tint);padding:2px 6px;border-radius:4px;}
+.save{font-size:var(--t-xs);font-weight:700;color:var(--crimson);background:var(--crimson-tint);padding:2px 7px;border-radius:6px;white-space:nowrap;}
 .pmoq{font-size:var(--t-xs);font-weight:600;color:var(--ink-3);margin-top:3px;}
 
 /* ── STOCK BADGE ───────────────────────────────────────── */
@@ -277,8 +277,7 @@ svg{display:block;flex-shrink:0;}
 .stk.out{color:var(--ink-3);} .stk.out::before{background:var(--ink-4);}
 
 /* ── QUANTITY STEPPER · crest red, bulk-friendly, direct entry is primary ── */
-.qty{display:flex;align-items:center;border-radius:10px;overflow:hidden;background:var(--crimson);color:#fff;height:34px;
-  box-shadow:0 3px 10px rgba(215,38,47,.25);}
+.qty{display:flex;align-items:center;border-radius:var(--r-sm);overflow:hidden;background:var(--crimson);color:#fff;height:34px;}
 .qty button{width:30px;height:100%;display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;}
 .qty button:active{background:rgba(255,255,255,.16);}
 .qty button:disabled{opacity:.5;pointer-events:none;}
@@ -287,17 +286,17 @@ svg{display:block;flex-shrink:0;}
   font-variant-numeric:tabular-nums;background:transparent;color:#fff;min-width:0;
 }
 .qty-case{font-size:var(--t-caption);color:var(--ink-3);text-align:center;margin-top:3px;font-weight:600;letter-spacing:.02em;}
-.addbtn{height:34px;min-width:68px;padding:0 14px;border-radius:10px;background:#fff;color:var(--crimson);font-size:var(--t-md);
-  font-weight:800;letter-spacing:.05em;text-transform:uppercase;border:1.5px solid var(--crimson);box-shadow:0 3px 10px rgba(215,38,47,.14);}
+.addbtn{height:34px;min-width:68px;padding:0 14px;border-radius:var(--r-sm);background:#fff;color:var(--crimson);font-size:var(--t-md);
+  font-weight:800;letter-spacing:.04em;text-transform:uppercase;border:1.5px solid var(--crimson);}
 .addbtn:active{background:var(--crimson-tint);}
 .addbtn.out{background:#fff;color:var(--ink-3);border-color:var(--line);box-shadow:none;text-transform:none;letter-spacing:0;pointer-events:none;}
 
 /* ── CARDS / SECTIONS · bordered, not floating ───────────── */
-.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden;}
+.card{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--r-lg);overflow:hidden;}
 .section{padding:16px;}
 .section-head{display:flex;align-items:center;justify-content:space-between;padding:18px 16px 10px;}
 .section-head .t-lg{font-weight:700;}
-.divider{height:8px;background:var(--bg);border-top:1px solid var(--line);border-bottom:1px solid var(--line);}
+.divider{height:10px;background:var(--bg);}
 
 /* ── LIST ROWS ─────────────────────────────────────────── */
 .lrow{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line-2);min-height:var(--tap);}
@@ -313,7 +312,7 @@ svg{display:block;flex-shrink:0;}
 }
 .tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 0 7px;color:var(--ink-3);position:relative;}
 .tab.on{color:var(--brand);}
-.tab.on::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:22px;height:2px;background:var(--crimson);}
+.tab.on::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:24px;height:3px;border-radius:0 0 3px 3px;background:var(--brand);}
 .tab-lbl{font-size:10px;font-weight:700;letter-spacing:.015em;}
 .tab-badge{
   position:absolute;top:4px;left:calc(50% + 6px);background:var(--bad);color:#fff;
@@ -384,153 +383,142 @@ svg{display:block;flex-shrink:0;}
 .tot.grand{border-top:1px solid var(--line);margin-top:7px;padding-top:12px;font-size:var(--t-lg);font-weight:700;}
 
 /* ═══════════════════════════════════════════════════════════
-   PHOTO-LED STOREFRONT
-   The pack shots are the product. They sit big and white (trimmed and
-   squared by Cloudinary — see pimg()), never shrunk into tinted boxes.
-   Navy and crest red come straight off the packaging; butter yellow is
-   kept for money-off and the order cutoff, so it always means "act".
+   STOREFRONT
+   One system, used everywhere: navy for structure and navigation, crest
+   red only where money moves (ADD, the stepper, discounts, the cart
+   badge), neutrals for everything else, green only for "in stock".
+   White cards with 16px corners on the cool ground, 12px on controls.
+   The product photos bring the colour, so nothing around them competes.
    ═══════════════════════════════════════════════════════════ */
-.nav-logo{width:40px;height:40px;border-radius:10px;object-fit:contain;flex-shrink:0;}
-
-/* Section heads on the storefront screens */
-.shead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:24px 16px 10px;}
-.shead h2{font-family:var(--font-display);font-size:19px;font-weight:700;letter-spacing:-.02em;line-height:1.2;}
-.shead button{font-size:var(--t-sm);font-weight:700;color:var(--crimson);flex-shrink:0;}
+.shead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:24px 16px 12px;}
+.shead h2{font-family:var(--font-display);font-size:18px;font-weight:700;letter-spacing:-.015em;line-height:1.2;}
+.shead button{font-size:var(--t-sm);font-weight:700;color:var(--brand);flex-shrink:0;}
 
 /* ── Home masthead ── */
 .mast{background:var(--brand);color:#fff;padding:calc(var(--safe-t) + 12px) 16px 0;}
-.mast-row{display:flex;align-items:center;gap:10px;}
-.mast-logo{width:46px;height:46px;border-radius:12px;background:#fff;padding:3px;object-fit:contain;flex-shrink:0;}
-.mast-hi{font-size:var(--t-xs);color:rgba(255,255,255,.68);font-weight:600;}
-.mast-name{font-family:var(--font-display);font-size:19px;font-weight:700;line-height:1.15;letter-spacing:-.015em;}
-.mast-cart{position:relative;width:42px;height:42px;border-radius:12px;background:rgba(255,255,255,.12);
+.mast-row{display:flex;align-items:center;gap:12px;}
+.mast-logo{width:44px;height:44px;border-radius:var(--r);background:#fff;padding:3px;object-fit:contain;flex-shrink:0;}
+.mast-hi{font-size:var(--t-sm);color:rgba(255,255,255,.7);}
+.mast-name{font-family:var(--font-display);font-size:19px;font-weight:700;line-height:1.2;letter-spacing:-.015em;}
+.mast-cart{position:relative;width:42px;height:42px;border-radius:var(--r);background:rgba(255,255,255,.1);
   display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;}
-.mast-cart b{position:absolute;top:-5px;right:-5px;background:var(--crimson);color:#fff;font-size:10px;font-weight:800;
+.mast-cart b{position:absolute;top:-4px;right:-4px;background:var(--crimson);color:#fff;font-size:10px;font-weight:800;
   min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 4px;
   box-shadow:0 0 0 2px var(--brand);}
 .mast-search{display:flex;align-items:center;gap:10px;width:100%;margin-top:14px;height:46px;padding:0 14px;
-  border-radius:12px;background:#fff;color:var(--ink-3);text-align:left;font-size:var(--t-base);
-  box-shadow:0 6px 18px rgba(8,16,48,.18);}
+  border-radius:var(--r);background:#fff;color:var(--ink-3);text-align:left;font-size:var(--t-base);}
 .mast-search input{flex:1;border:none;background:none;min-width:0;color:var(--ink);font-size:var(--t-base);}
 .mast-search input::placeholder{color:var(--ink-3);}
 .mast-search button{display:flex;color:var(--ink-3);}
 
-/* ── Signature: the dispatch ticket — tomorrow's slot and time left to order ── */
-.ticket{position:relative;z-index:2;display:flex;margin:14px 0 -34px;background:#fff;color:var(--ink);
-  border-radius:16px;overflow:hidden;box-shadow:0 10px 28px rgba(12,22,60,.16);}
-.ticket::before,.ticket::after{content:'';position:absolute;right:122px;width:16px;height:16px;border-radius:50%;}
-.ticket::before{top:-8px;background:var(--brand);}
-.ticket::after{bottom:-8px;background:var(--bg);}
-.ticket-slot{flex:1;min-width:0;padding:12px 14px;}
-.ticket-cut{width:130px;flex-shrink:0;padding:12px 14px;background:var(--butter);color:var(--butter-ink);
-  border-left:2px dashed rgba(92,67,0,.3);}
-.ticket-k{font-size:var(--t-caption);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);}
-.ticket-cut .ticket-k{color:var(--butter-ink);opacity:.78;}
-.ticket-v{font-family:var(--font-display);font-size:20px;font-weight:700;letter-spacing:-.02em;line-height:1.1;
-  margin-top:4px;color:var(--brand);font-variant-numeric:tabular-nums;}
-.ticket-cut .ticket-v{color:var(--butter-ink);}
-.home-body{padding-top:50px;}
+/* ── Delivery card: tomorrow's slot and when today's ordering closes ── */
+.ticket{position:relative;z-index:2;display:flex;margin:14px 0 -30px;background:#fff;color:var(--ink);
+  border:1px solid var(--line-2);border-radius:var(--r-lg);box-shadow:0 6px 20px rgba(12,22,60,.1);}
+.ticket-slot,.ticket-cut{padding:12px 14px;min-width:0;}
+.ticket-slot{flex:1;}
+.ticket-cut{flex-shrink:0;text-align:right;border-left:1px solid var(--line-2);}
+.ticket-k{font-size:var(--t-xs);font-weight:600;color:var(--ink-3);}
+.ticket-v{font-family:var(--font-display);font-size:18px;font-weight:700;letter-spacing:-.015em;line-height:1.2;
+  margin-top:2px;color:var(--brand);font-variant-numeric:tabular-nums;}
+.ticket-cut.soon .ticket-v{color:var(--crimson);}
+.home-body{padding-top:46px;}
 
-/* ── Promotions carousel: real packs on a white plate over a bold panel ── */
-.promos{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding:0 16px;padding:2px 16px 4px;}
-.promo{flex:0 0 86%;scroll-snap-align:start;position:relative;height:150px;border-radius:18px;overflow:hidden;
-  display:flex;text-align:left;}
-.promo-copy{position:relative;z-index:1;width:60%;padding:16px 0 14px 16px;display:flex;flex-direction:column;justify-content:space-between;}
-.promo-k{display:block;font-size:var(--t-caption);font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.82;}
-.promo-t{display:block;font-family:var(--font-display);font-size:18.5px;font-weight:700;line-height:1.1;letter-spacing:-.02em;margin-top:4px;}
+/* ── Promotions: one treatment for every slide ── */
+.promos{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding:0 16px;padding:0 16px 2px;}
+.promo{flex:0 0 86%;scroll-snap-align:start;position:relative;height:144px;border-radius:var(--r-lg);overflow:hidden;
+  display:flex;text-align:left;background:var(--brand);color:#fff;}
+.promo-copy{position:relative;z-index:1;width:62%;padding:16px 0 14px 16px;display:flex;flex-direction:column;justify-content:space-between;}
+.promo-k{display:block;font-size:var(--t-xs);font-weight:600;color:rgba(255,255,255,.7);}
+.promo-t{display:block;font-family:var(--font-display);font-size:18px;font-weight:700;line-height:1.15;letter-spacing:-.015em;margin-top:4px;}
 .promo-cta{align-self:flex-start;display:inline-flex;align-items:center;gap:4px;font-size:var(--t-sm);font-weight:700;
-  padding:6px 10px 6px 12px;border-radius:999px;background:#fff;color:var(--ink);}
-.promo-plate{position:absolute;right:-18px;top:50%;width:150px;height:150px;border-radius:50%;background:#fff;
-  display:flex;align-items:center;justify-content:center;transform:translateY(-50%) rotate(-8deg);
-  box-shadow:0 12px 30px rgba(0,0,0,.26);transition:transform .45s var(--ease);}
+  padding:7px 12px;border-radius:999px;background:#fff;color:var(--brand);}
+.promo-plate{position:absolute;right:-14px;top:50%;width:140px;height:140px;border-radius:50%;background:#fff;
+  display:flex;align-items:center;justify-content:center;transform:translateY(-50%);}
 .promo-plate img{width:72%;height:72%;object-fit:contain;}
-.promo:active .promo-plate{transform:translateY(-50%) rotate(0deg) scale(1.05);}
 .promo-dots{display:flex;justify-content:center;gap:5px;margin-top:10px;}
 .promo-dots i{width:6px;height:6px;border-radius:3px;background:var(--line);transition:width .2s var(--ease),background .2s;}
-.promo-dots i.on{width:18px;background:var(--brand);}
+.promo-dots i.on{width:16px;background:var(--brand);}
 
-/* ── Category tiles ── */
-.cats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:0 16px;}
-.cat{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 6px 11px;background:var(--surface);
-  border:1px solid var(--line-2);border-radius:16px;text-align:center;}
-.cat-plate{width:100%;aspect-ratio:1/1;border-radius:13px;display:flex;align-items:center;justify-content:center;
-  overflow:hidden;margin-bottom:6px;transition:transform .2s var(--ease);}
-/* multiply lets the photo's white studio ground take on the tile's tint */
-.cat-plate img{width:80%;height:80%;object-fit:contain;mix-blend-mode:multiply;}
-.cat:active .cat-plate{transform:scale(.96);}
+/* ── Category tiles: plain white, the photo is the colour ── */
+.cats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:0 16px;}
+.cat{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 6px 12px;background:var(--surface);
+  border:1px solid var(--line-2);border-radius:var(--r-lg);text-align:center;}
+.cat:active{background:var(--surface-2);}
+.cat-plate{width:74%;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;margin-bottom:6px;color:var(--brand);}
+.cat-plate img{width:100%;height:100%;object-fit:contain;}
 .cat-lbl{font-size:var(--t-md);font-weight:700;line-height:1.2;}
 .cat-n{font-size:var(--t-xs);color:var(--ink-3);}
 
-/* ── Product card (shelves and the catalogue grid) ── */
-.shelf{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x proximity;scroll-padding:0 16px;padding:0 16px 4px;}
-.shelf .pcard{flex:0 0 42%;scroll-snap-align:start;}
-.pcard{position:relative;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line-2);
-  border-radius:16px;overflow:hidden;}
-.pcard-img{position:relative;aspect-ratio:1/1;background:#fff;display:flex;align-items:center;justify-content:center;}
-.pcard-img img{width:86%;height:86%;object-fit:contain;transition:transform .25s var(--ease);}
-.pcard-img:active img{transform:scale(.96);}
-.pcard-deal{position:absolute;top:8px;left:0;background:var(--butter);color:var(--butter-ink);font-size:10.5px;
-  font-weight:800;letter-spacing:.02em;padding:3px 8px 3px 7px;border-radius:0 6px 6px 0;}
-.pcard-act{position:absolute;right:8px;bottom:8px;}
-.pcard-body{display:flex;flex-direction:column;gap:2px;flex:1;padding:9px 10px 11px;text-align:left;border-top:1px solid var(--line-2);}
-.pcard-size{font-size:var(--t-xs);font-weight:600;color:var(--ink-3);}
-.pcard-name{font-size:var(--t-md);font-weight:600;line-height:1.3;min-height:2.6em;
+/* ── Product card (home shelves and the catalogue grid) ── */
+.shelf{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x proximity;scroll-padding:0 16px;padding:0 16px 2px;}
+.shelf .pcard{flex:0 0 40%;scroll-snap-align:start;}
+.pcard{display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line-2);border-radius:var(--r-lg);overflow:hidden;}
+.pcard-img{position:relative;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;background:#fff;}
+.pcard-img img{width:84%;height:84%;object-fit:contain;}
+.pcard-img .save{position:absolute;top:8px;left:8px;}
+/* The body takes the spare height, so price + ADD sit on the same line
+   across a row while the pack size stays right under the name. */
+.pcard-body{display:flex;flex-direction:column;gap:3px;flex:1;padding:2px 10px 0;text-align:left;}
+.pcard-name{font-size:var(--t-md);font-weight:600;line-height:1.3;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
-.pcard-price{display:flex;align-items:baseline;gap:5px;margin-top:auto;padding-top:4px;}
-.pcard-price b{font-family:var(--font-display);font-size:17px;font-weight:700;letter-spacing:-.01em;font-variant-numeric:tabular-nums;}
+.pcard-size{font-size:var(--t-xs);color:var(--ink-3);}
+.pcard-price{display:flex;align-items:baseline;gap:6px;margin-top:auto;padding-top:6px;}
+.pcard-price b{font-family:var(--font-display);font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;}
 .pcard-price s{font-size:var(--t-xs);color:var(--ink-3);font-variant-numeric:tabular-nums;}
-.pcard-more{font-size:var(--t-xs);font-weight:700;color:var(--brand-3);}
+.pcard-act{margin-top:auto;padding:10px;}
+.pcard-act .addbtn,.pcard-act .qty{width:100%;}
+.pcard-act .qty input{flex:1;}
 .pcard.out .pcard-img img{opacity:.45;filter:grayscale(1);}
 
-/* ── Home: slim utility rows and a live order ── */
-.utils{display:grid;gap:8px;padding:16px 16px 0;}
-.util{display:flex;align-items:center;gap:12px;width:100%;padding:12px 14px;background:var(--surface);
-  border:1px solid var(--line-2);border-radius:14px;text-align:left;color:var(--ink-3);}
+/* ── Home shortcuts: one grouped list ── */
+.utils{margin:24px 16px 0;background:var(--surface);border:1px solid var(--line-2);border-radius:var(--r-lg);overflow:hidden;}
+.util{display:flex;align-items:center;gap:12px;width:100%;padding:13px 14px;text-align:left;color:var(--ink-3);
+  border-bottom:1px solid var(--line-2);}
+.util:last-child{border-bottom:none;}
 .util b{display:block;font-size:var(--t-base);font-weight:700;color:var(--ink);}
-.util .grow span{font-size:var(--t-sm);color:var(--ink-2);}
-.util-ic{width:38px;height:38px;border-radius:12px;background:var(--brand-tint);color:var(--brand);
+.util .grow>span{display:block;font-size:var(--t-sm);color:var(--ink-2);margin-top:1px;}
+.util-ic{width:36px;height:36px;border-radius:var(--r);background:var(--brand-tint);color:var(--brand);
   display:flex;align-items:center;justify-content:center;flex-shrink:0;}
-.live-card{width:100%;text-align:left;padding:14px;border-radius:14px;border-color:var(--brand-line);background:var(--brand-tint);}
+.util-act{font-size:var(--t-sm);font-weight:700;color:var(--crimson);flex-shrink:0;}
+.live-card{width:100%;text-align:left;padding:14px;border-color:var(--brand-line);background:var(--brand-tint);}
 .home-foot{padding:30px 16px calc(28px + var(--safe-b));text-align:center;font-size:var(--t-xs);color:var(--ink-3);}
-.home-foot img{display:block;width:34px;height:34px;object-fit:contain;opacity:.55;margin:0 auto 8px;}
+.home-foot img{display:block;width:32px;height:32px;object-fit:contain;opacity:.5;margin:0 auto 8px;}
 
-/* ── Catalogue: photo rail on the left, product grid on the right ── */
+/* ── Catalogue: category rail on the left, product grid on the right ── */
 .cat-head{background:var(--brand);color:#fff;padding:calc(var(--safe-t) + 12px) 16px 12px;flex-shrink:0;}
-.cat-head .mast-search{margin-top:12px;box-shadow:none;}
-.cat-head-t{font-family:var(--font-display);font-size:21px;font-weight:700;letter-spacing:-.02em;}
-.cat-head-s{font-size:var(--t-xs);color:rgba(255,255,255,.72);margin-top:2px;}
+.cat-head .mast-search{margin-top:12px;}
+.cat-head-t{font-family:var(--font-display);font-size:20px;font-weight:700;letter-spacing:-.015em;}
 .cat-layout{flex:1;min-height:0;display:flex;}
-.rail{width:84px;flex-shrink:0;overflow-y:auto;background:var(--surface);border-right:1px solid var(--line-2);padding:6px 0 24px;}
-.rail-item{position:relative;display:flex;flex-direction:column;align-items:center;gap:5px;width:100%;padding:10px 4px;}
-.rail-plate{width:54px;height:54px;border-radius:16px;display:flex;align-items:center;justify-content:center;
-  overflow:hidden;transition:transform .2s var(--ease),box-shadow .2s;}
-.rail-plate img{width:80%;height:80%;object-fit:contain;mix-blend-mode:multiply;}
-.rail-lbl{font-size:10.5px;font-weight:600;color:var(--ink-2);text-align:center;line-height:1.2;}
-.rail-item.on .rail-plate{transform:scale(1.06);box-shadow:0 0 0 2px var(--brand);}
-.rail-item.on .rail-lbl{color:var(--brand);font-weight:800;}
-.rail-item.on::after{content:'';position:absolute;right:0;top:14px;bottom:14px;width:3px;border-radius:3px 0 0 3px;background:var(--crimson);}
+.rail{width:80px;flex-shrink:0;overflow-y:auto;background:var(--surface);border-right:1px solid var(--line-2);padding:4px 0 24px;}
+.rail-item{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;width:100%;padding:10px 4px;}
+.rail-plate{width:52px;height:52px;border-radius:var(--r);background:#fff;border:1px solid var(--line-2);
+  display:flex;align-items:center;justify-content:center;overflow:hidden;color:var(--brand);}
+.rail-plate img{width:86%;height:86%;object-fit:contain;}
+.rail-lbl{font-size:11px;font-weight:600;color:var(--ink-2);text-align:center;line-height:1.2;}
+.rail-item.on{background:var(--brand-tint);}
+.rail-item.on .rail-plate{border-color:var(--brand);}
+.rail-item.on .rail-lbl{color:var(--brand);font-weight:700;}
+.rail-item.on::after{content:'';position:absolute;right:0;top:10px;bottom:10px;width:3px;border-radius:3px 0 0 3px;background:var(--brand);}
 .grid-pane{flex:1;min-width:0;background:var(--bg);}
 .grid-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:14px 12px 2px;}
-.grid-head h2{font-family:var(--font-display);font-size:17px;font-weight:700;letter-spacing:-.015em;}
+.grid-head h2{font-family:var(--font-display);font-size:16px;font-weight:700;letter-spacing:-.015em;}
 .grid-head span{font-size:var(--t-xs);color:var(--ink-3);flex-shrink:0;}
 .pgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px;}
 
 /* ── Product page ── */
-.pd-hero{position:relative;height:min(86vw,420px);background:#fff;display:flex;align-items:center;justify-content:center;
-  border-bottom:1px solid var(--line-2);overflow:hidden;cursor:zoom-in;}
-.pd-hero img{max-width:80%;max-height:88%;object-fit:contain;}
-.pd-deal{top:14px;font-size:var(--t-sm);padding:5px 10px 5px 12px;}
-.pd-zoom{position:absolute;right:12px;bottom:12px;display:flex;align-items:center;gap:6px;font-size:var(--t-xs);font-weight:700;
-  color:var(--ink-2);background:rgba(255,255,255,.94);border:1px solid var(--line);padding:6px 10px;border-radius:999px;}
+.pd-hero{position:relative;height:min(84vw,400px);background:#fff;display:flex;align-items:center;justify-content:center;
+  border-bottom:1px solid var(--line-2);cursor:zoom-in;}
+.pd-hero img{max-width:80%;max-height:86%;object-fit:contain;}
+.pd-zoom{position:absolute;right:12px;bottom:12px;width:38px;height:38px;border-radius:50%;background:#fff;
+  border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink-2);}
 .pd-title{padding:16px 16px 4px;}
-.pd-cat{font-size:var(--t-xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--crimson);}
-.pd-name{font-family:var(--font-display);font-size:25px;font-weight:700;letter-spacing:-.02em;line-height:1.12;margin-top:4px;}
-.pd-from{margin-top:6px;font-size:var(--t-md);color:var(--ink-2);}
+.pd-name{font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-.02em;line-height:1.15;}
+.pd-from{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;margin-top:6px;font-size:var(--t-md);color:var(--ink-2);}
 .pd-from b{font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--ink);}
 .vcard{display:flex;align-items:center;gap:12px;padding:12px 14px;margin-bottom:8px;background:var(--surface);
-  border:1.5px solid var(--line);border-radius:14px;}
-.vcard.on{border-color:var(--crimson);background:#FFF8F8;}
-.vcard-price{font-family:var(--font-display);font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;}
+  border:1px solid var(--line);border-radius:var(--r-lg);}
+.vcard.on{border-color:var(--brand);background:var(--brand-tint);}
+.vcard-price{font-family:var(--font-display);font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;}
 
 /* Full-screen photo: tap to zoom, scroll to look around */
 .zoom{position:fixed;inset:0;z-index:150;display:flex;flex-direction:column;background:#fff;opacity:0;transition:opacity .18s;}
@@ -1871,7 +1859,6 @@ function paint(){
 function navBar(title, opts={}){
   return `<div class="topbar">
     ${opts.noBack?'':`<button class="iconbtn" onclick="back()" aria-label="Back">${icon('left',22)}</button>`}
-    <img class="nav-logo" src="${esc(safeUrl(APPCFG.logo,'assets/logo.png'))}" alt="">
     <div class="grow"><div class="t-lg truncate">${esc(title)}</div>
       ${opts.sub?`<div class="t-sm muted truncate">${esc(opts.sub)}</div>`:''}</div>
     ${opts.action||''}
@@ -2449,22 +2436,6 @@ function rfdChargeText(){
   const fee = Number(APPCFG.rfdFee) || 0;
   return fee > 0 ? `An extra ${money(fee)} applies per request.` : 'A small extra charge applies.';
 }
-function rfdCardHtml(){
-  const r = rfdActive();
-  if(r && !RFD.unsub) setTimeout(rfdListen, 0);
-  const reason = r ? ((RFD_REASONS.find(x => x.id === r.reason) || {}).label || 'Request') : '';
-  return `<div style="padding:16px 16px 0;"><div class="card" style="padding:14px;">
-    <div class="row between mb-8"><span class="eyebrow">Need a driver?</span>
-      ${r ? `<span class="pill ${r.status==='assigned'?'g':'a'}">${esc(RFD_STATUS[r.status])}</span>` : ''}</div>
-    ${r ? `
-      <div class="t-sm" style="line-height:1.5;">${esc(reason)} · sent ${esc(dtFmt(r.at))}
-        ${r.status==='assigned' && r.driverName ? `<br><b>${esc(r.driverName)}</b> is coming${r.driverPhone ? ` · <a href="tel:+91${esc(r.driverPhone)}" style="color:var(--brand);font-weight:600;">Call</a>` : ''}.` : ''}</div>
-      ${r.status==='open' ? `<button class="btn btn-quiet btn-sm mt-8" onclick="rfdWithdraw()">Withdraw request</button>` : ''}`
-    : `
-      <button class="btn" onclick="openRfdSheet()">${icon('truck',18)} Request a driver</button>
-      <div class="t-sm muted mt-8" style="line-height:1.5;">For collecting a payment (cash or cheque), an urgent delivery, or any other help. ${esc(rfdChargeText())}</div>`}
-  </div></div>`;
-}
 function openRfdSheet(){
   openSheet(`<div class="sheet-head"><div class="t-lg">Request a driver</div></div>
     <div class="t-sm muted mb-12" style="line-height:1.5;">What do you need the driver for? ${esc(rfdChargeText())}</div>
@@ -2571,14 +2542,13 @@ function pimg(url, size = 400){
   if(!/^https:\/\/res\.cloudinary\.com\/[^/]+\/image\/upload\//.test(u)) return u;
   return u.replace('/image/upload/', `/image/upload/e_trim:10/c_pad,b_white,w_${size},h_${size}/f_auto,q_auto/`);
 }
-// A light tint per category, and the pack that stands for it on a tile.
+// The pack that stands for each category on its tile and in the rail.
 const CAT_LOOK = {
-  all:       { tint:'#EEF1FA' },
-  dairy:     { tint:'#E7EEFF', pk:'paneer' },
-  curd:      { tint:'#E6F6EF', pk:'matka-dahi' },
-  frozen:    { tint:'#E3F1F8', pk:'samosa' },
-  beverages: { tint:'#FFF0DC', pk:'mango-crush' },
-  sweets:    { tint:'#FDEBF0', pk:'amrakhand' },
+  dairy:     { pk:'paneer' },
+  curd:      { pk:'matka-dahi' },
+  frozen:    { pk:'samosa' },
+  beverages: { pk:'mango-crush' },
+  sweets:    { pk:'amrakhand' },
 };
 function catPhoto(id){
   const pk = CAT_LOOK[id]?.pk;
@@ -2589,10 +2559,10 @@ function catPhoto(id){
 // Home carousel slides, built from real packs. A slide whose product is
 // missing or switched off in the admin panel is simply left out.
 const PROMOS = [
-  { pk:'paneer',      bg:'var(--brand)',   kicker:'Kitchen staple', title:'Malai paneer in 200 g and 1 kg packs',          cta:'Order paneer' },
-  { pk:'mango-crush', bg:'var(--butter)', ink:'var(--butter-ink)', kicker:'Beverages', title:'Alphonso mango crush for shakes and lassi', cta:'See drinks', cat:'beverages' },
-  { pk:'samosa',      bg:'var(--frost)',   kicker:'Frozen',         title:'Snacks that go straight from freezer to fryer', cta:'See frozen', cat:'frozen' },
-  { pk:'shrikhand',   bg:'var(--crimson)', kicker:'Desserts',       title:'Shrikhand and amrakhand for your dessert menu', cta:'See sweets', cat:'sweets' },
+  { pk:'paneer',      kicker:'Kitchen staple', title:'Malai paneer in 200 g and 1 kg packs',          cta:'Order paneer' },
+  { pk:'mango-crush', kicker:'Beverages',      title:'Alphonso mango crush for shakes and lassi',     cta:'See drinks', cat:'beverages' },
+  { pk:'samosa',      kicker:'Frozen',         title:'Snacks that go straight from freezer to fryer', cta:'See frozen', cat:'frozen' },
+  { pk:'shrikhand',   kicker:'Desserts',       title:'Shrikhand and amrakhand for your dessert menu', cta:'See sweets', cat:'sweets' },
 ];
 
 // Time left before today's order cutoff (APPCFG.orderCutoff, e.g. "6:00 PM").
@@ -2604,20 +2574,23 @@ function cutoffInfo(){
   if(ap === 'am' && h === 12) h = 0;
   const now = new Date(), cut = new Date(now); cut.setHours(h, min, 0, 0);
   const left = Math.max(0, Math.round((cut - now) / 60000));
-  return { open: left > 0, left: left >= 60 ? `${Math.floor(left / 60)}h ${left % 60}m` : `${left}m` };
+  return { open: left > 0, mins: left, left: left >= 60 ? `${Math.floor(left / 60)}h ${left % 60}m` : `${left}m` };
+}
+// The right half of the delivery card. A countdown only appears in the last
+// three hours, when it actually helps someone decide.
+function cutoffLabel(){
+  const cut = cutoffInfo();
+  if(cut && !cut.open) return { k:"Today's orders", v:'Closed', soon:false };
+  if(cut && cut.mins <= 180) return { k:'Closes in', v:cut.left, soon:true };
+  return { k:'Order by', v:esc(APPCFG.orderCutoff), soon:false };
 }
 function dispatchTicket(){
-  const cut = cutoffInfo();
-  const open = !cut || cut.open;
+  const cut = cutoffInfo(), c = cutoffLabel();
   return `<div class="ticket" role="status">
-    <div class="ticket-slot">
-      <div class="ticket-k">Next delivery</div>
-      <div class="ticket-v">${open ? 'Tomorrow' : 'Day after'}, 7–11 AM</div>
-    </div>
-    <div class="ticket-cut">
-      <div class="ticket-k">${open ? 'Order within' : 'Cutoff'}</div>
-      <div class="ticket-v" id="cut-left">${!cut ? esc(APPCFG.orderCutoff) : open ? cut.left : 'Passed'}</div>
-    </div>
+    <div class="ticket-slot"><div class="ticket-k">Next delivery</div>
+      <div class="ticket-v">${!cut || cut.open ? 'Tomorrow' : 'Day after'}, 7–11 AM</div></div>
+    <div class="ticket-cut ${c.soon ? 'soon' : ''}" id="cut"><div class="ticket-k">${c.k}</div>
+      <div class="ticket-v">${c.v}</div></div>
   </div>`;
 }
 function promoCarousel(){
@@ -2625,7 +2598,7 @@ function promoCarousel(){
   if(!slides.length) return '';
   return `<div class="promos" id="promos">${slides.map(s => {
       const act = s.cat ? `S.cat='${jsStr(s.cat)}';switchTab('catalogue')` : `openProduct('${jsStr(s.pk)}')`;
-      return `<button class="promo" style="background:${s.bg};color:${s.ink || '#fff'};" onclick="${act}">
+      return `<button class="promo" onclick="${act}">
         <span class="promo-copy">
           <span><span class="promo-k">${esc(s.kicker)}</span><span class="promo-t">${esc(s.title)}</span></span>
           <span class="promo-cta">${esc(s.cta)} ${icon('right',14,2)}</span>
@@ -2639,12 +2612,12 @@ function catTile(c){
   const live = Object.values(CATALOGUE).filter(p => !p.disabled && (c.id === 'all' || p.cat === c.id));
   const ph = c.id === 'all' ? '' : catPhoto(c.id);
   return `<button class="cat" onclick="S.cat='${jsStr(c.id)}';switchTab('catalogue')">
-    <span class="cat-plate" style="background:${(CAT_LOOK[c.id] || CAT_LOOK.all).tint};">
-      ${ph ? `<img src="${esc(pimg(ph, 240))}" alt="" loading="lazy" onerror="this.style.opacity=0">` : `<span style="color:var(--brand);">${icon('grid',30)}</span>`}</span>
+    <span class="cat-plate">${ph ? `<img src="${esc(pimg(ph, 240))}" alt="" loading="lazy" onerror="this.style.opacity=0">` : icon('grid',32)}</span>
     <span class="cat-lbl">${esc(c.id === 'all' ? 'All products' : c.label)}</span>
     <span class="cat-n">${live.length} item${live.length === 1 ? '' : 's'}</span>
   </button>`;
 }
+// Home shortcuts as one grouped list: repeat an order, credit, a driver.
 function homeUtility(){
   const rows = [];
   const last = S.orders[0];
@@ -2653,15 +2626,36 @@ function homeUtility(){
       <span class="grow"><b>Repeat last order</b><span>${last.items.length} items · ${money(last.total)}</span></span>
       ${icon('right',18)}</button>`);
   if(APPCFG.walletEnabled) rows.push(`<button class="util" onclick="go('wallet')">
-      <span class="util-ic" style="background:var(--butter);color:var(--butter-ink);">${icon('wallet',19)}</span>
+      <span class="util-ic">${icon('wallet',19)}</span>
       <span class="grow"><b>${isB2B() ? 'Business credit' : 'Wallet'}</b><span>${money(S.wallet.balance)} available</span></span>
       ${icon('right',18)}</button>`);
+  if(isB2B()) rows.push(rfdRowHtml());
   return rows.length ? `<div class="utils">${rows.join('')}</div>` : '';
+}
+// "Request a driver" as a row in the shortcuts; the sheet explains the charge.
+function rfdRowHtml(){
+  const r = rfdActive();
+  if(r && !RFD.unsub) setTimeout(rfdListen, 0);
+  if(!r){
+    const fee = Number(APPCFG.rfdFee) || 0;
+    return `<button class="util" onclick="openRfdSheet()">
+      <span class="util-ic">${icon('truck',19)}</span>
+      <span class="grow"><b>Request a driver</b><span>Payment pickup, urgent delivery or other help · ${fee > 0 ? money(fee) + ' extra' : 'small extra charge'}</span></span>
+      ${icon('right',18)}</button>`;
+  }
+  const reason = (RFD_REASONS.find(x => x.id === r.reason) || {}).label || 'Driver request';
+  const who = r.status === 'assigned' && r.driverName ? `${esc(r.driverName)} is coming` : esc(RFD_STATUS[r.status]);
+  return `<div class="util">
+      <span class="util-ic">${icon('truck',19)}</span>
+      <span class="grow"><b>${esc(reason)}</b><span>${who} · sent ${esc(dtFmt(r.at))}</span></span>
+      ${r.status === 'assigned' && r.driverPhone ? `<a class="util-act" href="tel:+91${esc(r.driverPhone)}">Call</a>`
+        : r.status === 'open' ? `<button class="util-act" onclick="rfdWithdraw()">Withdraw</button>` : ''}
+    </div>`;
 }
 
 // Carousel dots follow the swipe; slides advance on their own until the
 // customer touches them, and never under reduced motion. The same timer
-// keeps the cutoff countdown current.
+// keeps the delivery card's cutoff current.
 let HOME_TIMER = null;
 function wireHome(){
   clearInterval(HOME_TIMER);
@@ -2682,8 +2676,8 @@ function wireHome(){
     if(S.screen !== 'home' || !document.getElementById('home-scroll')){ clearInterval(HOME_TIMER); return; }
     tick++;
     if(tick % 12 === 0){
-      const c = cutoffInfo(), el = document.getElementById('cut-left');
-      if(el && c && c.open) el.textContent = c.left;
+      const el = document.getElementById('cut'), c = cutoffLabel();
+      if(el){ el.classList.toggle('soon', c.soon); el.innerHTML = `<div class="ticket-k">${c.k}</div><div class="ticket-v">${c.v}</div>`; }
     }
     if(track && !touched && !still && dots.length > 1){
       const next = (Math.round(track.scrollLeft / step()) + 1) % dots.length;
@@ -2737,7 +2731,6 @@ function scrHome(){
         <div class="cats">${CATEGORIES.map(catTile).join('')}</div>
 
         ${homeQuickAdd()}
-        ${isB2B() ? rfdCardHtml() : ''}
         ${homeUtility()}
         ${categoryShelf('frozen', 'Frozen snacks, ready to fry')}
         ${categoryShelf('beverages', 'Crushes and drinks')}
@@ -2771,10 +2764,7 @@ function scrCatalogue(){
   return `<div class="screen on">
     <header class="cat-head">
       <div class="row gap-10">
-        <div class="grow">
-          <div class="cat-head-t">Catalogue</div>
-          <div class="cat-head-s">Delivery tomorrow, 7–11 AM · order before ${esc(APPCFG.orderCutoff)}</div>
-        </div>
+        <div class="grow cat-head-t">Catalogue</div>
         <button class="mast-cart" onclick="go('cart')" aria-label="Cart">
           ${icon('cart',21)}<b id="cart-count" style="display:none;">0</b></button>
       </div>
@@ -2797,8 +2787,7 @@ function railItem(c){
   const on = S.cat === c.id;
   const ph = c.id === 'all' ? '' : catPhoto(c.id);
   return `<button class="rail-item ${on ? 'on' : ''}" onclick="S.cat='${jsStr(c.id)}';paint()" aria-pressed="${on}">
-    <span class="rail-plate" style="background:${(CAT_LOOK[c.id] || CAT_LOOK.all).tint};">
-      ${ph ? `<img src="${esc(pimg(ph, 160))}" alt="" loading="lazy" onerror="this.style.opacity=0">` : `<span style="color:var(--brand);">${icon('grid',24)}</span>`}</span>
+    <span class="rail-plate">${ph ? `<img src="${esc(pimg(ph, 160))}" alt="" loading="lazy" onerror="this.style.opacity=0">` : icon('grid',24)}</span>
     <span class="rail-lbl">${esc(c.id === 'all' ? 'All' : c.label)}</span>
   </button>`;
 }
@@ -2826,22 +2815,23 @@ function repaintRows(){
   });
 }
 
-/* One product card: the photo does the selling — then pack, name, price, ADD. */
+/* One product card: photo, name, pack, price — then a full-width ADD, so
+   the button never sits on top of the pack. */
 function pcard(k, p, vid){
   const v = (vid && p.variants.find(x => x.id === vid)) || p.variants[0];
   const deal = showsMRP(v) ? savingPct(v) : 0;
+  const sizes = p.variants.length > 1 ? ` · ${p.variants.length} sizes` : '';
   return `<div class="pcard ${v.stock === 'out' ? 'out' : ''}">
     <div class="pcard-img" onclick="openProduct('${jsStr(k)}')">
       <img src="${esc(pimg(p.img, 400))}" alt="" loading="lazy" onerror="this.style.opacity=0">
-      ${deal ? `<span class="pcard-deal">${deal}% OFF</span>` : ''}
-      <div class="pcard-act" data-act="${esc(k)}::${esc(v.id)}">${qtyControl(k, v)}</div>
+      ${deal ? `<span class="save">${deal}% off</span>` : ''}
     </div>
     <button class="pcard-body" onclick="openProduct('${jsStr(k)}')">
-      <span class="pcard-size">${esc(v.label)} ${esc(p.unit)}${v.stock === 'low' ? ' · <span style="color:var(--warn);">Low stock</span>' : ''}</span>
       <span class="pcard-name">${esc(p.name)}</span>
+      <span class="pcard-size">${esc(v.label)} ${esc(p.unit)}${sizes}${v.stock === 'low' ? ' · Low stock' : ''}</span>
       <span class="pcard-price"><b>${money(unitPrice(v))}</b>${deal ? `<s>${money(v.mrp)}</s>` : ''}</span>
-      ${p.variants.length > 1 ? `<span class="pcard-more">${p.variants.length} sizes</span>` : ''}
     </button>
+    <div class="pcard-act" data-act="${esc(k)}::${esc(v.id)}">${qtyControl(k, v)}</div>
   </div>`;
 }
 // A horizontal row of product cards. entries: [[productKey, variantId?], …]
@@ -2963,13 +2953,14 @@ function productBody(k,p){
   return `
   <div class="pd-hero" onclick="openZoom('${jsStr(k)}')" role="button" aria-label="Open the photo full screen">
     <img src="${esc(pimg(p.img, 900))}" alt="${esc(p.name)}" onerror="this.style.opacity=0">
-    ${best ? `<span class="pcard-deal pd-deal">Save up to ${best}%</span>` : ''}
-    <span class="pd-zoom">${icon('search',14)} Tap to zoom</span>
+    <span class="pd-zoom" aria-hidden="true">${icon('search',17)}</span>
   </div>
   <div class="pd-title">
-    ${cat ? `<div class="pd-cat">${esc(cat.label)}</div>` : ''}
     <h1 class="pd-name">${esc(p.name)}</h1>
-    <div class="pd-from">${p.variants.length > 1 ? 'From ' : ''}<b>${money(from)}</b> per ${esc(p.unit)}${isB2B() ? ' · wholesale, excl. GST' : ''}</div>
+    <div class="pd-from">
+      <span>${p.variants.length > 1 ? 'From ' : ''}<b>${money(from)}</b> per ${esc(p.unit)}${isB2B() ? ', excl. GST' : ''}</span>
+      ${best ? `<span class="save">Up to ${best}% off</span>` : ''}
+    </div>
   </div>
   <div class="section" style="padding-top:12px;">
     <div class="eyebrow mb-8">Pack sizes</div>
@@ -2984,11 +2975,11 @@ function productBody(k,p){
           <div class="row gap-6">
             <span class="vcard-price">${money(unitPrice(v))}</span>
             <span class="t-sm muted">per ${esc(p.unit)}</span>
-            ${showsMRP(v) ? `<span class="mrp num t-sm">${money(v.mrp)}</span><span class="save">${savingPct(v)}% off</span>` : ''}
+            ${showsMRP(v) ? `<span class="mrp num t-sm">${money(v.mrp)}</span>` : ''}
           </div>
           <div class="t-xs muted mt-4">
             Minimum ${v.moq} ${esc(p.unit)}${v.moq > 1 ? 's' : ''} · case of ${v.case}
-            ${q ? ` · <b style="color:var(--crimson);">${money(unitPrice(v) * q)} for ${q}</b>` : ''}
+            ${q ? ` · <b style="color:var(--brand);">${money(unitPrice(v) * q)} for ${q}</b>` : ''}
           </div>
         </div>
         <div data-act="${esc(k)}::${esc(v.id)}">${qtyControl(k, v)}</div>
