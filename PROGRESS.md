@@ -253,9 +253,16 @@ Five problems the owner reported, fixed on branch `v5-19-fixes`:
     - When the app is signed with a different key, add its SHA-256 there.
 
 ### Still to do
-0. **v5.19 (above) needs:** `firebase deploy --only hosting,firestore:rules`
-   (the invoice page, `assetlinks.json`, the admin changes and the driver
-   request rule), then merge, build and release v5.19.0-debug.
+0. **v5.19 is merged (PR #5) and released:**
+   https://github.com/VeerBhagtani/modern-dairy-app/releases/download/v5.19.0-debug/modern-dairy-v5.19.0-debug.apk
+   (also `index.apk` here). Hosting and Firestore rules were deployed on
+   2026-09-11, with the owner's go-ahead.
+   - `/invoice/` returns 200 and `/.well-known/assetlinks.json` is served as
+     JSON; Google's Digital Asset Links API lists `in.moderndairy.app`.
+   - The admin page has the new WhatsApp wording.
+   - Not yet tried on a real phone: the rider link opening the app, and a
+     B2C driver request, which was not probed live to keep test rows out of
+     the office's Driver requests tab.
 1. **Merged and released (up to v5.18).** PR #4 is merged into `master`, so `master`
    matches what is live (Hosting, Firestore rules) and the APK. The latest
    APK is **v5.18.0-debug**, built from `master`:
