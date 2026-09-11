@@ -21,8 +21,7 @@
     "@capacitor/ios": "^6.1.2",
     "@capacitor/keyboard": "^6.0.4",
     "@capacitor/network": "^6.0.2",
-    "@capacitor/push-notifications": "^6.0.5",
-    "leaflet": "^1.9.4"
+    "@capacitor/push-notifications": "^6.0.5"
   },
   "devDependencies": {
     "@capacitor/cli": "^6.1.2"

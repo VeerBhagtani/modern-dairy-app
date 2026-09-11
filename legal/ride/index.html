@@ -7,8 +7,8 @@
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#1B2A6B">
 <title>Modern Dairy · Rider</title>
-<link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
-<script src="/vendor/leaflet/leaflet.js" defer></script>
+<link rel="stylesheet" href="/vendor/maplibre/maplibre-gl.css">
+<script src="/vendor/maplibre/maplibre-gl-csp.js" defer></script>
 <style>
 :root{
   --brand:#1B2A6B; --brand-tint:#EEF1FA; --crimson:#D7262F; --crimson-tint:#FDE8E9;
@@ -182,26 +182,44 @@ function render(){
   drawMap();
 }
 
+// OpenFreeMap vector maps drawn by MapLibre: free, no key, no usage cap.
+const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+const lngLat = (p) => [p[1], p[0]];
+function pin(html, at){
+  const box = document.createElement('div'); box.innerHTML = html;
+  return new maplibregl.Marker({ element: box.firstElementChild }).setLngLat(lngLat(at)).addTo(R.map);
+}
 function drawMap(){
   const el = $('map');
-  if (!el || !window.L) return;
+  if (!el || !window.maplibregl) return;
   if (R.map && R.map.getContainer() !== el) { R.map.remove(); R.map = R.me = R.dest = null; R.fitted = false; }
   const dest = destOf(R.d);
   if (!R.map) {
-    R.map = L.map(el, { zoomControl:false });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19, attribution:'© OpenStreetMap' }).addTo(R.map);
-    R.map.setView(R.pos || dest || [18.5204, 73.8567], (R.pos || dest) ? 15 : 11);   // Pune until we know better
+    try {
+      maplibregl.setWorkerUrl('/vendor/maplibre/maplibre-gl-csp-worker.js');
+      // Centred on Pune until we know where the rider or the customer is.
+      R.map = new maplibregl.Map({ container: el, style: MAP_STYLE, center: lngLat(R.pos || dest || [18.5204, 73.8567]),
+        zoom: (R.pos || dest) ? 15 : 11, attributionControl: { compact: true }, dragRotate: false, pitchWithRotate: false });
+      R.map.touchZoomRotate.disableRotation();
+      // Credit stays one tap away on the ⓘ button instead of covering the map.
+      R.map.once('load', () => el.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show'));
+    } catch (e) {
+      el.innerHTML = '<p class="note center">This phone can’t show the map — use Navigate for directions.</p>';
+      return;
+    }
   }
-  if (dest && !R.dest) R.dest = L.marker(dest, { icon: L.divIcon({ className:'', html:'<div class="dest">🏠</div>', iconSize:[34,34], iconAnchor:[17,17] }) }).addTo(R.map);
+  if (dest && !R.dest) R.dest = pin('<div class="dest">🏠</div>', dest);
   moveMe();
 }
 function moveMe(){
   if (!R.map || !R.pos) return;
-  if (!R.me) R.me = L.marker(R.pos, { icon: L.divIcon({ className:'', html:'<div class="me">🛵</div>', iconSize:[40,40], iconAnchor:[20,20] }) }).addTo(R.map);
-  else R.me.setLatLng(R.pos);
+  if (!R.me) R.me = pin('<div class="me">🛵</div>', R.pos);
+  else R.me.setLngLat(lngLat(R.pos));
   if (!R.fitted) {
     const dest = destOf(R.d);
-    if (dest) R.map.fitBounds(L.latLngBounds([R.pos, dest]).pad(0.3)); else R.map.setView(R.pos, 16);
+    if (dest) R.map.fitBounds([[Math.min(R.pos[1], dest[1]), Math.min(R.pos[0], dest[0])], [Math.max(R.pos[1], dest[1]), Math.max(R.pos[0], dest[0])]],
+      { padding: 60, maxZoom: 16, duration: 0 });
+    else R.map.jumpTo({ center: lngLat(R.pos), zoom: 16 });
     R.fitted = true;
   }
 }

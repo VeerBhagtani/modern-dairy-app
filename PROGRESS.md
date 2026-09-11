@@ -184,13 +184,36 @@ Simulated end to end in headless Chrome: 18/18.
   a billing-enabled project. The maps are still OpenStreetMap, and
   Navigate opens the Google Maps app.
 
+### Maps: OpenFreeMap + MapLibre (v5.18.0-debug)
+The owner didn't like the flat OpenStreetMap raster look and asked for a
+free, good map provider instead of paying for Google Maps.
+- Every map now draws **OpenFreeMap** vector maps with **MapLibre GL JS
+  4.7.1**: the customer's live map, app rider mode and the rider web link.
+  OpenFreeMap is free, needs no API key, has no usage cap and allows
+  commercial use.
+- MapLibre's strict-security build is vendored in `www/vendor/maplibre/`
+  and `legal/vendor/maplibre/`, with its worker loaded from there too. The
+  security policies only needed `tiles.openfreemap.org` added (and `blob:`
+  images on Hosting). Leaflet is removed.
+- `mdMap()` / `mdPin()` / `mdMove()` / `mdFit()` wrap MapLibre with the
+  lat-first calls the screens use. A phone without WebGL gets a clear
+  message instead of a broken map, and Navigate still works.
+- The map credit folds into the ⓘ button once the map loads.
+- **Customer tracking screen:** a taller map plus a rider card, e.g.
+  "Suresh is on the way · 1.6 km away · about 5 min · updated just now"
+  with a Call button when the rider gave a number. It's a straight-line
+  distance at ~20 km/h, so it's labelled "about".
+- If billing is ever switched on, Google's native Android Maps SDK is free
+  with no limit. The JavaScript Maps API is not ($7 per 1,000 loads after
+  10,000 a month).
+
 ### Still to do
-1. **Merged and released.** PR #3 is merged into `master`, so `master`
+1. **Merged and released.** PR #4 is merged into `master`, so `master`
    matches what is live (Hosting, Firestore rules) and the APK. The latest
-   APK is **v5.17.0-debug**, built from `master`:
-   https://github.com/VeerBhagtani/modern-dairy-app/releases/tag/v5.17.0-debug
+   APK is **v5.18.0-debug**, built from `master`:
+   https://github.com/VeerBhagtani/modern-dairy-app/releases/tag/v5.18.0-debug
    (direct download:
-   https://github.com/VeerBhagtani/modern-dairy-app/releases/download/v5.17.0-debug/modern-dairy-v5.17.0-debug.apk). The same file is `index.apk` in this folder (git ignores
+   https://github.com/VeerBhagtani/modern-dairy-app/releases/download/v5.18.0-debug/modern-dairy-v5.18.0-debug.apk). The same file is `index.apk` in this folder (git ignores
    it). The owner chose a public release knowing the APK carries the real
    OTP/GST credentials from the Actions secrets. **Rotate them soon**, since
    anyone downloading the APK can extract them.
