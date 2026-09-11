@@ -55,5 +55,34 @@ const rl = require('./src/middleware/rateLimit');
 ok(typeof rl.authLimiter === 'function' && typeof rl.adminLoginLimiter === 'function', 'auth + admin limiters exist');
 ok(typeof rl.otpPhoneLimiter === 'function', 'per-phone OTP limiter exists (anti SMS-bomb)');
 
+// ---------- admin password recovery ----------
+ok(v.adminPasswordProblem('short1') !== null, 'recovery rejects a password under 8 chars');
+ok(v.adminPasswordProblem('onlyletters') !== null, 'recovery rejects a password with no digit');
+ok(v.adminPasswordProblem('12345678') !== null, 'recovery rejects a password with no letter');
+ok(v.adminPasswordProblem('a1'.repeat(65)) !== null, 'recovery rejects a password over 128 chars');
+ok(v.adminPasswordProblem(12345678) !== null, 'recovery rejects a non-string password');
+ok(v.adminPasswordProblem('Goodpass9') === null, 'recovery accepts a sound password');
+const parsed = v.parseRecoveryPhones(' +91 98765 43210 ,1234567890, 9123456789,');
+ok(parsed.length === 2 && parsed[0] === '9876543210' && parsed[1] === '9123456789', 'recovery list keeps valid mobiles, drops junk');
+ok(v.parseRecoveryPhones(undefined).length === 0, 'unset recovery list is empty, so recovery reports not-configured');
+ok(v.maskPhone('9876543210') === '••••••3210', 'masked number shows only the last 4 digits');
+
+const fs = require('fs');
+const src = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8').replace(/\/\/.*$/gm, ''); // code only, no comments
+// If POST /admin/secrets could write these, a stolen admin session could
+// repoint recovery at the thief's phone or swap in an OTP account it reads.
+const known = Object.values(require('./src/services/secretManager').KNOWN_SECRETS);
+ok(!['admin-recovery-phones', 'otp-auth-token', 'otp-customer-id'].some((s) => known.includes(s)),
+  'recovery numbers + OTP credentials are not admin-settable');
+const rec = src('backend/src/routes/adminRecovery.js');
+ok((rec.match(/newPassword/g) || []).length === 3 && rec.includes('updateUser(ADMIN_FIREBASE_UID, { password: newPassword })'),
+  'the new password is only validated and handed to Firebase Auth');
+ok(!/console\.\w+\([^)]*(req\.body|newPassword)/.test(rec), 'recovery route never logs the body or the password');
+ok(rec.includes('Number.isInteger(which)') && rec.includes('phones[which]') && !/req\.body\??\.phone/.test(rec),
+  'a code can only go to a server-held number, never one the caller supplies');
+const adminPage = fs.readFileSync(path.join(ROOT, 'legal/admin/index.html'), 'utf8');
+ok(adminPage.includes('persistence: inMemoryPersistence'), 'admin site keeps no session between visits');
+ok(!/admin-recovery-phones/.test(adminPage), 'admin page never references the recovery number store');
+
 console.log('\nBACKEND PEN-TEST: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

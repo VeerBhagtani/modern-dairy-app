@@ -76,4 +76,16 @@ const generalLimiter = rateLimit({
   handler: jsonHandler('Too many requests. Please try again shortly.'),
 });
 
-module.exports = { authLimiter, otpPhoneLimiter, adminLoginLimiter, writeLimiter, generalLimiter };
+// Admin password-recovery texts: ONE budget for the whole service rather than
+// per IP. The targets are two fixed numbers, so a per-IP limit would still let
+// many machines together ring the owner's phones all night.
+const recoverySendLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: () => 'admin-recovery',
+  handler: jsonHandler('Too many codes have been requested. Please wait an hour and try again.'),
+});
+
+module.exports = { authLimiter, otpPhoneLimiter, adminLoginLimiter, writeLimiter, generalLimiter, recoverySendLimiter };

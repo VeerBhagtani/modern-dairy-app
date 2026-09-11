@@ -55,11 +55,13 @@ const src = grab([
   'throttleCheck', 'throttleFail', 'throttleReset',
   'GSTIN_CHARS', 'GSTIN_RE', 'isWellFormedGSTIN', 'PW_RULE_TEXT', 'isStrongEnough',
   'APPCFG_FIELDS', 'PRODUCT_FIELDS', 'MAX_REMOTE_STR', 'coerce', 'pickFields',
-]);
+  'TEST_GSTIN', 'TEST_BANK', 'verifyBankAccount', 'riderCode', 'distKm',
+]) +'\nconst GST_READY = false; const LOGIN = { gstin: "" };'   // a demo build, as shipped
+   + '\nfunction setLoginGstin(g){ LOGIN.gstin = g; }';
 
 const exportLine = '\nexport {esc,safeUrl,jsStr,hashPassword,verifyPassword,timingSafeEqual,'
   + 'throttleCheck,throttleFail,throttleReset,isWellFormedGSTIN,isStrongEnough,coerce,pickFields,'
-  + 'APPCFG_FIELDS,PRODUCT_FIELDS};';
+  + 'APPCFG_FIELDS,PRODUCT_FIELDS,TEST_GSTIN,TEST_BANK,verifyBankAccount,setLoginGstin,riderCode,distKm};';
 const T = await import('data:text/javascript,' + encodeURIComponent(src + exportLine));
 
 let pass = 0, fail = 0;
@@ -131,6 +133,23 @@ const prod = T.pickFields({ name: 'X', cat: 'dairy', bogus: 1, variants: [{ id: 
 ok(!('bogus' in prod), 'product pickFields drops unknown field');
 ok(prod.variants[0].evil === undefined, 'variant coercion drops unknown variant field');
 ok(prod.variants[0].mrp === 50, 'variant coercion keeps real numeric field');
+
+// ---- test bank account (demo builds) ----
+T.setLoginGstin(T.TEST_GSTIN);
+const tb = await T.verifyBankAccount(T.TEST_BANK.ifsc, T.TEST_BANK.account);
+ok(tb.name === 'Test Business Pvt Ltd', 'test bank account verifies when paired with the test GSTIN');
+T.setLoginGstin('27ABCDE1234F1Z5');
+let tbErr = null; try { await T.verifyBankAccount(T.TEST_BANK.ifsc, T.TEST_BANK.account); } catch (e) { tbErr = e; }
+ok(!!tbErr, 'test bank account is refused alongside any real GSTIN');
+let realErr = null; try { await T.verifyBankAccount('HDFC0001234', '123456789012'); } catch (e) { realErr = e; }
+ok(!!realErr && /not configured/.test(realErr.message), 'every other account still needs the real provider');
+ok(T.APPCFG_FIELDS.rfdFee === 'num', 'driver-request charge is an allowed remote setting, numbers only');
+
+// ---- rider delivery codes (the doc id riders open) ----
+ok(T.riderCode('https://modern-dairy-pune.web.app/ride/#k7qmp-4xa9r') === 'K7QMP4XA9R', 'rider code: a whole pasted link reduces to the code');
+ok(T.riderCode(' k7qmp 4xa9r ') === 'K7QMP4XA9R', 'rider code: spaces, dashes and case are ignored');
+ok(T.riderCode('../orders/x"><img>') === 'ORDERSXIMG', 'rider code: only letters and digits survive (no path or markup)');
+ok(Math.abs(T.distKm([18.5204, 73.8567], [19.0760, 72.8777]) - 120) < 5, 'rider distance: Pune to Mumbai comes out near 120 km');
 
 console.log('\nFRONTEND PEN-TEST: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

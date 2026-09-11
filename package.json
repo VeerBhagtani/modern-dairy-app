@@ -8,7 +8,7 @@
     "open:android": "cap open android",
     "check:secrets": "node scripts/check-no-secrets.js",
     "inject:secrets": "node scripts/inject-secrets.js",
-    "test:security": "node tests/frontend-security.test.mjs && node tests/backend-security.test.mjs",
+    "test:security": "node tests/frontend-security.test.mjs && node tests/backend-security.test.mjs && node tests/admin-recovery.test.mjs",
     "test:bills": "node tests/bills-print.test.mjs && node tests/gofrugal.test.mjs",
     "test:app": "node tests/cancel-visibility.test.mjs"
   },

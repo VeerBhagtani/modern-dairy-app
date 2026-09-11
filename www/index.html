@@ -42,7 +42,7 @@
 <script src="vendor/leaflet/leaflet.js" defer></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:opsz,wght@8..144,400;8..144,500;8..144,600;8..144,700;8..144,800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Plus+Jakarta+Sans:opsz,wght@8..144,400;8..144,500;8..144,600;8..144,700;8..144,800&display=swap" rel="stylesheet">
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <script src="config.js"></script>
 <script src="secrets.js"></script>
@@ -54,13 +54,15 @@
 :root{
   /* ── INK · slate, AA verified on porcelain base ──────────── */
   --ink:#0F172A; --ink-2:#475569; --ink-3:#7C8798; --ink-4:#B4BCC8;
-  /* ── SURFACE · soft mint-porcelain, not sterile white ────── */
-  --bg:#F3F8F6; --surface:#FFFFFF; --surface-2:#EEF9F3;
-  --line:#DCE7E1; --line-2:#E7F2EC;
-  /* ── BRAND · fresh dairy emerald + food amber accent ─────── */
-  --brand:#047857; --brand-2:#065F46; --brand-3:#10B981;
-  --brand-tint:#ECFDF5; --brand-line:#A7D8C4;
-  --crimson:#DC2626; --crimson-tint:#FEE2E2;
+  /* ── SURFACE · milk white on a cool chiller-room ground ──── */
+  --bg:#F3F6FB; --surface:#FFFFFF; --surface-2:#F1F4FA;
+  --line:#DFE4EF; --line-2:#EBEFF6;
+  /* ── BRAND · straight off the packs: "Modern" navy + crest red ── */
+  --brand:#1B2A6B; --brand-2:#121D4F; --brand-3:#3A4FA8;
+  --brand-tint:#EEF1FA; --brand-line:#C5CDEB;
+  --crimson:#D7262F; --crimson-tint:#FDE8E9;
+  /* ── ACCENTS · butter for money-off and the cutoff; frost for frozen ── */
+  --butter:#FFC928; --butter-ink:#4A3600; --frost:#125C8C;
   /* ── SEMANTIC · dairy-fresh green, ghee-amber ────────────── */
   --fresh:#047857; --fresh-tint:#DCFCE7;
   --gold:#92400E;  --gold-tint:#FEF3E2;
@@ -71,7 +73,7 @@
   --t-lg:16.5px; --t-xl:19px; --t-h3:21px; --t-h2:25px; --t-h1:30px; --t-display:34px;
   --t-price:20px;
   /* ── RADIUS · restrained, product-not-toy ────────────────── */
-  --r-sm:6px; --r:10px; --r-lg:14px;
+  --r-sm:8px; --r:12px; --r-lg:16px;
   /* ── ELEVATION · low-contrast, functional not decorative ── */
   --e-1:0 1px 2px rgba(5,20,15,.06);
   --e-2:0 1px 2px rgba(5,20,15,.05), 0 4px 10px rgba(5,20,15,.06);
@@ -86,7 +88,7 @@
   --c-sweets:#BE185D;    --c-sweets-t:#FCE7F3;
   --c-frozen:#4338CA;    --c-frozen-t:#E0E7FF;
   --font:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  --font-display:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --font-display:'Bricolage Grotesque','Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   --tap:44px;
   --safe-b:env(safe-area-inset-bottom,0px);
   --safe-t:env(safe-area-inset-top,0px);
@@ -147,16 +149,16 @@ svg{display:block;flex-shrink:0;}
 .muted{color:var(--ink-2);}
 .muted-2{color:var(--ink-3);}
 .num{font-variant-numeric:tabular-nums;font-feature-settings:'tnum';}
-.eyebrow{font-size:var(--t-xs);font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
+.eyebrow{font-size:var(--t-md);font-weight:700;color:var(--ink-2);}
 
 /* ── HEADER ────────────────────────────────────────────── */
 .appbar{
   background:var(--brand);color:#fff;padding:calc(var(--safe-t) + 12px) 16px 12px;
-  flex-shrink:0;position:relative;z-index:10;border-bottom:2px solid var(--crimson);
+  flex-shrink:0;position:relative;z-index:10;
 }
 .appbar-row{display:flex;align-items:center;gap:12px;}
 .topbar{
-  display:flex;align-items:center;gap:12px;padding:calc(var(--safe-t) + 10px) 12px 10px;
+  display:flex;align-items:center;gap:12px;padding:calc(var(--safe-t) + 10px) 16px 10px;
   border-bottom:1px solid var(--line);background:var(--surface);flex-shrink:0;z-index:20;
 }
 .iconbtn{
@@ -198,7 +200,7 @@ svg{display:block;flex-shrink:0;}
 /* ── BUTTONS · flat, functional, no lift/glow gimmicks ───── */
 .btn{
   display:inline-flex;align-items:center;justify-content:center;gap:8px;
-  height:46px;padding:0 18px;border-radius:var(--r-sm);font-size:var(--t-base);font-weight:700;
+  height:48px;padding:0 18px;border-radius:var(--r);font-size:var(--t-base);font-weight:700;
   letter-spacing:-.005em;background:var(--brand);color:#fff;width:100%;
   border:1px solid var(--brand);
   transition:background var(--fast) linear,opacity var(--fast) linear;
@@ -264,7 +266,7 @@ svg{display:block;flex-shrink:0;}
 .pprice{display:flex;align-items:baseline;gap:6px;margin-top:5px;}
 .price{font-size:var(--t-lg);font-weight:700;letter-spacing:-.01em;font-variant-numeric:tabular-nums;}
 .mrp{font-size:var(--t-sm);color:var(--ink-3);text-decoration:line-through;font-variant-numeric:tabular-nums;}
-.save{font-size:var(--t-xs);font-weight:700;color:var(--fresh);background:var(--fresh-tint);padding:2px 6px;border-radius:4px;}
+.save{font-size:var(--t-xs);font-weight:700;color:var(--crimson);background:var(--crimson-tint);padding:2px 7px;border-radius:6px;white-space:nowrap;}
 .pmoq{font-size:var(--t-xs);font-weight:600;color:var(--ink-3);margin-top:3px;}
 
 /* ── STOCK BADGE ───────────────────────────────────────── */
@@ -274,27 +276,27 @@ svg{display:block;flex-shrink:0;}
 .stk.low{color:var(--warn);} .stk.low::before{background:var(--warn);}
 .stk.out{color:var(--ink-3);} .stk.out::before{background:var(--ink-4);}
 
-/* ── QUANTITY STEPPER · bulk-friendly, direct entry is primary ── */
-.qty{display:flex;align-items:center;border:1px solid var(--ink);border-radius:var(--r-sm);overflow:hidden;background:var(--surface);height:36px;}
-.qty button{width:34px;height:100%;display:flex;align-items:center;justify-content:center;color:var(--ink);flex-shrink:0;}
-.qty button:active{background:var(--surface-2);}
-.qty button:disabled{color:var(--ink-4);pointer-events:none;}
+/* ── QUANTITY STEPPER · crest red, bulk-friendly, direct entry is primary ── */
+.qty{display:flex;align-items:center;border-radius:var(--r-sm);overflow:hidden;background:var(--crimson);color:#fff;height:34px;}
+.qty button{width:30px;height:100%;display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;}
+.qty button:active{background:rgba(255,255,255,.16);}
+.qty button:disabled{opacity:.5;pointer-events:none;}
 .qty input{
-  width:48px;height:100%;text-align:center;border:none;border-left:1px solid var(--line);
-  border-right:1px solid var(--line);font-size:var(--t-md);font-weight:700;
-  font-variant-numeric:tabular-nums;background:var(--surface);min-width:0;
+  width:40px;height:100%;text-align:center;border:none;font-size:var(--t-md);font-weight:800;
+  font-variant-numeric:tabular-nums;background:transparent;color:#fff;min-width:0;
 }
 .qty-case{font-size:var(--t-caption);color:var(--ink-3);text-align:center;margin-top:3px;font-weight:600;letter-spacing:.02em;}
-.addbtn{height:36px;padding:0 16px;border-radius:var(--r-sm);background:var(--brand);color:#fff;font-size:var(--t-md);font-weight:700;border:1px solid var(--brand);}
-.addbtn:active{opacity:.85;}
-.addbtn.out{background:var(--surface);color:var(--ink-3);border-color:var(--line);pointer-events:none;}
+.addbtn{height:34px;min-width:68px;padding:0 14px;border-radius:var(--r-sm);background:#fff;color:var(--crimson);font-size:var(--t-md);
+  font-weight:800;letter-spacing:.04em;text-transform:uppercase;border:1.5px solid var(--crimson);}
+.addbtn:active{background:var(--crimson-tint);}
+.addbtn.out{background:#fff;color:var(--ink-3);border-color:var(--line);box-shadow:none;text-transform:none;letter-spacing:0;pointer-events:none;}
 
 /* ── CARDS / SECTIONS · bordered, not floating ───────────── */
-.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden;}
+.card{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--r-lg);overflow:hidden;}
 .section{padding:16px;}
 .section-head{display:flex;align-items:center;justify-content:space-between;padding:18px 16px 10px;}
 .section-head .t-lg{font-weight:700;}
-.divider{height:8px;background:var(--bg);border-top:1px solid var(--line);border-bottom:1px solid var(--line);}
+.divider{height:10px;background:var(--bg);}
 
 /* ── LIST ROWS ─────────────────────────────────────────── */
 .lrow{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line-2);min-height:var(--tap);}
@@ -310,7 +312,7 @@ svg{display:block;flex-shrink:0;}
 }
 .tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 0 7px;color:var(--ink-3);position:relative;}
 .tab.on{color:var(--brand);}
-.tab.on::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:22px;height:2px;background:var(--crimson);}
+.tab.on::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:24px;height:3px;border-radius:0 0 3px 3px;background:var(--brand);}
 .tab-lbl{font-size:10px;font-weight:700;letter-spacing:.015em;}
 .tab-badge{
   position:absolute;top:4px;left:calc(50% + 6px);background:var(--bad);color:#fff;
@@ -379,6 +381,154 @@ svg{display:block;flex-shrink:0;}
 /* ── TOTALS TABLE ──────────────────────────────────────── */
 .tot{display:flex;justify-content:space-between;padding:7px 0;font-size:var(--t-md);}
 .tot.grand{border-top:1px solid var(--line);margin-top:7px;padding-top:12px;font-size:var(--t-lg);font-weight:700;}
+
+/* ═══════════════════════════════════════════════════════════
+   STOREFRONT
+   One system, used everywhere: navy for structure and navigation, crest
+   red only where money moves (ADD, the stepper, discounts, the cart
+   badge), neutrals for everything else, green only for "in stock".
+   White cards with 16px corners on the cool ground, 12px on controls.
+   The product photos bring the colour, so nothing around them competes.
+   ═══════════════════════════════════════════════════════════ */
+.shead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:24px 16px 12px;}
+.shead h2{font-family:var(--font-display);font-size:18px;font-weight:700;letter-spacing:-.015em;line-height:1.2;}
+.shead button{font-size:var(--t-sm);font-weight:700;color:var(--brand);flex-shrink:0;}
+
+/* ── Home masthead ── */
+.mast{background:var(--brand);color:#fff;padding:calc(var(--safe-t) + 12px) 16px 0;}
+.mast-row{display:flex;align-items:center;gap:12px;}
+.mast-logo{width:44px;height:44px;border-radius:var(--r);background:#fff;padding:3px;object-fit:contain;flex-shrink:0;}
+.mast-hi{font-size:var(--t-sm);color:rgba(255,255,255,.7);}
+.mast-name{font-family:var(--font-display);font-size:19px;font-weight:700;line-height:1.2;letter-spacing:-.015em;}
+.mast-cart{position:relative;width:42px;height:42px;border-radius:var(--r);background:rgba(255,255,255,.1);
+  display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;}
+.mast-cart b{position:absolute;top:-4px;right:-4px;background:var(--crimson);color:#fff;font-size:10px;font-weight:800;
+  min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 4px;
+  box-shadow:0 0 0 2px var(--brand);}
+.mast-search{display:flex;align-items:center;gap:10px;width:100%;margin-top:14px;height:46px;padding:0 14px;
+  border-radius:var(--r);background:#fff;color:var(--ink-3);text-align:left;font-size:var(--t-base);}
+.mast-search input{flex:1;border:none;background:none;min-width:0;color:var(--ink);font-size:var(--t-base);}
+.mast-search input::placeholder{color:var(--ink-3);}
+.mast-search button{display:flex;color:var(--ink-3);}
+
+/* ── Delivery card: tomorrow's slot and when today's ordering closes ── */
+.ticket{position:relative;z-index:2;display:flex;margin:14px 0 -30px;background:#fff;color:var(--ink);
+  border:1px solid var(--line-2);border-radius:var(--r-lg);box-shadow:0 6px 20px rgba(12,22,60,.1);}
+.ticket-slot,.ticket-cut{padding:12px 14px;min-width:0;}
+.ticket-slot{flex:1;}
+.ticket-cut{flex-shrink:0;text-align:right;border-left:1px solid var(--line-2);}
+.ticket-k{font-size:var(--t-xs);font-weight:600;color:var(--ink-3);}
+.ticket-v{font-family:var(--font-display);font-size:18px;font-weight:700;letter-spacing:-.015em;line-height:1.2;
+  margin-top:2px;color:var(--brand);font-variant-numeric:tabular-nums;}
+.ticket-cut.soon .ticket-v{color:var(--crimson);}
+.home-body{padding-top:46px;}
+
+/* ── Promotions: one treatment for every slide ── */
+.promos{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding:0 16px;padding:0 16px 2px;}
+.promo{flex:0 0 86%;scroll-snap-align:start;position:relative;height:144px;border-radius:var(--r-lg);overflow:hidden;
+  display:flex;text-align:left;background:var(--brand);color:#fff;}
+.promo-copy{position:relative;z-index:1;width:62%;padding:16px 0 14px 16px;display:flex;flex-direction:column;justify-content:space-between;}
+.promo-k{display:block;font-size:var(--t-xs);font-weight:600;color:rgba(255,255,255,.7);}
+.promo-t{display:block;font-family:var(--font-display);font-size:18px;font-weight:700;line-height:1.15;letter-spacing:-.015em;margin-top:4px;}
+.promo-cta{align-self:flex-start;display:inline-flex;align-items:center;gap:4px;font-size:var(--t-sm);font-weight:700;
+  padding:7px 12px;border-radius:999px;background:#fff;color:var(--brand);}
+.promo-plate{position:absolute;right:-14px;top:50%;width:140px;height:140px;border-radius:50%;background:#fff;
+  display:flex;align-items:center;justify-content:center;transform:translateY(-50%);}
+.promo-plate img{width:72%;height:72%;object-fit:contain;}
+.promo-dots{display:flex;justify-content:center;gap:5px;margin-top:10px;}
+.promo-dots i{width:6px;height:6px;border-radius:3px;background:var(--line);transition:width .2s var(--ease),background .2s;}
+.promo-dots i.on{width:16px;background:var(--brand);}
+
+/* ── Category tiles: plain white, the photo is the colour ── */
+.cats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:0 16px;}
+.cat{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 6px 12px;background:var(--surface);
+  border:1px solid var(--line-2);border-radius:var(--r-lg);text-align:center;}
+.cat:active{background:var(--surface-2);}
+.cat-plate{width:74%;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;margin-bottom:6px;color:var(--brand);}
+.cat-plate img{width:100%;height:100%;object-fit:contain;}
+.cat-lbl{font-size:var(--t-md);font-weight:700;line-height:1.2;}
+.cat-n{font-size:var(--t-xs);color:var(--ink-3);}
+
+/* ── Product card (home shelves and the catalogue grid) ── */
+.shelf{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x proximity;scroll-padding:0 16px;padding:0 16px 2px;}
+.shelf .pcard{flex:0 0 40%;scroll-snap-align:start;}
+.pcard{display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line-2);border-radius:var(--r-lg);overflow:hidden;}
+.pcard-img{position:relative;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;background:#fff;}
+.pcard-img img{width:84%;height:84%;object-fit:contain;}
+.pcard-img .save{position:absolute;top:8px;left:8px;}
+/* The body takes the spare height, so price + ADD sit on the same line
+   across a row while the pack size stays right under the name. */
+.pcard-body{display:flex;flex-direction:column;gap:3px;flex:1;padding:2px 10px 0;text-align:left;}
+.pcard-name{font-size:var(--t-md);font-weight:600;line-height:1.3;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.pcard-size{font-size:var(--t-xs);color:var(--ink-3);}
+.pcard-price{display:flex;align-items:baseline;gap:6px;margin-top:auto;padding-top:6px;}
+.pcard-price b{font-family:var(--font-display);font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;}
+.pcard-price s{font-size:var(--t-xs);color:var(--ink-3);font-variant-numeric:tabular-nums;}
+.pcard-act{margin-top:auto;padding:10px;}
+.pcard-act .addbtn,.pcard-act .qty{width:100%;}
+.pcard-act .qty input{flex:1;}
+.pcard.out .pcard-img img{opacity:.45;filter:grayscale(1);}
+
+/* ── Home shortcuts: one grouped list ── */
+.utils{margin:24px 16px 0;background:var(--surface);border:1px solid var(--line-2);border-radius:var(--r-lg);overflow:hidden;}
+.util{display:flex;align-items:center;gap:12px;width:100%;padding:13px 14px;text-align:left;color:var(--ink-3);
+  border-bottom:1px solid var(--line-2);}
+.util:last-child{border-bottom:none;}
+.util b{display:block;font-size:var(--t-base);font-weight:700;color:var(--ink);}
+.util .grow>span{display:block;font-size:var(--t-sm);color:var(--ink-2);margin-top:1px;}
+.util-ic{width:36px;height:36px;border-radius:var(--r);background:var(--brand-tint);color:var(--brand);
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.util-act{font-size:var(--t-sm);font-weight:700;color:var(--crimson);flex-shrink:0;}
+.live-card{width:100%;text-align:left;padding:14px;border-color:var(--brand-line);background:var(--brand-tint);}
+.home-foot{padding:30px 16px calc(28px + var(--safe-b));text-align:center;font-size:var(--t-xs);color:var(--ink-3);}
+.home-foot img{display:block;width:32px;height:32px;object-fit:contain;opacity:.5;margin:0 auto 8px;}
+
+/* ── Catalogue: category rail on the left, product grid on the right ── */
+.cat-head{background:var(--brand);color:#fff;padding:calc(var(--safe-t) + 12px) 16px 12px;flex-shrink:0;}
+.cat-head .mast-search{margin-top:12px;}
+.cat-head-t{font-family:var(--font-display);font-size:20px;font-weight:700;letter-spacing:-.015em;}
+.cat-layout{flex:1;min-height:0;display:flex;}
+.rail{width:80px;flex-shrink:0;overflow-y:auto;background:var(--surface);border-right:1px solid var(--line-2);padding:4px 0 24px;}
+.rail-item{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;width:100%;padding:10px 4px;}
+.rail-plate{width:52px;height:52px;border-radius:var(--r);background:#fff;border:1px solid var(--line-2);
+  display:flex;align-items:center;justify-content:center;overflow:hidden;color:var(--brand);}
+.rail-plate img{width:86%;height:86%;object-fit:contain;}
+.rail-lbl{font-size:11px;font-weight:600;color:var(--ink-2);text-align:center;line-height:1.2;}
+.rail-item.on{background:var(--brand-tint);}
+.rail-item.on .rail-plate{border-color:var(--brand);}
+.rail-item.on .rail-lbl{color:var(--brand);font-weight:700;}
+.rail-item.on::after{content:'';position:absolute;right:0;top:10px;bottom:10px;width:3px;border-radius:3px 0 0 3px;background:var(--brand);}
+.grid-pane{flex:1;min-width:0;background:var(--bg);}
+.grid-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:14px 12px 2px;}
+.grid-head h2{font-family:var(--font-display);font-size:16px;font-weight:700;letter-spacing:-.015em;}
+.grid-head span{font-size:var(--t-xs);color:var(--ink-3);flex-shrink:0;}
+.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px;}
+
+/* ── Product page ── */
+.pd-hero{position:relative;height:min(84vw,400px);background:#fff;display:flex;align-items:center;justify-content:center;
+  border-bottom:1px solid var(--line-2);cursor:zoom-in;}
+.pd-hero img{max-width:80%;max-height:86%;object-fit:contain;}
+.pd-zoom{position:absolute;right:12px;bottom:12px;width:38px;height:38px;border-radius:50%;background:#fff;
+  border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink-2);}
+.pd-title{padding:16px 16px 4px;}
+.pd-name{font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-.02em;line-height:1.15;}
+.pd-from{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;margin-top:6px;font-size:var(--t-md);color:var(--ink-2);}
+.pd-from b{font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--ink);}
+.vcard{display:flex;align-items:center;gap:12px;padding:12px 14px;margin-bottom:8px;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--r-lg);}
+.vcard.on{border-color:var(--brand);background:var(--brand-tint);}
+.vcard-price{font-family:var(--font-display);font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;}
+
+/* Full-screen photo: tap to zoom, scroll to look around */
+.zoom{position:fixed;inset:0;z-index:150;display:flex;flex-direction:column;background:#fff;opacity:0;transition:opacity .18s;}
+.zoom.on{opacity:1;}
+.zoom-x{position:absolute;top:calc(var(--safe-t) + 10px);right:12px;z-index:1;width:42px;height:42px;border-radius:50%;
+  background:var(--surface-2);display:flex;align-items:center;justify-content:center;color:var(--ink);}
+.zoom-pane{flex:1;min-height:0;overflow:auto;display:flex;}
+.zoom-pane img{margin:auto;width:100%;max-width:520px;object-fit:contain;cursor:zoom-in;transition:width .25s var(--ease);}
+.zoom-pane img.big{width:230%;max-width:none;cursor:zoom-out;}
+.zoom-hint{text-align:center;padding:12px 16px calc(16px + var(--safe-b));font-size:var(--t-sm);color:var(--ink-3);}
 
 /* ── UTIL ──────────────────────────────────────────────── */
 .row{display:flex;align-items:center;}
@@ -657,10 +807,12 @@ window.listenToOrderDoc = function(firestoreId, onChange) {
 
 /* ── Rider mode ───────────────────────────────────────────────────────────
    Riders have no account. They give a name and phone (attribution, so the
-   office knows who is carrying an order) and type the order number they were
-   issued. That number is the document id of deliveries/{orderNo}.
+   office knows who is carrying an order) and enter the delivery code the
+   office sent them — the same code as in the rider web link. That code is the
+   document id of deliveries/{code}: random, so unlike an order number it
+   can't be guessed.
 
-   The rules allow `get` on a delivery but never `list`, so knowing a number
+   The rules allow `get` on a delivery but never `list`, so holding a code
    fetches exactly that one record — the customer's address and phone for THAT
    delivery — and gives no way to enumerate any other. A rider never reads or
    writes an order document, which is what keeps every other customer's full
@@ -668,14 +820,14 @@ window.listenToOrderDoc = function(firestoreId, onChange) {
 
    Anonymous auth still applies: the rules require request.auth != null, so a
    completely unauthenticated caller gets nothing. */
-window.riderFindDelivery = async function(orderNo) {
+window.riderFindDelivery = async function(code) {
   await ensureSignedIn();
-  const snap = await getDoc(doc(mirrorDb, 'deliveries', String(orderNo)));
-  return snap.exists() ? { orderNo: String(orderNo), ...snap.data() } : null;
+  const snap = await getDoc(doc(mirrorDb, 'deliveries', String(code)));
+  return snap.exists() ? { ...snap.data(), code: String(code) } : null;
 };
-window.riderPushLocation = async function(orderNo, lat, lng, accuracy, riderName, riderPhone) {
+window.riderPushLocation = async function(code, lat, lng, accuracy, riderName, riderPhone) {
   await ensureSignedIn();
-  await updateDoc(doc(mirrorDb, 'deliveries', String(orderNo)), {
+  await updateDoc(doc(mirrorDb, 'deliveries', String(code)), {
     riderLat: lat, riderLng: lng, riderAt: serverTimestamp(),
     riderAccuracy: accuracy ?? null,
     riderName: String(riderName || '').slice(0, 80),
@@ -683,10 +835,10 @@ window.riderPushLocation = async function(orderNo, lat, lng, accuracy, riderName
   });
 };
 // The customer watches the same delivery record for the rider's position.
-// They know their own order number, which is all a `get` requires.
-window.listenToDelivery = function(orderNo, onChange) {
+// The office writes its code onto their order, which only they can read.
+window.listenToDelivery = function(code, onChange) {
   try {
-    return onSnapshot(doc(mirrorDb, 'deliveries', String(orderNo)),
+    return onSnapshot(doc(mirrorDb, 'deliveries', String(code)),
       snap => onChange(snap.exists() ? snap.data() : null),
       err => { console.warn('Delivery listener failed:', err); onChange(null); });
   } catch (e) {
@@ -701,6 +853,53 @@ window.listenToDelivery = function(orderNo, onChange) {
 window.cancelOrderInFirestore = async function(firestoreId) {
   await ensureSignedIn();
   await updateDoc(doc(mirrorDb, 'orders', firestoreId), { status: 'cancelled', cancelledAt: serverTimestamp() });
+};
+
+/* ── Request a driver (business customers) ─────────────────────────────────
+   Create-only from here; the office moves it open → assigned → done in the
+   admin website, and the customer may withdraw it while it is still open. */
+window.createDriverRequest = async function(req) {
+  const user = await ensureSignedIn();
+  const ref = await addDoc(collection(mirrorDb, 'driver_requests'), {
+    reason: req.reason, note: req.note || null,
+    company: req.company || null, name: req.name || null, phone: req.phone,
+    address: req.address || null, gstin: req.gstin || null, customerType: 'b2b',
+    status: 'open', createdByUid: user.uid, createdAt: serverTimestamp(),
+  });
+  return ref.id;
+};
+window.listenToDriverRequest = function(id, onChange) {
+  try {
+    return onSnapshot(doc(mirrorDb, 'driver_requests', id),
+      snap => onChange(snap.exists() ? snap.data() : null),
+      err => { console.warn('Driver request listener failed:', err); onChange(null); });
+  } catch (e) {
+    console.warn('Could not start driver request listener:', e);
+    return () => {};
+  }
+};
+window.cancelDriverRequest = async function(id) {
+  await ensureSignedIn();
+  await updateDoc(doc(mirrorDb, 'driver_requests', id), { status: 'cancelled' });
+};
+
+/* ── Account Center sync ───────────────────────────────────────────────────
+   Accounts still live on the phone. This copies the profile — never the
+   password — to customer_accounts/{installUid}_{phone} so the office can see
+   and manage every customer, and returns the office's edits (the `admin`
+   map) so the caller can apply them back to the phone. */
+const ACCOUNT_SYNC_FIELDS = ['name', 'company', 'gstin', 'address', 'lat', 'lng', 'acctLast4'];
+window.syncCustomerAccount = async function(profile) {
+  const phone = String(profile.phone || '');
+  if (!/^[6-9]\d{9}$/.test(phone)) return null;
+  const user = await ensureSignedIn();
+  const data = { phone, type: profile.type === 'b2b' ? 'b2b' : 'b2c', bankVerified: !!profile.bankVerified };
+  for (const k of ACCOUNT_SYNC_FIELDS) data[k] = profile[k] ?? null;
+  const ref = doc(mirrorDb, 'customer_accounts', `${user.uid}_${phone}`);
+  const snap = await getDoc(ref);
+  if (snap.exists()) await updateDoc(ref, { ...data, updatedAt: serverTimestamp() });
+  else await setDoc(ref, { ...data, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+  return snap.exists() ? (snap.data().admin || null) : null;
 };
 
 // Registers this device's FCM token so the broadcast relay (a scheduled
@@ -897,7 +1096,16 @@ function gstBankFetch(ifsc, accountNumber, token) {
     { headers: { authorization: token, 'x-api-key': GST_API_KEY, 'x-api-version': '1.0' } }),
     25000, 'Could not reach the bank verification service. Check your connection and try again.');
 }
+// Free test path, paired with TEST_GSTIN. That GSTIN resolves to a fictional
+// "Test Business Pvt Ltd", so accepting one fixed account for it lets a demo
+// build finish business signup without the paid provider — and it can't be
+// used to pass as any real business.
+const TEST_BANK = { ifsc: 'TEST0000001', account: '000123456789' };
 async function verifyBankAccount(ifsc, accountNumber) {
+  if (ifsc === TEST_BANK.ifsc && accountNumber === TEST_BANK.account) {
+    if (LOGIN.gstin !== TEST_GSTIN) throw new Error('The test bank account only works with the test GSTIN.');
+    return { name: 'Test Business Pvt Ltd', exists: true };
+  }
   if (!GST_READY) { const e = new Error('Bank verification is not configured in this build.'); e.code = 'NOT_CONFIGURED'; throw e; }
   const blocked = throttleCheck('bankVerify', 'device');
   if (blocked) throw new Error(blocked);
@@ -938,7 +1146,9 @@ function bankForm(){
       <input class="input" id="f-acct" inputmode="numeric" autocomplete="off" placeholder="Business account number" value="${esc(LOGIN.acctNo||'')}"></div>
     <div class="field"><label class="label">IFSC code</label>
       <input class="input" id="f-ifsc" maxlength="11" placeholder="e.g. HDFC0001234" value="${esc(LOGIN.ifsc||'')}" style="text-transform:uppercase;" oninput="this.value=this.value.toUpperCase()">
-      <div class="hint" id="h-ifsc">The account should be in the name registered under this GSTIN.</div></div>
+      <div class="hint" id="h-ifsc">${LOGIN.gstin===TEST_GSTIN
+        ? `Testing? Use account <b>${TEST_BANK.account}</b> with IFSC <b>${TEST_BANK.ifsc}</b>.`
+        : 'The account should be in the name registered under this GSTIN.'}</div></div>
     <button class="btn" id="btn-bank" onclick="doVerifyBank()">Verify business account</button>
     <button class="btn btn-quiet mt-8" onclick="LOGIN.step='entry';paint()">Back</button>`;
 }
@@ -1562,7 +1772,7 @@ function setQty(pk, vid, qty){
     if(i>=0) S.cart[i]=line; else S.cart.push(line);
   }
   persist(); renderTabBadge(); renderOrderBar();
-  if(S.tab==='catalogue') repaintRows();
+  repaintRows();   // every ADD/stepper on screen: catalogue grid, home shelves, related items
   if(S.screen==='cart') paintCart();
   if(S.screen==='product') paintProduct();
 }
@@ -1640,13 +1850,15 @@ function paint(){
   if(typeof renderTrackMap === 'function'){
     if(S.screen==='order') renderTrackMap(); else destroyTrackMap();
   }
+  if(typeof renderRiderMap === 'function'){
+    if(S.screen==='rider') renderRiderMap(); else destroyRiderMap();
+  }
 }
 
 /* Shared chrome ─────────────────────────────────────────── */
 function navBar(title, opts={}){
   return `<div class="topbar">
     ${opts.noBack?'':`<button class="iconbtn" onclick="back()" aria-label="Back">${icon('left',22)}</button>`}
-    <img src="${esc(safeUrl(APPCFG.logo,'assets/logo.png'))}" alt="" style="width:60px;height:60px;object-fit:contain;flex-shrink:0;">
     <div class="grow"><div class="t-lg truncate">${esc(title)}</div>
       ${opts.sub?`<div class="t-sm muted truncate">${esc(opts.sub)}</div>`:''}</div>
     ${opts.action||''}
@@ -2174,6 +2386,7 @@ async function doVerifyOTP(){
   await Promise.all([loadWallet(), loadOrders()]);
   S.tab='home'; NAV.length=0; go('home',{replace:true});
   initPushNotifications();
+  syncAccount();
 }
 
 function scrPending(){
@@ -2193,182 +2406,355 @@ function scrPending(){
    1. Is an order already coming?   2. Reorder the usual
    3. What can I spend?             4. Jump into the catalogue
    ═══════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════
+   REQUEST A DRIVER (business customers)
+   A hotel asks the office for a driver — to collect a payment (cash or
+   cheque), for an urgent delivery, or for other help. It lands live in the
+   admin website's Driver requests tab; once the office assigns someone,
+   this card shows the driver's name and number.
+   ═══════════════════════════════════════════════════════════ */
+const RFD_KEY = 'mda_rfd';
+const RFD_REASONS = [
+  { id:'collect_payment', label:'Collect payment', hint:'A driver comes to pick up cash or a cheque.' },
+  { id:'urgent_delivery', label:'Urgent delivery', hint:'You need stock before the next delivery slot.' },
+  { id:'other',           label:'Other help',      hint:'Tell us what you need below.' },
+];
+const RFD_STATUS = { open:'Waiting for the office', assigned:'Driver assigned', done:'Completed', cancelled:'Cancelled' };
+let RFD = { last:null, unsub:null };
+function rfdLoad(){
+  if(RFD.last) return RFD.last;
+  try{ RFD.last = JSON.parse(localStorage.getItem(RFD_KEY) || 'null'); }catch(e){ RFD.last = null; }
+  return RFD.last;
+}
+function rfdStore(){ try{ localStorage.setItem(RFD_KEY, JSON.stringify(RFD.last)); }catch(e){} }
+// The request this account still has open with the office, if any.
+function rfdActive(){
+  const r = rfdLoad();
+  return r && r.phone === S.user?.phone && (r.status === 'open' || r.status === 'assigned') ? r : null;
+}
+function rfdChargeText(){
+  const fee = Number(APPCFG.rfdFee) || 0;
+  return fee > 0 ? `An extra ${money(fee)} applies per request.` : 'A small extra charge applies.';
+}
+function openRfdSheet(){
+  openSheet(`<div class="sheet-head"><div class="t-lg">Request a driver</div></div>
+    <div class="t-sm muted mb-12" style="line-height:1.5;">What do you need the driver for? ${esc(rfdChargeText())}</div>
+    ${RFD_REASONS.map((x, i) => `<label class="card mb-8" style="display:flex;gap:12px;padding:12px;align-items:flex-start;">
+      <input type="radio" name="rfd-reason" value="${x.id}" ${i===0?'checked':''} style="margin-top:3px;">
+      <div><div class="t-base" style="font-weight:600;">${x.label}</div><div class="t-sm muted">${x.hint}</div></div></label>`).join('')}
+    <div class="field"><label class="label">Details (optional)</label>
+      <textarea class="input" id="f-rfd-note" rows="2" maxlength="300" placeholder="e.g. Cheque for last week's bill is ready"></textarea>
+      <div class="hint" id="h-rfd-note"></div></div>
+    <button class="btn" id="btn-rfd-send" onclick="sendRfd()">Send request</button>`);
+}
+async function sendRfd(){
+  const reason = document.querySelector('input[name="rfd-reason"]:checked')?.value;
+  const note = (document.getElementById('f-rfd-note')?.value || '').trim().slice(0, 300);
+  setErr('f-rfd-note','h-rfd-note','');
+  if(reason === 'other' && !note){ setErr('f-rfd-note','h-rfd-note','Tell us what help you need.'); return; }
+  if(!window.createDriverRequest){ toast('Could not reach the office. Check your connection.','alert'); return; }
+  const btn = document.getElementById('btn-rfd-send'); btn.dataset.lbl = 'Send request';
+  busy('btn-rfd-send', true, 'Sending');
+  try{
+    const id = await window.createDriverRequest({ reason, note: note || null, company:S.user?.company, name:S.user?.name,
+      phone:S.user?.phone, address:S.user?.address, gstin:S.user?.gstin });
+    RFD.last = { id, reason, status:'open', at:Date.now(), phone:S.user?.phone };
+    rfdStore(); closeSheet(); rfdListen();
+    toast('Request sent — the office will call you','check');
+    paint();
+  }catch(e){
+    busy('btn-rfd-send', false, 'Send request');
+    toast('Could not send the request. Try again.','alert');
+  }
+}
+function rfdListen(){
+  if(RFD.unsub){ try{ RFD.unsub(); }catch(e){} RFD.unsub = null; }
+  const r = rfdActive();
+  if(!r || !window.listenToDriverRequest) return;
+  RFD.unsub = window.listenToDriverRequest(r.id, d => {
+    if(!d || RFD.last?.id !== r.id) return;
+    RFD.last = { ...RFD.last, status:d.status, driverName:d.driverName || null, driverPhone:d.driverPhone || null };
+    rfdStore();
+    if(!rfdActive() && RFD.unsub){ RFD.unsub(); RFD.unsub = null; }
+    if(S.screen === 'home') paint();
+  });
+}
+async function rfdWithdraw(){
+  const r = rfdActive();
+  if(!r || !window.cancelDriverRequest) return;
+  try{
+    await window.cancelDriverRequest(r.id);
+    RFD.last = { ...r, status:'cancelled' }; rfdStore();
+    toast('Request withdrawn','check'); paint();
+  }catch(e){ toast('Could not withdraw — the office may already have assigned a driver.','alert'); }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ACCOUNT CENTER SYNC
+   Copies this phone's account profile — never the password — to the admin
+   website's Account Center, and applies back any edits the office made
+   there. Runs on launch, after sign-in and after an address change; a
+   failure only logs, it never gets in the customer's way.
+   ═══════════════════════════════════════════════════════════ */
+const ADMIN_EDITS_KEY = 'mda_admin_edits_applied';
+async function syncAccount(){
+  const phone = S.user?.phone;
+  if(!phone || !window.syncCustomerAccount) return;
+  const a = getCustomerAccounts()[phone] || {};
+  try{
+    const edits = await window.syncCustomerAccount({
+      phone, type: S.user.customerType === 'b2b' ? 'b2b' : 'b2c',
+      name: a.name ?? S.user.name, company: a.company ?? S.user.company, gstin: a.gstin ?? S.user.gstin,
+      address: a.address ?? S.user.address, lat: a.lat, lng: a.lng,
+      bankVerified: a.bankVerified, acctLast4: a.acctLast4,
+    });
+    applyAdminEdits(phone, edits);
+  }catch(e){ console.warn('Account sync failed:', e); }
+}
+// Each office edit is applied once. editedAt is the office's own clock, so it
+// is only ever compared with the last editedAt applied on this phone.
+function applyAdminEdits(phone, edits){
+  if(!edits || typeof edits.editedAt !== 'number') return;
+  let applied = {};
+  try{ applied = JSON.parse(localStorage.getItem(ADMIN_EDITS_KEY) || '{}'); }catch(e){}
+  if((applied[phone] || 0) >= edits.editedAt) return;
+  const patch = {};
+  if(typeof edits.name === 'string' && edits.name) patch.name = edits.name.slice(0, 120);
+  if(typeof edits.company === 'string' && edits.company) patch.company = edits.company.slice(0, 200);
+  if(typeof edits.address === 'string' && edits.address) patch.address = edits.address.slice(0, 500);
+  saveCustomerAccount(phone, patch);
+  if(S.user?.phone === phone){ S.user = { ...S.user, ...patch }; localStorage.setItem('mda_user', JSON.stringify(S.user)); }
+  applied[phone] = edits.editedAt;
+  localStorage.setItem(ADMIN_EDITS_KEY, JSON.stringify(applied));
+  if(Object.keys(patch).length){ paint(); syncAccount(); }   // send the merged profile back up once
+}
+
+/* ═══════════════════════════════════════════════════════════
+   STOREFRONT PHOTOGRAPHY
+   Product photos come from Cloudinary as full-size studio shots, 1–3 MB
+   each. pimg() asks for a trimmed, square, right-sized copy instead:
+   e_trim crops the white studio margin so every pack fills its tile the
+   same way, c_pad squares it back up on white, and f_auto/q_auto serve
+   WebP/AVIF at a sensible quality. Any other URL just goes through safeUrl.
+   ═══════════════════════════════════════════════════════════ */
+function pimg(url, size = 400){
+  const u = safeUrl(url);
+  if(!/^https:\/\/res\.cloudinary\.com\/[^/]+\/image\/upload\//.test(u)) return u;
+  return u.replace('/image/upload/', `/image/upload/e_trim:10/c_pad,b_white,w_${size},h_${size}/f_auto,q_auto/`);
+}
+// The pack that stands for each category on its tile and in the rail.
+const CAT_LOOK = {
+  dairy:     { pk:'paneer' },
+  curd:      { pk:'matka-dahi' },
+  frozen:    { pk:'samosa' },
+  beverages: { pk:'mango-crush' },
+  sweets:    { pk:'amrakhand' },
+};
+function catPhoto(id){
+  const pk = CAT_LOOK[id]?.pk;
+  const p = (pk && CATALOGUE[pk] && !CATALOGUE[pk].disabled) ? CATALOGUE[pk]
+          : Object.values(CATALOGUE).find(x => x.cat === id && !x.disabled);
+  return p?.img || '';
+}
+// Home carousel slides, built from real packs. A slide whose product is
+// missing or switched off in the admin panel is simply left out.
+const PROMOS = [
+  { pk:'paneer',      kicker:'Kitchen staple', title:'Malai paneer in 200 g and 1 kg packs',          cta:'Order paneer' },
+  { pk:'mango-crush', kicker:'Beverages',      title:'Alphonso mango crush for shakes and lassi',     cta:'See drinks', cat:'beverages' },
+  { pk:'samosa',      kicker:'Frozen',         title:'Snacks that go straight from freezer to fryer', cta:'See frozen', cat:'frozen' },
+  { pk:'shrikhand',   kicker:'Desserts',       title:'Shrikhand and amrakhand for your dessert menu', cta:'See sweets', cat:'sweets' },
+];
+
+// Time left before today's order cutoff (APPCFG.orderCutoff, e.g. "6:00 PM").
+function cutoffInfo(){
+  const m = String(APPCFG.orderCutoff || '').match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+  if(!m) return null;
+  let h = +m[1]; const min = +(m[2] || 0); const ap = (m[3] || '').toLowerCase();
+  if(ap === 'pm' && h < 12) h += 12;
+  if(ap === 'am' && h === 12) h = 0;
+  const now = new Date(), cut = new Date(now); cut.setHours(h, min, 0, 0);
+  const left = Math.max(0, Math.round((cut - now) / 60000));
+  return { open: left > 0, mins: left, left: left >= 60 ? `${Math.floor(left / 60)}h ${left % 60}m` : `${left}m` };
+}
+// The right half of the delivery card. A countdown only appears in the last
+// three hours, when it actually helps someone decide.
+function cutoffLabel(){
+  const cut = cutoffInfo();
+  if(cut && !cut.open) return { k:"Today's orders", v:'Closed', soon:false };
+  if(cut && cut.mins <= 180) return { k:'Closes in', v:cut.left, soon:true };
+  return { k:'Order by', v:esc(APPCFG.orderCutoff), soon:false };
+}
+function dispatchTicket(){
+  const cut = cutoffInfo(), c = cutoffLabel();
+  return `<div class="ticket" role="status">
+    <div class="ticket-slot"><div class="ticket-k">Next delivery</div>
+      <div class="ticket-v">${!cut || cut.open ? 'Tomorrow' : 'Day after'}, 7–11 AM</div></div>
+    <div class="ticket-cut ${c.soon ? 'soon' : ''}" id="cut"><div class="ticket-k">${c.k}</div>
+      <div class="ticket-v">${c.v}</div></div>
+  </div>`;
+}
+function promoCarousel(){
+  const slides = PROMOS.filter(s => CATALOGUE[s.pk] && !CATALOGUE[s.pk].disabled);
+  if(!slides.length) return '';
+  return `<div class="promos" id="promos">${slides.map(s => {
+      const act = s.cat ? `S.cat='${jsStr(s.cat)}';switchTab('catalogue')` : `openProduct('${jsStr(s.pk)}')`;
+      return `<button class="promo" onclick="${act}">
+        <span class="promo-copy">
+          <span><span class="promo-k">${esc(s.kicker)}</span><span class="promo-t">${esc(s.title)}</span></span>
+          <span class="promo-cta">${esc(s.cta)} ${icon('right',14,2)}</span>
+        </span>
+        <span class="promo-plate"><img src="${esc(pimg(CATALOGUE[s.pk].img, 360))}" alt="" loading="lazy" onerror="this.style.opacity=0"></span>
+      </button>`;
+    }).join('')}</div>
+    ${slides.length > 1 ? `<div class="promo-dots" id="promo-dots">${slides.map((_, i) => `<i class="${i ? '' : 'on'}"></i>`).join('')}</div>` : ''}`;
+}
+function catTile(c){
+  const live = Object.values(CATALOGUE).filter(p => !p.disabled && (c.id === 'all' || p.cat === c.id));
+  const ph = c.id === 'all' ? '' : catPhoto(c.id);
+  return `<button class="cat" onclick="S.cat='${jsStr(c.id)}';switchTab('catalogue')">
+    <span class="cat-plate">${ph ? `<img src="${esc(pimg(ph, 240))}" alt="" loading="lazy" onerror="this.style.opacity=0">` : icon('grid',32)}</span>
+    <span class="cat-lbl">${esc(c.id === 'all' ? 'All products' : c.label)}</span>
+    <span class="cat-n">${live.length} item${live.length === 1 ? '' : 's'}</span>
+  </button>`;
+}
+// Home shortcuts as one grouped list: repeat an order, credit, a driver.
+function homeUtility(){
+  const rows = [];
+  const last = S.orders[0];
+  if(last) rows.push(`<button class="util" onclick="reorder('${jsStr(last.orderNo)}')">
+      <span class="util-ic">${icon('repeat',19)}</span>
+      <span class="grow"><b>Repeat last order</b><span>${last.items.length} items · ${money(last.total)}</span></span>
+      ${icon('right',18)}</button>`);
+  if(APPCFG.walletEnabled) rows.push(`<button class="util" onclick="go('wallet')">
+      <span class="util-ic">${icon('wallet',19)}</span>
+      <span class="grow"><b>${isB2B() ? 'Business credit' : 'Wallet'}</b><span>${money(S.wallet.balance)} available</span></span>
+      ${icon('right',18)}</button>`);
+  if(isB2B()) rows.push(rfdRowHtml());
+  return rows.length ? `<div class="utils">${rows.join('')}</div>` : '';
+}
+// "Request a driver" as a row in the shortcuts; the sheet explains the charge.
+function rfdRowHtml(){
+  const r = rfdActive();
+  if(r && !RFD.unsub) setTimeout(rfdListen, 0);
+  if(!r){
+    const fee = Number(APPCFG.rfdFee) || 0;
+    return `<button class="util" onclick="openRfdSheet()">
+      <span class="util-ic">${icon('truck',19)}</span>
+      <span class="grow"><b>Request a driver</b><span>Payment pickup, urgent delivery or other help · ${fee > 0 ? money(fee) + ' extra' : 'small extra charge'}</span></span>
+      ${icon('right',18)}</button>`;
+  }
+  const reason = (RFD_REASONS.find(x => x.id === r.reason) || {}).label || 'Driver request';
+  const who = r.status === 'assigned' && r.driverName ? `${esc(r.driverName)} is coming` : esc(RFD_STATUS[r.status]);
+  return `<div class="util">
+      <span class="util-ic">${icon('truck',19)}</span>
+      <span class="grow"><b>${esc(reason)}</b><span>${who} · sent ${esc(dtFmt(r.at))}</span></span>
+      ${r.status === 'assigned' && r.driverPhone ? `<a class="util-act" href="tel:+91${esc(r.driverPhone)}">Call</a>`
+        : r.status === 'open' ? `<button class="util-act" onclick="rfdWithdraw()">Withdraw</button>` : ''}
+    </div>`;
+}
+
+// Carousel dots follow the swipe; slides advance on their own until the
+// customer touches them, and never under reduced motion. The same timer
+// keeps the delivery card's cutoff current.
+let HOME_TIMER = null;
+function wireHome(){
+  clearInterval(HOME_TIMER);
+  const track = document.getElementById('promos');
+  const dots = [...document.querySelectorAll('#promo-dots i')];
+  const step = () => (track?.firstElementChild?.offsetWidth || 1) + 10;
+  let touched = false;
+  if(track){
+    track.addEventListener('scroll', () => {
+      const i = Math.round(track.scrollLeft / step());
+      dots.forEach((d, j) => d.classList.toggle('on', i === j));
+    }, { passive:true });
+    track.addEventListener('touchstart', () => { touched = true; }, { passive:true, once:true });
+  }
+  const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let tick = 0;
+  HOME_TIMER = setInterval(() => {
+    if(S.screen !== 'home' || !document.getElementById('home-scroll')){ clearInterval(HOME_TIMER); return; }
+    tick++;
+    if(tick % 12 === 0){
+      const el = document.getElementById('cut'), c = cutoffLabel();
+      if(el){ el.classList.toggle('soon', c.soon); el.innerHTML = `<div class="ticket-k">${c.k}</div><div class="ticket-v">${c.v}</div>`; }
+    }
+    if(track && !touched && !still && dots.length > 1){
+      const next = (Math.round(track.scrollLeft / step()) + 1) % dots.length;
+      track.scrollTo({ left: next * step(), behavior: 'smooth' });
+    }
+  }, 5000);
+}
+
 function scrHome(){
   const t = cartTotals();
   const live = S.orders.find(o => !['delivered','cancelled'].includes(o.status));
   const hour = new Date().getHours();
-  const greet = hour<12 ? 'Good morning' : hour<17 ? 'Good afternoon' : 'Good evening';
-  const first = (S.user?.name||'there').split(' ')[0];
-
+  const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const first = (S.user?.name || 'there').split(' ')[0];
+  setTimeout(wireHome, 0);
   return `<div class="screen on">
-    <div class="scroll">
-
-      <!-- Masthead: flat, functional — no decorative gradient/blobs -->
-      <header style="background:var(--brand);padding:calc(var(--safe-t) + 16px) 16px 14px;">
-        <div class="row between">
-          <div class="row gap-10" style="min-width:0;">
-            <img src="${esc(safeUrl(APPCFG.logo,'assets/logo.png'))}" alt="" style="width:68px;height:68px;object-fit:contain;flex-shrink:0;">
-            <div style="min-width:0;">
-              <div class="t-caption" style="color:rgba(255,255,255,.6);">${greet}, ${esc(first)}</div>
-              <div class="truncate t-h3" style="color:#fff;margin-top:1px;">
-                ${esc(S.user?.company || S.user?.name || 'Modern Dairy')}</div>
-            </div>
-          </div>
-          <div class="row gap-8">
-            ${isB2B()?`<span class="t-caption" style="color:#fff;background:rgba(255,255,255,.14);
-                  padding:4px 9px;border-radius:var(--r-sm);font-weight:600;">
-                  ${icon('building',12)} Business</span>`:''}
-            <button class="iconbtn on-brand" onclick="go('cart')" style="position:relative;" aria-label="Cart">
-              ${icon('cart',22)}
-              ${t.count?`<span style="position:absolute;top:1px;right:1px;background:var(--crimson);color:#fff;
-                font-size:10px;font-weight:700;min-width:17px;height:17px;border-radius:9px;
-                display:flex;align-items:center;justify-content:center;padding:0 4px;
-                box-shadow:0 0 0 2px var(--brand);">${t.count}</span>`:''}
-            </button>
-          </div>
-        </div>
-
-        <!-- Search: the fastest path to a known SKU, always one tap away -->
-        <button class="search" style="width:100%;margin-top:12px;background:rgba(255,255,255,.12);
-                border-color:rgba(255,255,255,.2);color:rgba(255,255,255,.85);text-align:left;"
-                onclick="switchTab('catalogue');setTimeout(()=>document.getElementById('q')?.focus(),60)">
-          ${icon('search',17)}<span class="t-base" style="color:rgba(255,255,255,.6);">Search paneer, ghee, curd…</span>
-        </button>
-
-        <!-- Delivery promise: flat info row, not a decorative panel -->
-        <div class="row gap-10" style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.14);">
-          ${icon('truck',16)}
+    <div class="scroll" id="home-scroll">
+      <header class="mast">
+        <div class="mast-row">
+          <img class="mast-logo" src="${esc(safeUrl(APPCFG.logo,'assets/logo.png'))}" alt="">
           <div class="grow">
-            <span class="t-sm" style="color:#fff;font-weight:600;">Next delivery tomorrow</span>
-            <span class="t-sm" style="color:rgba(255,255,255,.6);"> · Order before ${esc(APPCFG.orderCutoff)}</span>
+            <div class="mast-hi">${greet}, ${esc(first)}${isB2B() ? ' · Business account' : ''}</div>
+            <div class="mast-name truncate">${esc(S.user?.company || S.user?.name || 'Modern Dairy')}</div>
           </div>
+          <button class="mast-cart" onclick="go('cart')" aria-label="Cart, ${t.count} items">
+            ${icon('cart',21)}${t.count ? `<b>${t.count}</b>` : ''}</button>
         </div>
+        <button class="mast-search" onclick="switchTab('catalogue');setTimeout(()=>document.getElementById('q')?.focus(),60)">
+          ${icon('search',18)}<span>Search paneer, ghee, curd…</span></button>
+        ${dispatchTicket()}
       </header>
 
-      ${APPCFG.announcement?`<div style="padding:14px 16px 0;">
-        <div class="banner info">${icon('info',17)}<div>${esc(APPCFG.announcement)}</div></div></div>`:''}
+      <div class="home-body">
+        ${APPCFG.announcement ? `<div style="padding:0 16px 14px;">
+          <div class="banner info">${icon('info',17)}<div>${esc(APPCFG.announcement)}</div></div></div>` : ''}
 
-      <!-- Live order -->
-      ${live?`<div style="padding:16px 16px 0;">
-        <button class="card" style="width:100%;text-align:left;padding:14px;border-color:var(--brand-line);
-                background:var(--brand-tint);" onclick="openOrder('${jsStr(live.orderNo)}')">
-          <div class="row between mb-8">
-            <span class="eyebrow" style="color:var(--brand-2);">Order in progress</span>
-            <span class="pill b">${(STATUS[live.status]||STATUS.placed).l}</span></div>
-          <div class="row between">
-            <div><div class="t-base num" style="font-weight:700;">${esc(live.orderNo)}</div>
-              <div class="t-sm muted mt-4">${live.items.length} items · ${money(live.total)}</div></div>
-            ${icon('right',18)}</div>
-        </button></div>`:''}
+        ${live ? `<div style="padding:0 16px 14px;">
+          <button class="card live-card" onclick="openOrder('${jsStr(live.orderNo)}')">
+            <div class="row between mb-8">
+              <span class="eyebrow" style="color:var(--brand);">Order in progress</span>
+              <span class="pill b">${(STATUS[live.status] || STATUS.placed).l}</span></div>
+            <div class="row between">
+              <div><div class="t-base num" style="font-weight:700;">${esc(live.orderNo)}</div>
+                <div class="t-sm muted mt-4">${live.items.length} items · ${money(live.total)}</div></div>
+              ${icon('right',18)}</div>
+          </button></div>` : ''}
 
-      <!-- Primary actions: reorder is the fastest path for a repeat buyer -->
-      <div class="section" style="padding-bottom:6px;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-          <button class="card" style="padding:15px 13px;text-align:left;"
-                  onclick="${S.orders[0]?`reorder('${esc(S.orders[0].orderNo)}')`:`switchTab('catalogue')`}">
-            <div style="width:36px;height:36px;border-radius:var(--r-sm);background:var(--fresh-tint);
-                        color:var(--fresh);display:flex;align-items:center;justify-content:center;margin-bottom:10px;">
-              ${icon('repeat',19)}</div>
-            <div class="t-base" style="font-weight:600;">Repeat last order</div>
-            <div class="t-sm muted mt-4">${S.orders[0]
-              ? `${S.orders[0].items.length} items · ${money(S.orders[0].total)}`
-              : 'No previous order yet'}</div>
-          </button>
-          <button class="card" style="padding:15px 13px;text-align:left;" onclick="switchTab('catalogue')">
-            <div style="width:36px;height:36px;border-radius:var(--r-sm);background:var(--brand-tint);
-                        color:var(--brand-2);display:flex;align-items:center;justify-content:center;margin-bottom:10px;">
-              ${icon('grid',19)}</div>
-            <div class="t-base" style="font-weight:600;">Browse catalogue</div>
-            <div class="t-sm muted mt-4">${Object.keys(CATALOGUE).length} products</div>
-          </button>
+        ${promoCarousel()}
+
+        <div class="shead"><h2>Shop by category</h2><button onclick="S.cat='all';switchTab('catalogue')">See all</button></div>
+        <div class="cats">${CATEGORIES.map(catTile).join('')}</div>
+
+        ${homeQuickAdd()}
+        ${homeUtility()}
+        ${categoryShelf('frozen', 'Frozen snacks, ready to fry')}
+        ${categoryShelf('beverages', 'Crushes and drinks')}
+
+        <div class="home-foot">
+          <img src="${esc(safeUrl(APPCFG.logo,'assets/logo.png'))}" alt="">
+          ${esc(APPCFG.businessName)} · FSSAI licensed · Since 1975
         </div>
-      </div>
-
-      <!-- Wallet: available to every buyer, business or personal -->
-      ${APPCFG.walletEnabled?`
-      <div class="section" style="padding-top:10px;padding-bottom:6px;">
-        <button class="card" style="width:100%;text-align:left;padding:15px;" onclick="go('wallet')">
-          <div class="row between">
-            <div>
-              <div class="eyebrow mb-4">${isB2B()?'Business credit':'Wallet'}</div>
-              <div class="num" style="font-size:var(--t-2xl);font-weight:700;letter-spacing:-.02em;">
-                ${money(S.wallet.balance)}</div>
-              <div class="t-sm muted mt-4">Available to spend on orders</div>
-            </div>
-            <div style="width:38px;height:38px;border-radius:var(--r-sm);background:var(--gold-tint);
-                        color:var(--gold);display:flex;align-items:center;justify-content:center;">
-              ${icon('wallet',20)}</div>
-          </div>
-        </button>
-      </div>`:''}
-
-      <!-- Categories -->
-      <div class="section-head"><span class="eyebrow">Shop by category</span>
-        <button class="t-sm" style="color:var(--brand-2);font-weight:600;" onclick="switchTab('catalogue')">See all</button></div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px;padding:0 16px;">
-        ${CATEGORIES.filter(c=>c.id!=='all').map(c=>{
-          const n = Object.values(CATALOGUE).filter(p=>p.cat===c.id).length;
-          const sample = Object.values(CATALOGUE).find(p=>p.cat===c.id);
-          const k=catC(c.id);
-          return `<button class="card" style="padding:0;overflow:hidden;text-align:left;border-color:${k.t};"
-                    onclick="S.cat='${jsStr(c.id)}';switchTab('catalogue')">
-            <div style="height:62px;background:${k.t};display:flex;align-items:center;justify-content:center;">
-              ${sample?`<img src="${esc(safeUrl(sample.img))}" alt="" loading="lazy"
-                style="max-height:52px;max-width:76%;object-fit:contain;" onerror="this.style.opacity=0">`:''}
-            </div>
-            <div style="padding:8px 9px 10px;">
-              <div class="t-sm" style="font-weight:600;line-height:1.25;color:${k.c};">${esc(c.label)}</div>
-              <div class="t-xs muted-2 mt-4">${n} item${n>1?'s':''}</div>
-            </div></button>`;
-        }).join('')}
-      </div>
-
-      <!-- Their own frequent items, else a sensible starting set -->
-      ${homeQuickAdd()}
-
-      <div style="padding:26px 16px calc(28px + var(--safe-b));text-align:center;">
-        <img src="${esc(safeUrl(APPCFG.logo,'assets/logo.png'))}" alt="" style="width:34px;height:34px;object-fit:contain;opacity:.5;margin:0 auto 8px;">
-        <div class="t-xs muted-2">${esc(APPCFG.businessName)} · FSSAI licensed · Since 1975</div>
       </div>
     </div>
     ${tabBar()}
   </div>`;
 }
 
+// Their own frequent items first; a sensible starting set for a new account.
 function homeQuickAdd(){
   const freq = {};
-  S.orders.forEach(o=>o.items.forEach(i=>{
-    const k=i.pk+'::'+i.vid; freq[k]=(freq[k]||0)+1;
-  }));
-  let list = Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,4)
-    .map(([k])=>({pk:k.split('::')[0], vid:k.split('::')[1]}))
-    .filter(x=>CATALOGUE[x.pk]);
-  const title = list.length ? 'Your regular items' : 'Popular with restaurants';
-  if(!list.length){
-    list = ['paneer','curd-cup','ghee','samosa']
-      .filter(k=>CATALOGUE[k]).map(k=>({pk:k, vid:CATALOGUE[k].variants[0].id}));
-  }
-  if(!list.length) return '';
-  return `<div class="section-head"><span class="eyebrow">${title}</span></div>
-    <div class="plist" style="border-top:1px solid var(--line-2);">
-      ${list.map(({pk,vid})=>{
-        const p=CATALOGUE[pk]; const v=p.variants.find(x=>x.id===vid)||p.variants[0];
-        return `<div class="prow">
-          <div class="pthumb" onclick="openProduct('${jsStr(pk)}')">
-            <img src="${esc(safeUrl(p.img))}" alt="" loading="lazy" onerror="this.style.opacity=0"></div>
-          <div class="pinfo" onclick="openProduct('${jsStr(pk)}')">
-            <div class="pname">${esc(p.name)}</div>
-            <div class="pmeta"><span>${esc(v.label)} ${esc(p.unit)}</span>
-              <span class="dot"></span><span class="stk ${v.stock}">${v.stock==='in'?'In stock':'Low'}</span></div>
-            <div class="pprice"><span class="price num">${money(unitPrice(v))}</span>
-              <span class="t-sm muted">/ ${esc(p.unit)}</span>
-              ${showsMRP(v)?`<span class="save">${savingPct(v)}% off</span>`:''}</div>
-          </div>
-          <div style="display:flex;align-items:flex-end;padding-top:26px;" id="act-${pk}-${v.id}">
-            ${qtyControl(pk,v)}</div>
-        </div>`;
-      }).join('')}
-    </div>`;
+  S.orders.forEach(o => o.items.forEach(i => { const key = i.pk + '::' + i.vid; freq[key] = (freq[key] || 0) + 1; }));
+  let list = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 8)
+    .map(([key]) => key.split('::')).filter(([pk]) => CATALOGUE[pk] && !CATALOGUE[pk].disabled);
+  const title = list.length ? 'Your regular items' : (isB2B() ? 'Popular with restaurants' : 'Popular right now');
+  if(!list.length) list = ['paneer','curd-cup','ghee','samosa','butter','cream','matka-dahi','lassi']
+    .filter(k => CATALOGUE[k] && !CATALOGUE[k].disabled).map(k => [k]);
+  return shelf(title, list);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -2376,65 +2762,88 @@ function homeQuickAdd(){
    ═══════════════════════════════════════════════════════════ */
 function scrCatalogue(){
   return `<div class="screen on">
-    <header class="appbar">
-      <div class="appbar-row mb-12">
-        <div class="row gap-10 grow" style="min-width:0;">
-          <img src="${esc(safeUrl(APPCFG.logo,'assets/logo.png'))}" alt="" style="width:60px;height:60px;object-fit:contain;flex-shrink:0;">
-          <div class="grow" style="min-width:0;">
-            <div class="t-xs" style="color:rgba(255,255,255,.62);font-weight:600;letter-spacing:.04em;text-transform:uppercase;">
-              ${isB2B()?'Business account':'Personal account'}</div>
-            <div class="t-lg truncate" style="color:#fff;">${esc(S.user?.company || S.user?.name || 'Modern Dairy')}</div>
-          </div>
-        </div>
-        <button class="iconbtn on-brand" onclick="go('cart')" style="position:relative;" aria-label="Cart">
-          ${icon('cart',22)}
-          <span id="cart-count" style="position:absolute;top:4px;right:2px;background:#fff;color:var(--brand);font-size:10px;font-weight:700;min-width:17px;height:17px;border-radius:9px;display:none;align-items:center;justify-content:center;padding:0 4px;">0</span>
-        </button>
+    <header class="cat-head">
+      <div class="row gap-10">
+        <div class="grow cat-head-t">Catalogue</div>
+        <button class="mast-cart" onclick="go('cart')" aria-label="Cart">
+          ${icon('cart',21)}<b id="cart-count" style="display:none;">0</b></button>
       </div>
-      <div class="row gap-8" style="color:rgba(255,255,255,.86);font-size:var(--t-sm);">
-        ${icon('truck',15)}<span>Next delivery <b style="color:#fff;">tomorrow</b> · order before ${APPCFG.orderCutoff}</span>
-      </div>
-    </header>
-
-    <div style="padding:12px 16px 0;background:var(--surface);">
-      <div class="search">${icon('search',18)}
+      <label class="mast-search">${icon('search',18)}
         <input id="q" placeholder="Search paneer, ghee, curd…" value="${esc(S.query)}"
                oninput="S.query=this.value;repaintList()" autocomplete="off">
-        ${S.query?`<button class="iconbtn" style="margin:0;width:26px;height:26px;" onclick="S.query='';paint()">${icon('close',17)}</button>`:''}
-      </div>
+        ${S.query ? `<button onclick="S.query='';paint()" aria-label="Clear search">${icon('close',17)}</button>` : ''}
+      </label>
+    </header>
+    <div class="cat-layout">
+      <nav class="rail" aria-label="Categories">${CATEGORIES.map(railItem).join('')}</nav>
+      <div class="grid-pane scroll" id="list">${listBody()}</div>
     </div>
-    <div class="chiprow" id="chips">
-      ${CATEGORIES.map(c=>{const k=catC(c.id);
-        return `<button class="chip ${S.cat===c.id?'on':''}" onclick="S.cat='${c.id}';paint()"
-          style="${S.cat===c.id?`background:${k.c};border-color:${k.c};`:`color:${c.id==='all'?'var(--ink-2)':k.c};`}">
-          ${c.id!=='all'?`<span style="width:7px;height:7px;border-radius:2px;background:${S.cat===c.id?'rgba(255,255,255,.85)':k.c};"></span>`:''}
-          ${esc(c.label)}</button>`;}).join('')}
-    </div>
-    <div class="scroll" id="list">${listBody()}</div>
     <div id="orderbar-slot"></div>
     ${tabBar()}
   </div>`;
+}
+// The category rail: one photo per category, like a counter laid out by section.
+function railItem(c){
+  const on = S.cat === c.id;
+  const ph = c.id === 'all' ? '' : catPhoto(c.id);
+  return `<button class="rail-item ${on ? 'on' : ''}" onclick="S.cat='${jsStr(c.id)}';paint()" aria-pressed="${on}">
+    <span class="rail-plate">${ph ? `<img src="${esc(pimg(ph, 160))}" alt="" loading="lazy" onerror="this.style.opacity=0">` : icon('grid',24)}</span>
+    <span class="rail-lbl">${esc(c.id === 'all' ? 'All' : c.label)}</span>
+  </button>`;
 }
 
 function listBody(){
   const items = filtered();
   if(!items.length) return stateBlock('search','Nothing matches that search',
-    S.query? `No products found for “${S.query}”. Try a shorter word, or browse a category.`
-           : 'This category has no items right now.',
+    S.query ? `No products found for “${S.query}”. Try a shorter word, or browse a category.`
+            : 'This category has no items right now.',
     `<button class="btn btn-quiet" style="max-width:200px;" onclick="S.query='';S.cat='all';paint()">Show all items</button>`);
-  return `<div class="plist">${items.map(([k,p])=>prow(k,p)).join('')}</div>
-          <div style="padding:22px 16px calc(28px + var(--safe-b));text-align:center;">
-            <div class="t-sm muted-2">${items.length} product${items.length>1?'s':''} · prices ${isB2B()?'are wholesale, excl. GST':'incl. all taxes'}</div>
-          </div>`;
+  const label = S.query ? `Results for “${S.query}”`
+    : S.cat === 'all' ? 'All products' : (CATEGORIES.find(c => c.id === S.cat)?.label || 'Products');
+  return `<div class="grid-head"><h2>${esc(label)}</h2><span>${items.length} item${items.length === 1 ? '' : 's'}</span></div>
+    <div class="pgrid">${items.map(([k, p]) => pcard(k, p)).join('')}</div>
+    <div class="t-xs muted-2 center" style="padding:10px 16px calc(24px + var(--safe-b));">
+      Prices ${isB2B() ? 'are wholesale, excl. GST' : 'include all taxes'}</div>`;
 }
 function repaintList(){ const el=document.getElementById('list'); if(el) el.innerHTML=listBody(); }
+// Refresh every ADD button and stepper on screen, wherever the product shows up.
 function repaintRows(){
-  filtered().forEach(([k,p])=>{
-    p.variants.forEach(v=>{
-      const el=document.getElementById(`act-${k}-${v.id}`);
-      if(el) el.innerHTML = qtyControl(k,v);
-    });
+  document.querySelectorAll('[data-act]').forEach(el => {
+    const [pk, vid] = el.dataset.act.split('::');
+    const v = CATALOGUE[pk]?.variants.find(x => x.id === vid);
+    if(v) el.innerHTML = qtyControl(pk, v);
   });
+}
+
+/* One product card: photo, name, pack, price — then a full-width ADD, so
+   the button never sits on top of the pack. */
+function pcard(k, p, vid){
+  const v = (vid && p.variants.find(x => x.id === vid)) || p.variants[0];
+  const deal = showsMRP(v) ? savingPct(v) : 0;
+  const sizes = p.variants.length > 1 ? ` · ${p.variants.length} sizes` : '';
+  return `<div class="pcard ${v.stock === 'out' ? 'out' : ''}">
+    <div class="pcard-img" onclick="openProduct('${jsStr(k)}')">
+      <img src="${esc(pimg(p.img, 400))}" alt="" loading="lazy" onerror="this.style.opacity=0">
+      ${deal ? `<span class="save">${deal}% off</span>` : ''}
+    </div>
+    <button class="pcard-body" onclick="openProduct('${jsStr(k)}')">
+      <span class="pcard-name">${esc(p.name)}</span>
+      <span class="pcard-size">${esc(v.label)} ${esc(p.unit)}${sizes}${v.stock === 'low' ? ' · Low stock' : ''}</span>
+      <span class="pcard-price"><b>${money(unitPrice(v))}</b>${deal ? `<s>${money(v.mrp)}</s>` : ''}</span>
+    </button>
+    <div class="pcard-act" data-act="${esc(k)}::${esc(v.id)}">${qtyControl(k, v)}</div>
+  </div>`;
+}
+// A horizontal row of product cards. entries: [[productKey, variantId?], …]
+function shelf(title, entries, action){
+  const cards = entries.filter(([k]) => CATALOGUE[k]).map(([k, vid]) => pcard(k, CATALOGUE[k], vid));
+  if(!cards.length) return '';
+  return `<div class="shead"><h2>${esc(title)}</h2>${action || ''}</div>
+    <div class="shelf">${cards.join('')}</div>`;
+}
+function categoryShelf(cat, title){
+  const keys = Object.entries(CATALOGUE).filter(([, p]) => p.cat === cat && !p.disabled).slice(0, 10).map(([k]) => [k]);
+  return shelf(title, keys, `<button onclick="S.cat='${jsStr(cat)}';switchTab('catalogue')">See all</button>`);
 }
 
 /* One product row = image, name, packs, price, action. Nothing else. */
@@ -2460,7 +2869,7 @@ function prow(k,p){
         ${showsMRP(v)?`<span class="mrp num">${money(v.mrp)}</span><span class="save">${savingPct(v)}% off</span>`:''}
       </div>
     </div>
-    <div style="display:flex;align-items:flex-end;padding-top:26px;" id="act-${k}-${v.id}">${qtyControl(k,v)}</div>
+    <div style="display:flex;align-items:flex-end;padding-top:26px;" id="act-${k}-${v.id}" data-act="${esc(k)}::${esc(v.id)}">${qtyControl(k,v)}</div>
   </div>`;
 }
 function qtyControl(pk,v){
@@ -2525,7 +2934,7 @@ function scrProduct(){
   const k=S.pk, p=CATALOGUE[k];
   if(!p) return `<div class="screen on">${navBar('Product')}${stateBlock('alert','Product unavailable','This item is no longer in the catalogue.','')}</div>`;
   return `<div class="screen on">
-    ${navBar(p.name,{sub:CATEGORIES.find(c=>c.id===p.cat)?.label})}
+    ${navBar(CATEGORIES.find(c=>c.id===p.cat)?.label || 'Product')}
     <div class="scroll" id="pd-scroll">${productBody(k,p)}</div>
     ${tabBar()}
   </div>`;
@@ -2536,53 +2945,80 @@ function paintProduct(){
   if(el) el.innerHTML=productBody(S.pk,CATALOGUE[S.pk]);
 }
 function productBody(k,p){
+  const cat = CATEGORIES.find(c => c.id === p.cat);
+  const deals = p.variants.filter(showsMRP).map(savingPct);
+  const best = deals.length ? Math.max(...deals) : 0;
+  const from = Math.min(...p.variants.map(unitPrice));
+  const more = Object.entries(CATALOGUE).filter(([x, q]) => x !== k && q.cat === p.cat && !q.disabled).slice(0, 8).map(([x]) => [x]);
   return `
-  <div style="background:linear-gradient(180deg,${catC(p.cat).t} 0%,var(--surface) 100%);padding:24px 20px;display:flex;justify-content:center;border-bottom:1px solid var(--line);">
-    <img src="${esc(safeUrl(p.img))}" alt="" style="max-height:180px;max-width:70%;object-fit:contain;" onerror="this.style.opacity=0">
+  <div class="pd-hero" onclick="openZoom('${jsStr(k)}')" role="button" aria-label="Open the photo full screen">
+    <img src="${esc(pimg(p.img, 900))}" alt="${esc(p.name)}" onerror="this.style.opacity=0">
+    <span class="pd-zoom" aria-hidden="true">${icon('search',17)}</span>
   </div>
-  <div class="section">
+  <div class="pd-title">
+    <h1 class="pd-name">${esc(p.name)}</h1>
+    <div class="pd-from">
+      <span>${p.variants.length > 1 ? 'From ' : ''}<b>${money(from)}</b> per ${esc(p.unit)}${isB2B() ? ', excl. GST' : ''}</span>
+      ${best ? `<span class="save">Up to ${best}% off</span>` : ''}
+    </div>
+  </div>
+  <div class="section" style="padding-top:12px;">
     <div class="eyebrow mb-8">Pack sizes</div>
-    ${p.variants.map(v=>{
-      const q=cartQty(k,v.id);
-      return `<div class="card mb-8" style="padding:12px 14px;${q?'border-color:var(--brand-line);background:var(--brand-tint);':''}">
-        <div class="row between gap-12">
-          <div class="grow">
-            <div class="row gap-8 mb-4">
-              <span class="t-base" style="font-weight:600;">${esc(v.label)}</span>
-              <span class="stk ${v.stock}">${v.stock==='in'?'In stock':v.stock==='low'?'Low':'Sold out'}</span>
-            </div>
-            <div class="row gap-6">
-              <span class="t-lg num" style="font-weight:700;">${money(unitPrice(v))}</span>
-              <span class="t-sm muted">per ${esc(p.unit)}</span>
-              ${showsMRP(v)?`<span class="mrp num t-sm">${money(v.mrp)}</span>`:''}
-            </div>
-            <div class="t-xs muted mt-4">
-              Minimum ${v.moq} ${esc(p.unit)}${v.moq>1?'s':''} · case of ${v.case}
-              ${q?` · <b style="color:var(--brand);">${money(unitPrice(v)*q)} for ${q}</b>`:''}
-            </div>
+    ${p.variants.map(v => {
+      const q = cartQty(k, v.id);
+      return `<div class="vcard ${q ? 'on' : ''}">
+        <div class="grow">
+          <div class="row gap-8 mb-4">
+            <span class="t-base" style="font-weight:700;">${esc(v.label)}</span>
+            <span class="stk ${v.stock}">${v.stock === 'in' ? 'In stock' : v.stock === 'low' ? 'Low stock' : 'Sold out'}</span>
           </div>
-          <div id="act-${k}-${v.id}">${qtyControl(k,v)}</div>
+          <div class="row gap-6">
+            <span class="vcard-price">${money(unitPrice(v))}</span>
+            <span class="t-sm muted">per ${esc(p.unit)}</span>
+            ${showsMRP(v) ? `<span class="mrp num t-sm">${money(v.mrp)}</span>` : ''}
+          </div>
+          <div class="t-xs muted mt-4">
+            Minimum ${v.moq} ${esc(p.unit)}${v.moq > 1 ? 's' : ''} · case of ${v.case}
+            ${q ? ` · <b style="color:var(--brand);">${money(unitPrice(v) * q)} for ${q}</b>` : ''}
+          </div>
         </div>
+        <div data-act="${esc(k)}::${esc(v.id)}">${qtyControl(k, v)}</div>
       </div>`;
     }).join('')}
   </div>
-  ${p.desc?`<div class="divider"></div><div class="section">
+  ${p.desc ? `<div class="divider"></div><div class="section">
     <div class="eyebrow mb-8">About this product</div>
     <div class="t-md muted" style="line-height:1.6;">${esc(p.desc)}</div>
-  </div>`:''}
-  ${(p.storage||p.freshness)?`<div class="divider"></div><div class="section">
+  </div>` : ''}
+  ${(p.storage || p.freshness) ? `<div class="divider"></div><div class="section">
     <div class="eyebrow mb-12">Handling</div>
-    ${p.freshness?`<div class="row gap-12 mb-12" style="align-items:flex-start;">
+    ${p.freshness ? `<div class="row gap-12 mb-12" style="align-items:flex-start;">
       <div class="lrow-ic">${icon('clock',17)}</div>
       <div><div class="t-md" style="font-weight:600;">Shelf life</div>
-      <div class="t-sm muted">${esc(p.freshness)}</div></div></div>`:''}
-    ${p.storage?`<div class="row gap-12" style="align-items:flex-start;">
+      <div class="t-sm muted">${esc(p.freshness)}</div></div></div>` : ''}
+    ${p.storage ? `<div class="row gap-12" style="align-items:flex-start;">
       <div class="lrow-ic">${icon('box',17)}</div>
       <div><div class="t-md" style="font-weight:600;">Storage</div>
-      <div class="t-sm muted">${esc(p.storage)}</div></div></div>`:''}
-  </div>`:''}
+      <div class="t-sm muted">${esc(p.storage)}</div></div></div>` : ''}
+  </div>` : ''}
+  ${more.length ? shelf(`More in ${cat?.label || 'this range'}`, more) : ''}
   <div style="height:24px;"></div>`;
 }
+// Full-screen photo. It lives inside #app, so the next paint() clears it
+// on its own — back navigation can never leave it stranded over a screen.
+function openZoom(k){
+  const p = CATALOGUE[k];
+  if(!p || !APP()) return;
+  closeZoom();
+  const el = document.createElement('div');
+  el.className = 'zoom'; el.id = 'zoom';
+  el.innerHTML = `<button class="zoom-x" onclick="closeZoom()" aria-label="Close photo">${icon('close',22)}</button>
+    <div class="zoom-pane"><img src="${esc(pimg(p.img, 1400))}" alt="${esc(p.name)}" onclick="this.classList.toggle('big')"></div>
+    <div class="zoom-hint">Tap the photo to zoom in and out</div>`;
+  APP().appendChild(el);
+  requestAnimationFrame(() => el.classList.add('on'));
+}
+function closeZoom(){ document.getElementById('zoom')?.remove(); }
 
 /* ═══════════════════════════════════════════════════════════
    14. CART
@@ -2610,7 +3046,7 @@ function cartBody(){
       <div>Minimum order met — ready for checkout.</div></div></div>`):''}
     <div class="plist mt-12">
       ${S.cart.map(i=>`<div class="prow">
-        <div class="pthumb"><img src="${esc(safeUrl(i.img))}" alt="" onerror="this.style.opacity=0"></div>
+        <div class="pthumb"><img src="${esc(pimg(i.img, 200))}" alt="" onerror="this.style.opacity=0"></div>
         <div class="pinfo">
           <div class="pname">${esc(i.name)}</div>
           <div class="pmeta"><span>${esc(i.label)} ${esc(i.unit)}</span><span class="dot"></span>
@@ -2908,12 +3344,15 @@ function startOrderStatusListener(o){
   ORDER_STATUS_UNSUB = window.listenToOrderDoc(o.firestoreId, (data)=>{
     if(!data) return;
     const status = data.status;
+    const code = data.deliveryCode || null;
+    const codeChanged = code !== (S.order?.deliveryCode || null);
     const changed = status && status !== S.order?.status;
-    if(!changed) return;
-    S.order = {...S.order, status};
-    // Rider position lives on the delivery record, so start/stop that
-    // listener as the order enters and leaves out_for_delivery.
-    if(status === 'out_for_delivery') startDeliveryListener(S.order);
+    if(!changed && !codeChanged) return;
+    S.order = {...S.order, status: status || S.order?.status, deliveryCode: code};
+    // Rider position lives on the delivery record (keyed by the office's
+    // delivery code), so start/stop that listener as the order enters and
+    // leaves out_for_delivery, or when the office issues a fresh code.
+    if(S.order.status === 'out_for_delivery') startDeliveryListener(S.order);
     else { stopDeliveryListener(); S.order = {...S.order, riderLat:null, riderLng:null}; }
     if(changed){
       const list = DB.orders;
@@ -3078,13 +3517,13 @@ function destroyTrackMap(){
   if(TRACK_MAP){ try{ TRACK_MAP.remove(); }catch(e){} }
   TRACK_MAP = null; TRACK_RIDER = null; TRACK_DEST = null; TRACK_FITTED = false;
 }
-/* The rider writes to deliveries/{orderNo}, not to the order, so the map
+/* The rider writes to deliveries/{code}, not to the order, so the map
    needs its own listener alongside the status one. Started only while an
-   order is out for delivery, and torn down the moment it is not. */
+   order is out for delivery (and its code has arrived), torn down after. */
 function startDeliveryListener(o){
   stopDeliveryListener();
-  if(!o?.orderNo || !window.listenToDelivery) return;
-  DELIVERY_UNSUB = window.listenToDelivery(o.orderNo, (d)=>{
+  if(!o?.deliveryCode || !window.listenToDelivery) return;
+  DELIVERY_UNSUB = window.listenToDelivery(o.deliveryCode, (d)=>{
     if(!d) return;
     const moved = d.riderLat !== S.order?.riderLat || d.riderLng !== S.order?.riderLng;
     if(!moved) return;
@@ -3522,6 +3961,7 @@ function saveDeliveryAddress(){
   S.user={...S.user, address:addr, ...(coords?{lat:coords.lat, lng:coords.lng}:{})};
   localStorage.setItem('mda_user',JSON.stringify(S.user));
   if(S.user.phone) saveCustomerAccount(S.user.phone, {address:addr, ...(coords?{lat:coords.lat, lng:coords.lng}:{})});
+  syncAccount();
   LAST_DETECTED_COORDS = null;
   closeSheet(); paint();
   toast('Delivery address updated','check');
@@ -3658,8 +4098,8 @@ function scrRiderLogin(){
     <div class="scroll" style="background:var(--surface);border-radius:20px 20px 0 0;padding-top:4px;">
       <div class="section">
         <div class="banner info mb-16">${icon('info',17)}
-          <div>For delivery riders. Tell us who you are, then enter the order number
-          the office gave you.</div></div>
+          <div>For delivery riders. Tell us who you are, then enter the delivery code
+          the office sent you.</div></div>
         <div class="field"><label class="label">Your name</label>
           <input id="f-rider-name" placeholder="e.g. Suresh" autocomplete="off" value="${esc(RIDER.name || '')}"></div>
         <div class="field"><label class="label">Your mobile number</label>
@@ -3688,21 +4128,23 @@ function doRiderStart(){
 }
 
 /* ── Find the delivery ─────────────────────────────────── */
+// A code typed with or without dashes, or the whole rider link pasted in.
+function riderCode(s){ return String(s || '').split('#').pop().toUpperCase().replace(/[^A-Z0-9]/g, ''); }
 async function riderLookup(){
-  const raw = (document.getElementById('f-rider-order')?.value || '').trim().toUpperCase();
-  if(!raw){ RIDER.error = 'Enter the order number.'; paint(); return; }
+  const raw = riderCode(document.getElementById('f-rider-order')?.value);
+  if(!raw){ RIDER.error = 'Enter the delivery code.'; paint(); return; }
   RIDER.error = null;
   RIDER.looking = true;
   paint();
   try{
     const d = await window.riderFindDelivery(raw);
     if(!d){
-      // Either the number is wrong, or the office has not marked it out for
-      // delivery yet — the delivery record only exists from that moment.
-      RIDER.error = 'No delivery found for ' + raw + '. Check the number, and that the office has marked it out for delivery.';
+      // Either the code is wrong, or the office has not marked the order out
+      // for delivery yet — the delivery record only exists from that moment.
+      RIDER.error = 'No delivery found for that code. Check it, and that the office has marked the order out for delivery.';
       RIDER.lookupTried = raw;
     }else if(d.active === false){
-      RIDER.error = raw + ' has already been completed.';
+      RIDER.error = 'That delivery has already been completed.';
       RIDER.lookupTried = raw;
     }else{
       RIDER.delivery = d;
@@ -3719,7 +4161,7 @@ async function riderLookup(){
 function scrRider(){
   const d = RIDER.delivery;
   return `<div class="screen on">
-    ${navBar('Rider', {sub: d ? 'Tracking ' + esc(d.orderNo || '') : esc(RIDER.name || 'Enter an order number'),
+    ${navBar('Rider', {sub: d ? 'Tracking ' + esc(d.orderNo || '') : esc(RIDER.name || 'Enter a delivery code'),
       action:`<button class="iconbtn" onclick="doRiderSignOut()" aria-label="Finish">${icon('logout',20)}</button>`})}
     <div class="scroll"><div class="section">
       ${RIDER.error ? `<div class="banner alert mb-16">${icon('alert',17)}<div>${esc(RIDER.error)}</div></div>` : ''}
@@ -3732,10 +4174,10 @@ function riderLookupBody(){
   return `<div class="card" style="padding:16px;">
       <div class="eyebrow mb-8">Which delivery?</div>
       <div class="t-sm muted mb-16" style="line-height:1.5;">
-        Type the order number the office gave you — for example <b>MD-1041</b>.
+        Type the delivery code the office sent you — for example <b>K7QMP-4XA9R</b> — or paste the whole link.
       </div>
-      <div class="field"><label class="label">Order number</label>
-        <input id="f-rider-order" placeholder="MD-1041" autocomplete="off" autocapitalize="characters"
+      <div class="field"><label class="label">Delivery code</label>
+        <input id="f-rider-order" placeholder="K7QMP-4XA9R" autocomplete="off" autocapitalize="characters"
                value="${esc(RIDER.lookupTried || '')}"
                onkeydown="if(event.key==='Enter')riderLookup()"></div>
       <button class="btn" id="btn-rider-find" onclick="riderLookup()">
@@ -3745,30 +4187,90 @@ function riderLookupBody(){
 
 function riderTrackingCard(d){
   const live = RIDER.watchId || RIDER.webWatchId;
-  const fix = RIDER.lastFix;
   return `<div class="card" style="padding:16px;">
       <div class="row between mb-12">
         <div><div class="t-base" style="font-weight:700;">${esc(d.orderNo || '')}</div>
-          <div class="t-sm muted mt-4">${esc(d.customer || 'Customer')}</div></div>
+          <div class="t-sm muted mt-4">${esc(d.customer || 'Customer')}${d.contact ? ' · ' + esc(d.contact) : ''}</div></div>
         ${live ? '<span class="rider-live"><i></i>Live</span>' : ''}
       </div>
-      ${d.address ? `<div class="banner info mb-12">${icon('pin',17)}<div>${esc(d.address)}</div></div>` : ''}
-      ${d.phone ? `<a class="btn btn-quiet mb-12" href="tel:${esc(d.phone)}">${icon('phone',18)} Call the customer</a>` : ''}
-      ${live ? `
-        <div class="t-sm muted mb-12" style="line-height:1.5;">
-          Your location is going to the customer${fix ? ` · last sent ${esc(dtFmt(fix.at))}` : '…'}<br>
-          ${RIDER.pushes} update${RIDER.pushes===1?'':'s'} sent. You can lock the phone —
-          tracking keeps running in the background.
-        </div>
-        <button class="btn" style="background:var(--bad);border-color:var(--bad);" onclick="riderStopTracking()">Stop tracking</button>`
-      : `
-        <div class="t-sm muted mb-12" style="line-height:1.5;">
-          Start the trip and the customer sees you move on their map. Android will ask for location —
-          choose <b>“Allow all the time”</b>, or tracking stops when your screen locks.
-        </div>
-        <button class="btn" id="btn-rider-start" onclick="riderStartTracking()">${icon('pin',18)} Start trip</button>`}
-      <button class="btn btn-quiet mt-8" onclick="riderClearOrder()">Look up a different order</button>
+      <div class="map-wrap mb-12" id="rider-map" role="img" aria-label="Map of you and the delivery address"></div>
+      <div class="banner info mb-12">${icon('pin',17)}<div>
+        ${esc(d.address || 'No address on this delivery — call the customer.')}
+        <div id="rider-dist" class="t-xs" style="margin-top:4px;font-weight:700;">${esc(riderDistText())}</div></div></div>
+      <div class="row gap-8 mb-12">
+        <button class="btn" style="flex:1;" onclick="riderNavigate()">${icon('truck',18)} Navigate</button>
+        ${d.phone ? `<a class="btn btn-quiet" style="flex:1;" href="tel:${esc(d.phone)}">${icon('phone',18)} Call</a>` : ''}
+      </div>
+      <div id="rider-live-text">${riderLiveHtml()}</div>
+      ${live
+        ? `<button class="btn" style="background:var(--bad);border-color:var(--bad);" onclick="riderStopTracking()">Stop tracking</button>`
+        : `<button class="btn" id="btn-rider-start" onclick="riderStartTracking()">${icon('pin',18)} Start trip</button>`}
+      <button class="btn btn-quiet mt-8" onclick="riderClearOrder()">Look up a different delivery</button>
     </div>`;
+}
+function riderLiveHtml(){
+  const live = RIDER.watchId || RIDER.webWatchId, fix = RIDER.lastFix;
+  return live ? `<div class="t-sm muted mb-12" style="line-height:1.5;">
+      Your location is going to the customer${fix ? ` · last sent ${esc(dtFmt(fix.at))}` : '…'}<br>
+      ${RIDER.pushes} update${RIDER.pushes===1?'':'s'} sent. You can lock the phone or switch to
+      Google Maps — tracking keeps running in the background.</div>`
+    : `<div class="t-sm muted mb-12" style="line-height:1.5;">
+      Start the trip and the customer sees you move on their map. Android will ask for location —
+      choose <b>“Allow all the time”</b>, or tracking stops when your screen locks.</div>`;
+}
+
+/* Rider map: where the rider is, where the order is going, how far is left.
+   A location update moves the markers only — rebuilding the map on every fix
+   would keep throwing away the view the rider is looking at. */
+let RIDER_MAP = null, RIDER_ME = null, RIDER_DEST = null, RIDER_FITTED = false;
+function riderDest(d){ return d && typeof d.destLat === 'number' && typeof d.destLng === 'number' ? [d.destLat, d.destLng] : null; }
+function distKm(a, b){
+  const rad = x => x * Math.PI / 180, dLat = rad(b[0] - a[0]), dLng = rad(b[1] - a[1]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a[0])) * Math.cos(rad(b[0])) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(h));
+}
+function riderDistText(){
+  const dest = riderDest(RIDER.delivery), fix = RIDER.lastFix;
+  if(!dest) return 'No map pin saved for this customer — Navigate uses the address.';
+  if(!fix) return '';
+  const km = distKm([fix.lat, fix.lng], dest);
+  return km < 1 ? `${Math.round(km * 1000)} m away (straight line)` : `${km.toFixed(1)} km away (straight line)`;
+}
+// Turn-by-turn is Google Maps' job; background tracking keeps running meanwhile.
+function riderNavigate(){
+  const d = RIDER.delivery; if(!d) return;
+  const dest = riderDest(d);
+  const to = dest ? `${dest[0]},${dest[1]}` : (d.address ? encodeURIComponent(d.address) : '');
+  if(!to){ toast('No address on this delivery — call the customer','alert'); return; }
+  window.open(`https://www.google.com/maps/dir/?api=1&destination=${to}&travelmode=driving`, '_blank');
+}
+function destroyRiderMap(){
+  if(RIDER_MAP){ try{ RIDER_MAP.remove(); }catch(e){} }
+  RIDER_MAP = null; RIDER_ME = null; RIDER_DEST = null; RIDER_FITTED = false;
+}
+function renderRiderMap(){
+  const el = document.getElementById('rider-map');
+  const d = RIDER.delivery;
+  if(!el || !d || !window.L){ destroyRiderMap(); return; }
+  if(RIDER_MAP && RIDER_MAP.getContainer() !== el) destroyRiderMap();
+  const dest = riderDest(d);
+  const me = RIDER.lastFix ? [RIDER.lastFix.lat, RIDER.lastFix.lng] : null;
+  if(!dest && !me){
+    el.innerHTML = '<div class="map-empty">No map pin for this customer yet.<br>Start the trip to see yourself on the map.</div>';
+    return;
+  }
+  if(!RIDER_MAP){
+    el.innerHTML = '';
+    RIDER_MAP = L.map(el, { zoomControl:false, attributionControl:true });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19, attribution:'© OpenStreetMap' }).addTo(RIDER_MAP);
+    RIDER_MAP.setView(me || dest, 15);
+  }
+  if(dest && !RIDER_DEST) RIDER_DEST = L.marker(dest, { icon: L.divIcon({ className:'', html:'<div class="dest-dot"></div>', iconSize:[14,14], iconAnchor:[7,7] }) }).addTo(RIDER_MAP);
+  if(me){
+    if(!RIDER_ME) RIDER_ME = L.marker(me, { icon: L.divIcon({ className:'', html:'<div class="rider-dot"></div>', iconSize:[18,18], iconAnchor:[9,9] }) }).addTo(RIDER_MAP);
+    else RIDER_ME.setLatLng(me);
+  }
+  if(me && dest && !RIDER_FITTED){ RIDER_MAP.fitBounds(L.latLngBounds([me, dest]).pad(0.3)); RIDER_FITTED = true; }
 }
 
 function riderClearOrder(){
@@ -3789,10 +4291,14 @@ async function riderPush(lat, lng, accuracy){
   const d = RIDER.delivery;
   if(!d) return;
   try{
-    await window.riderPushLocation(d.orderNo, lat, lng, accuracy, RIDER.name, RIDER.phone);
+    await window.riderPushLocation(d.code, lat, lng, accuracy, RIDER.name, RIDER.phone);
     RIDER.lastFix = { lat, lng, at: new Date().toISOString() };
     RIDER.pushes++;
-    if(S.screen === 'rider') paint();
+    if(S.screen === 'rider'){
+      const live = document.getElementById('rider-live-text'); if(live) live.innerHTML = riderLiveHtml();
+      const dist = document.getElementById('rider-dist'); if(dist) dist.textContent = riderDistText();
+      renderRiderMap();
+    }
   }catch(e){
     // The rules refuse writes once active:false — that is the office closing
     // the delivery, not a fault. Stop cleanly and say so.
@@ -3900,6 +4406,7 @@ const APPCFG_FIELDS = {
   instagram:'url', linkedin:'url', address:'str', minOrderValue:'num', freeDeliveryAbove:'num',
   deliveryFee:'num', platformFee:'num', gstRate:'num', orderCutoff:'str', businessHours:'str',
   announcement:'str', walletEnabled:'bool',
+  rfdFee:'num',   // "Request a driver" charge; 0 = the card just says a small charge applies
   // Maintenance mode — set by the admin (manually, or automatically by the
   // nightly-audit job while it runs). When on, the whole app is locked behind
   // a maintenance screen and nothing is usable until it clears.
@@ -3996,6 +4503,7 @@ async function boot(){
   refreshOrderBlock();
   paint();
   initPushNotifications();
+  syncAccount();
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -4107,6 +4615,48 @@ function startMaintenancePolling(){
   if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App){
     try{ window.Capacitor.Plugins.App.addListener('appStateChange', st=>{ if(st && st.isActive) pollLiveState(); }); }catch(e){}
   }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ANDROID BACK BUTTON
+   With @capacitor/app installed, Android hands the back button to the app
+   only if the app listens for it; otherwise it closes the app, because a
+   single-page app like this never adds browser history for the WebView to
+   go back through. So back is handled here, in this order: close whatever
+   sits on top (zoomed photo, bottom sheet), step back inside a multi-step
+   form, walk back through the screens the customer came through, fall back
+   to Home from any other tab, and only leave the app from Home — on a
+   second press, so one stray tap never closes it.
+   ═══════════════════════════════════════════════════════════ */
+let BACK_EXIT_AT = 0;
+function appExit(){
+  const App = window.Capacitor?.Plugins?.App;
+  if(App?.exitApp) App.exitApp(); else if(App?.minimizeApp) App.minimizeApp();
+}
+function handleHardwareBack(){
+  if(document.getElementById('zoom')){ closeZoom(); return; }
+  if(document.getElementById('sheet')?.classList.contains('on')){ closeSheet(); return; }
+  if(MAINTENANCE_LOCKED){ appExit(); return; }
+  // Multi-step forms live on one screen; back steps through them first.
+  if(S.screen === 'login' && LOGIN.step !== 'entry'){
+    LOGIN.step = (LOGIN.step === 'otp' && LOGIN.mode === 'b2b' && LOGIN.authMode === 'signup') ? 'contact'
+               : LOGIN.step === 'contact' ? 'bank' : 'entry';
+    paint(); return;
+  }
+  if(S.screen === 'forgotPassword' && RESET.step !== 'entry'){ RESET.step = 'entry'; paint(); return; }
+  // A rider mid-trip keeps tracking: back only sends the app to the background.
+  if(S.screen === 'rider' && (RIDER.watchId || RIDER.webWatchId)){ window.Capacitor?.Plugins?.App?.minimizeApp?.(); return; }
+  if(S.screen === 'rider' && RIDER.delivery){ riderClearOrder(); return; }
+  // The order is placed — back from the confirmation goes home, not to checkout.
+  if(S.screen === 'placed'){ switchTab('home'); return; }
+  if(NAV.length){ back(); return; }
+  if(S.user && S.screen !== 'home'){ switchTab('home'); return; }
+  if(Date.now() - BACK_EXIT_AT < 2000){ appExit(); return; }
+  BACK_EXIT_AT = Date.now();
+  toast('Press back again to exit');
+}
+if(window.Capacitor?.Plugins?.App){
+  try{ window.Capacitor.Plugins.App.addListener('backButton', handleHardwareBack); }catch(e){}
 }
 boot();
 

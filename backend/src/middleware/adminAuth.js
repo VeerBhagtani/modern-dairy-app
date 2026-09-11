@@ -90,4 +90,4 @@ function requireAdmin() {
   };
 }
 
-module.exports = { issueAdminToken, verifyAdminLogin, requireAdmin };
+module.exports = { issueAdminToken, verifyAdminLogin, requireAdmin, ADMIN_FIREBASE_UID };

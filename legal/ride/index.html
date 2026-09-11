@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#1B2A6B">
+<title>Modern Dairy · Rider</title>
+<link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+<script src="/vendor/leaflet/leaflet.js" defer></script>
+<style>
+:root{
+  --brand:#1B2A6B; --brand-tint:#EEF1FA; --crimson:#D7262F; --crimson-tint:#FDE8E9;
+  --butter-tint:#FFF6D6; --butter-ink:#4A3600; --fresh:#047857;
+  --ink:#0F172A; --ink-2:#475569; --ink-3:#7C8798; --line:#DFE4EF; --bg:#F3F6FB;
+  --font:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--font);background:var(--bg);color:var(--ink);font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased;}
+.top{background:var(--brand);color:#fff;padding:calc(env(safe-area-inset-top,0px) + 14px) 16px 16px;}
+.top small{display:block;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.72;}
+.top h1{font-size:21px;font-weight:800;letter-spacing:-.02em;margin-top:2px;}
+.top p{font-size:13px;opacity:.82;margin-top:2px;}
+main{max-width:520px;margin:0 auto;padding:14px 14px calc(32px + env(safe-area-inset-bottom,0px));}
+.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px;}
+#map{height:280px;border-radius:16px;overflow:hidden;border:1px solid var(--line);margin-bottom:12px;background:#E8EDF6;}
+.k{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);}
+.v{font-weight:700;margin-top:2px;}
+.note{font-size:13px;color:var(--ink-2);line-height:1.5;}
+.dist{margin-top:6px;font-size:13px;font-weight:700;color:var(--brand);}
+.row{display:flex;gap:8px;margin-bottom:12px;}
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:48px;border-radius:12px;
+  border:1.5px solid var(--brand);background:var(--brand);color:#fff;font:inherit;font-weight:700;text-decoration:none;cursor:pointer;}
+.btn.quiet{background:#fff;color:var(--brand);border-color:var(--line);}
+.btn.red{background:var(--crimson);border-color:var(--crimson);}
+.btn:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(--brand);outline-offset:2px;}
+label{display:block;font-size:13px;font-weight:600;color:var(--ink-2);margin:12px 0 5px;}
+input{width:100%;height:46px;border:1px solid var(--line);border-radius:10px;padding:0 12px;font:inherit;background:#fff;color:var(--ink);}
+.warn{background:var(--butter-tint);color:var(--butter-ink);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.5;margin-bottom:12px;}
+.err{background:var(--crimson-tint);color:var(--crimson);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.5;margin-bottom:12px;}
+.live{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:800;color:var(--fresh);}
+.live i{width:8px;height:8px;border-radius:50%;background:var(--fresh);animation:pulse 1.6s infinite;}
+@keyframes pulse{50%{opacity:.25;}}
+@media (prefers-reduced-motion: reduce){.live i{animation:none;}}
+.center{text-align:center;padding:36px 16px;}
+.me{width:18px;height:18px;border-radius:50%;background:var(--brand);border:2.5px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.4);}
+.dest{width:16px;height:16px;border-radius:50%;background:var(--crimson);border:2.5px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.4);}
+a.link{color:var(--brand);font-weight:700;}
+</style>
+</head>
+<body>
+<header class="top"><small>Modern Dairy · Rider</small><h1 id="title">Delivery</h1><p id="sub">Opening…</p></header>
+<main id="main"></main>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getFirestore, doc, getDoc, updateDoc, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+
+/* Rider link — the no-install way to carry a Modern Dairy delivery.
+   The office sends https://…/ride/#<delivery code>. The code sits after the
+   '#', so it never reaches a server log or a Referer header. It is the id of
+   deliveries/{code}: the rules let a signed-in (here, anonymous) visitor
+   `get` that one record and write only the rider-location fields, and only
+   while the office keeps it active. Nothing else in the database is reachable.
+
+   A browser can only share location while this page is on screen, so it
+   asks the phone to keep the screen awake. Google Maps opens as another
+   app: sharing pauses there and picks up again when the rider comes back. */
+const fb = initializeApp({
+  apiKey: 'AIzaSyD-3RNHrI9ZPmdTioLiuCi2gjwdNXZH8HI',
+  authDomain: 'modern-dairy-pune.firebaseapp.com',
+  projectId: 'modern-dairy-pune',
+  storageBucket: 'modern-dairy-pune.firebasestorage.app',
+  messagingSenderId: '711745048614',
+  appId: '1:711745048614:web:29e8641911c62c1bb856e7',
+});
+const auth = getAuth(fb), db = getFirestore(fb);
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+// A code typed with or without dashes, or the whole link pasted in.
+const codeOf = (s) => String(s || '').split('#').pop().toUpperCase().replace(/[^A-Z0-9]/g, '');
+const RIDER_KEY = 'md_ride_rider';
+
+const R = { code:'', d:null, state:'loading', err:'', name:'', phone:'',
+  sharing:false, watch:null, lock:null, pos:null, sentAt:0, sentPos:null, sent:0, sentClock:null,
+  unsub:null, map:null, me:null, dest:null, fitted:false };
+try { const s = JSON.parse(localStorage.getItem(RIDER_KEY) || 'null'); if (s) { R.name = s.name || ''; R.phone = s.phone || ''; } } catch (e) {}
+
+function distKm(a, b){
+  const rad = (x) => x * Math.PI / 180, dLat = rad(b[0] - a[0]), dLng = rad(b[1] - a[1]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a[0])) * Math.cos(rad(b[0])) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(h));
+}
+const destOf = (d) => (d && typeof d.destLat === 'number' && typeof d.destLng === 'number') ? [d.destLat, d.destLng] : null;
+function navUrl(d){
+  const dest = destOf(d);
+  const to = dest ? `${dest[0]},${dest[1]}` : (d?.address ? encodeURIComponent(d.address) : '');
+  return to ? `https://www.google.com/maps/dir/?api=1&destination=${to}&travelmode=driving` : '';
+}
+function distText(){
+  const dest = destOf(R.d);
+  if (!dest) return 'No map pin saved for this customer — Navigate uses the address.';
+  if (!R.pos) return '';
+  const km = distKm(R.pos, dest);
+  return km < 1 ? `${Math.round(km * 1000)} m away (straight line)` : `${km.toFixed(1)} km away (straight line)`;
+}
+function statusText(){
+  return R.sent
+    ? `${R.sent} update${R.sent === 1 ? '' : 's'} sent · last at ${R.sentClock.toLocaleTimeString('en-IN', { hour:'numeric', minute:'2-digit' })}`
+    : 'Waiting for your first GPS fix…';
+}
+
+function render(){
+  const d = R.d, m = $('main');
+  $('title').textContent = d?.orderNo ? `Delivery ${d.orderNo}` : 'Delivery';
+  $('sub').textContent = { ready: d?.customer || 'Customer', done: 'Completed', code: 'Enter your delivery code',
+    loading: 'Opening…', missing: 'Link not recognised', error: 'Connection problem' }[R.state] || '';
+
+  if (R.state === 'loading') { m.innerHTML = '<p class="center note">Opening the delivery…</p>'; return; }
+  if (R.state === 'code') {
+    m.innerHTML = `<div class="card"><div class="k">Delivery code</div>
+        <p class="note" style="margin:4px 0 10px;">Open the link the office sent you, or type its code here.</p>
+        <input id="code" autocapitalize="characters" autocomplete="off" placeholder="K7QMP-4XA9R" aria-label="Delivery code"></div>
+      <button class="btn" id="go">Open delivery</button>`;
+    $('go').onclick = () => { location.hash = codeOf($('code').value); };
+    return;
+  }
+  if (R.state === 'missing') {
+    m.innerHTML = `<div class="card center"><b>This link doesn't match a delivery.</b>
+      <p class="note" style="margin-top:6px;">Check with the office — they may have sent a newer link.</p></div>`;
+    return;
+  }
+  if (R.state === 'done') {
+    stopSharing();
+    m.innerHTML = `<div class="card center"><b>This delivery is complete.</b>
+      <p class="note" style="margin-top:6px;">Location sharing has stopped. Thank you!</p></div>`;
+    return;
+  }
+  if (R.state === 'error') {
+    m.innerHTML = `<div class="err">${esc(R.err)}</div><button class="btn" id="retry">Try again</button>`;
+    $('retry').onclick = load;
+    return;
+  }
+
+  const nav = navUrl(d);
+  m.innerHTML = `
+    ${R.err ? `<div class="err" role="alert">${esc(R.err)}</div>` : ''}
+    <div id="map" role="img" aria-label="Map of you and the delivery address"></div>
+    <div class="card">
+      <div class="k">Deliver to</div>
+      <div class="v">${esc(d.customer || 'Customer')}${d.contact ? ` · ${esc(d.contact)}` : ''}</div>
+      <div class="note">${esc(d.address || 'No address on this delivery — call the customer.')}</div>
+      <div class="dist" id="dist">${esc(distText())}</div>
+    </div>
+    <div class="row">
+      ${nav ? `<a class="btn" href="${esc(nav)}" target="_blank" rel="noopener">Navigate</a>` : ''}
+      ${d.phone ? `<a class="btn quiet" href="tel:${esc(d.phone)}">Call customer</a>` : ''}
+    </div>
+    ${R.sharing ? `
+      <div class="card"><div class="live"><i></i>Sharing your location</div>
+        <p class="note" id="status" style="margin-top:6px;">${esc(statusText())}</p></div>
+      <div class="warn">Keep this page open with the screen on. If you switch to Google Maps, sharing pauses — the customer sees your last position until you come back here.</div>
+      <button class="btn red" id="stop">Stop sharing</button>`
+    : !R.name ? `
+      <div class="card"><div class="k">Before you start</div>
+        <label for="rn">Your name</label><input id="rn" autocomplete="name" placeholder="e.g. Suresh">
+        <label for="rp">Your mobile number</label><input id="rp" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit number">
+        <p class="note" style="margin-top:8px;">The office sees who is carrying the order.</p></div>
+      <button class="btn" id="start">Start sharing location</button>`
+    : `
+      <p class="note" style="margin-bottom:10px;">Riding as <b>${esc(R.name)}</b> · <a href="#" class="link" id="notme">Not you?</a></p>
+      <button class="btn" id="start">Start sharing location</button>
+      <p class="note" style="margin-top:10px;">Your browser will ask to use your location — tap <b>Allow</b>, and the customer sees you on their map.</p>`}`;
+  if ($('start')) $('start').onclick = startSharing;
+  if ($('stop')) $('stop').onclick = () => { stopSharing(); render(); };
+  if ($('notme')) $('notme').onclick = (e) => { e.preventDefault(); R.name = ''; R.phone = ''; try { localStorage.removeItem(RIDER_KEY); } catch (x) {} render(); };
+  drawMap();
+}
+
+function drawMap(){
+  const el = $('map');
+  if (!el || !window.L) return;
+  if (R.map && R.map.getContainer() !== el) { R.map.remove(); R.map = R.me = R.dest = null; R.fitted = false; }
+  const dest = destOf(R.d);
+  if (!R.map) {
+    R.map = L.map(el, { zoomControl:false });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19, attribution:'© OpenStreetMap' }).addTo(R.map);
+    R.map.setView(R.pos || dest || [18.5204, 73.8567], (R.pos || dest) ? 15 : 11);   // Pune until we know better
+  }
+  if (dest && !R.dest) R.dest = L.marker(dest, { icon: L.divIcon({ className:'', html:'<div class="dest"></div>', iconSize:[16,16], iconAnchor:[8,8] }) }).addTo(R.map);
+  moveMe();
+}
+function moveMe(){
+  if (!R.map || !R.pos) return;
+  if (!R.me) R.me = L.marker(R.pos, { icon: L.divIcon({ className:'', html:'<div class="me"></div>', iconSize:[18,18], iconAnchor:[9,9] }) }).addTo(R.map);
+  else R.me.setLatLng(R.pos);
+  if (!R.fitted) {
+    const dest = destOf(R.d);
+    if (dest) R.map.fitBounds(L.latLngBounds([R.pos, dest]).pad(0.3)); else R.map.setView(R.pos, 16);
+    R.fitted = true;
+  }
+}
+
+async function startSharing(){
+  if (!R.name) {
+    const name = ($('rn')?.value || '').trim(), phone = ($('rp')?.value || '').replace(/\D/g, '');
+    if (name.length < 2) { R.err = 'Enter your name.'; render(); return; }
+    if (!/^[6-9]\d{9}$/.test(phone)) { R.err = 'Enter a valid 10-digit mobile number.'; render(); return; }
+    R.name = name.slice(0, 80); R.phone = phone;
+    try { localStorage.setItem(RIDER_KEY, JSON.stringify({ name: R.name, phone: R.phone })); } catch (e) {}
+  }
+  if (!navigator.geolocation) { R.err = "This browser can't share location. Open the link in Chrome."; render(); return; }
+  R.err = '';
+  R.watch = navigator.geolocation.watchPosition(onFix, onFixError, { enableHighAccuracy:true, maximumAge:10000, timeout:30000 });
+  R.sharing = true;
+  await keepAwake();
+  render();
+}
+async function keepAwake(){
+  try { if ('wakeLock' in navigator && document.visibilityState === 'visible') R.lock = await navigator.wakeLock.request('screen'); } catch (e) {}
+}
+function stopSharing(){
+  if (R.watch != null) { navigator.geolocation.clearWatch(R.watch); R.watch = null; }
+  try { R.lock?.release(); } catch (e) {}
+  R.lock = null; R.sharing = false;
+}
+// The screen lock is dropped whenever the page is hidden; take it back on return.
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && R.sharing) keepAwake(); });
+
+function onFixError(e){
+  R.err = e.code === 1
+    ? 'Location is blocked for this page. Allow location for this site in your browser settings, then tap Start again.'
+    : 'Could not get your location: ' + e.message;
+  stopSharing(); render();
+}
+async function onFix(p){
+  const here = [p.coords.latitude, p.coords.longitude];
+  R.pos = here; moveMe();
+  if ($('dist')) $('dist').textContent = distText();
+  const now = Date.now();
+  const moved = R.sentPos ? distKm(R.sentPos, here) * 1000 : Infinity;
+  // Real movement, or a heartbeat every 30 s so the customer's map never looks stale.
+  if (moved < 25 && now - R.sentAt < 30000) return;
+  R.sentAt = now; R.sentPos = here;
+  try {
+    await updateDoc(doc(db, 'deliveries', R.code), {
+      riderLat: here[0], riderLng: here[1], riderAt: serverTimestamp(),
+      riderAccuracy: p.coords.accuracy ?? null, riderName: R.name, riderPhone: R.phone || null,
+    });
+    R.sent++; R.sentClock = new Date();
+    if ($('status')) $('status').textContent = statusText();
+  } catch (e) {
+    // Refused once the office closes the delivery — the listener shows that screen.
+    if (R.d?.active !== false && $('status')) $('status').textContent = 'Could not send your location — check your connection. Trying again on the next update.';
+  }
+}
+
+async function load(){
+  if (R.unsub) { R.unsub(); R.unsub = null; }
+  stopSharing();
+  R.code = codeOf(location.hash); R.d = null; R.err = '';
+  if (!R.code) { R.state = 'code'; render(); return; }
+  R.state = 'loading'; render();
+  try {
+    if (!auth.currentUser) await signInAnonymously(auth);
+    const ref = doc(db, 'deliveries', R.code);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) { R.state = 'missing'; render(); return; }
+    R.d = snap.data(); R.state = R.d.active === false ? 'done' : 'ready'; render();
+    R.unsub = onSnapshot(ref, (s) => {
+      if (!s.exists()) return;
+      R.d = s.data();
+      if (R.d.active === false && R.state !== 'done') { R.state = 'done'; render(); }
+    });
+  } catch (e) {
+    R.state = 'error'; R.err = 'Could not open the delivery. Check your internet connection.'; render();
+  }
+}
+window.addEventListener('hashchange', load);
+load();
+</script>
+</body>
+</html>

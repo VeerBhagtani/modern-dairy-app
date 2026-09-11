@@ -54,8 +54,28 @@ function hasForbiddenKeys(body) {
     && Object.keys(body).some((k) => FORBIDDEN_KEYS.has(k));
 }
 
+// Admin recovery numbers arrive as one comma-separated Secret Manager value.
+// Anything that isn't a valid Indian mobile is dropped rather than texted.
+function parseRecoveryPhones(raw) {
+  return String(raw || '').split(',')
+    .map((s) => s.replace(/\D/g, '').slice(-10))
+    .filter((p) => PHONE_RE.test(p));
+}
+// The only form of a recovery number that ever leaves the server.
+function maskPhone(phone) {
+  return '••••••' + String(phone).slice(-4);
+}
+// Why a new admin password is unacceptable, or null if it is fine.
+function adminPasswordProblem(pw) {
+  if (typeof pw !== 'string' || pw.length < 8) return 'Use at least 8 characters.';
+  if (pw.length > 128) return 'Use at most 128 characters.';
+  if (!/[A-Za-z]/.test(pw) || !/\d/.test(pw)) return 'Use at least one letter and one number.';
+  return null;
+}
+
 module.exports = {
   isValidPhone, isValidOtp, isValidGstin, isValidId,
   isBoundedString, isOptionalBoundedString, isPositiveInt,
   pickAllowed, hasForbiddenKeys,
+  parseRecoveryPhones, maskPhone, adminPasswordProblem,
 };
