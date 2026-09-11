@@ -736,7 +736,7 @@ function driversBody(){
   const list = driverRequests.filter(r => rfdMatches(r, rfdFilter));
   return `
     <div class="muted" style="font-size:.85rem;line-height:1.55;margin-bottom:12px;">
-      Business customers who pressed <b>Request a driver</b> in the app. New requests appear here live.
+      Customers who pressed <b>Request a driver</b> in the app, business and personal. New requests appear here live.
       Assign a driver and the customer's app shows the driver's name and number.
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
@@ -745,12 +745,12 @@ function driversBody(){
     <div class="card" style="padding:0;overflow:auto;">
       ${!list.length ? `<div class="empty">${driverRequests.length?'Nothing here for this filter.':'No driver requests yet.'}</div>` : `
       <table class="stacked">
-        <thead><tr><th>Business</th><th>Reason</th><th>Phone</th><th>Requested</th><th>Status</th></tr></thead>
+        <thead><tr><th>Customer</th><th>Reason</th><th>Phone</th><th>Requested</th><th>Status</th></tr></thead>
         <tbody>
           ${list.map(r => `
             <tr data-rfd="${esc(r.id)}">
-              <td data-l="Business"><b>${esc(r.company||r.name||'—')}</b>${r.company&&r.name?`<br><span class="muted">${esc(r.name)}</span>`:''}</td>
-              <td data-l="Reason">${esc(RFD_REASONS[r.reason]||r.reason||'—')}${r.note?`<br><span class="muted">${esc(r.note)}</span>`:''}</td>
+              <td data-l="Customer"><b>${esc(r.company||r.name||'—')}</b>${r.company&&r.name?`<br><span class="muted">${esc(r.name)}</span>`:''}<br><span class="pill ${r.customerType==='b2b'?'placed':'info'}">${r.customerType==='b2b'?'Business':'Personal'}</span></td>
+              <td data-l="Reason">${esc(RFD_REASONS[r.reason]||r.reason||'—')}${r.orderNo?`<br><span class="muted">Order #${esc(r.orderNo)}</span>`:''}${r.note?`<br><span class="muted">${esc(r.note)}</span>`:''}</td>
               <td data-l="Phone">+91 ${esc(r.phone||'')}</td>
               <td data-l="Requested" class="muted">${fmtDate(r.createdAt)}</td>
               <td data-l="Status"><span class="pill ${RFD_PILL[r.status]||'info'}">${esc(RFD_STATUS[r.status]||r.status||'')}</span>${r.driverName?`<br><span class="muted">${esc(r.driverName)}</span>`:''}</td>
@@ -773,7 +773,9 @@ function openDriverRequest(id){
       <button class="close-x" id="btn-close">×</button>
     </div>
     <div style="margin:12px 0;"><span class="pill ${RFD_PILL[r.status]||'info'}">${esc(RFD_STATUS[r.status]||r.status||'')}</span></div>
+    <div class="row"><span class="muted">Customer type</span><span>${r.customerType==='b2b'?'Business (B2B)':'Personal (B2C)'}</span></div>
     <div class="row"><span class="muted">Reason</span><span>${esc(RFD_REASONS[r.reason]||r.reason||'—')}</span></div>
+    ${r.orderNo?`<div class="row"><span class="muted">For order</span><span>#${esc(r.orderNo)}</span></div>`:''}
     ${r.note?`<div class="row" style="align-items:flex-start;"><span class="muted">Details</span><span style="text-align:right;max-width:70%;">${esc(r.note)}</span></div>`:''}
     <div class="row"><span class="muted">Contact</span><span>${esc(r.name||'—')}</span></div>
     <div class="row"><span class="muted">Phone</span><span><a href="tel:+91${esc(r.phone||'')}">+91 ${esc(r.phone||'')}</a></span></div>
@@ -1039,10 +1041,11 @@ async function syncDelivery(id, status){
 function riderLinkHtml(o){
   const link = riderLink(o.deliveryCode);
   const msg = `Modern Dairy delivery ${o.orderNo || ''} for ${o.company || o.name || 'a customer'}.\n`
-    + `Open this link for the address and directions, and to share your location with the customer:\n${link}`;
+    + `Open this link for the address and directions, and to share your location with the customer:\n${link}\n\n`
+    + `Delivery code (for the Modern Dairy app): ${prettyCode(o.deliveryCode)}`;
   return `<div class="card" style="margin:14px 0 4px;padding:12px;background:var(--bg);">
     <div style="font-weight:700;margin-bottom:4px;">Rider link</div>
-    <div class="muted" style="font-size:.82rem;line-height:1.5;margin-bottom:8px;">Send this to whoever is carrying the order. It opens in any phone browser — nothing to install. Riders with the Modern Dairy app can type the code <b>${esc(prettyCode(o.deliveryCode))}</b> instead.</div>
+    <div class="muted" style="font-size:.82rem;line-height:1.5;margin-bottom:8px;">Send this to whoever is carrying the order. It opens in any phone browser — nothing to install — and on a phone with the Modern Dairy app it opens in the app. In the app, riders type the delivery code <b>${esc(prettyCode(o.deliveryCode))}</b>, not the order number.</div>
     <div style="font-family:ui-monospace,Consolas,monospace;font-size:.8rem;word-break:break-all;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px;">${esc(link)}</div>
     <div style="display:flex;gap:8px;">
       <a class="btn-primary btn-sm" style="flex:1;text-align:center;text-decoration:none;background:#1DA851;border-color:#1DA851;" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">Send on WhatsApp</a>

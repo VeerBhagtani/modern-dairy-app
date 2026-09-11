@@ -238,10 +238,11 @@ service cloud.firestore {
     match /driver_requests/{requestId} {
       allow create: if request.auth != null
                     && request.resource.data.keys().hasAll(['reason', 'phone', 'customerType', 'status', 'createdByUid', 'createdAt'])
-                    && request.resource.data.keys().hasOnly(['reason', 'note', 'company', 'name', 'phone', 'address', 'gstin', 'customerType', 'status', 'createdByUid', 'createdAt'])
+                    && request.resource.data.keys().hasOnly(['reason', 'note', 'company', 'name', 'phone', 'address', 'gstin', 'customerType', 'orderNo', 'status', 'createdByUid', 'createdAt'])
                     && request.resource.data.createdByUid == request.auth.uid
                     && request.resource.data.status == 'open'
-                    && request.resource.data.customerType == 'b2b'
+                    && request.resource.data.customerType in ['b2b', 'b2c']
+                    && strOk(request.resource.data.get('orderNo', null), 30)
                     && request.resource.data.reason in ['collect_payment', 'urgent_delivery', 'other']
                     && request.resource.data.createdAt == request.time
                     && request.resource.data.phone is string

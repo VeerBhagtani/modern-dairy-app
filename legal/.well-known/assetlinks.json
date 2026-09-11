@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "in.moderndairy.app",
+      "sha256_cert_fingerprints": [
+        "FB:D6:F0:28:D2:8C:D5:B3:C4:4E:97:2C:18:F7:36:31:D2:BE:E9:D1:32:15:8A:EA:24:65:1C:47:F2:59:C3:34"
+      ]
+    }
+  }
+]

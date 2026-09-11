@@ -207,8 +207,56 @@ free, good map provider instead of paying for Google Maps.
   with no limit. The JavaScript Maps API is not ($7 per 1,000 loads after
   10,000 a month).
 
+### Owner fixes pass (v5.19.0-debug)
+Five problems the owner reported, fixed on branch `v5-19-fixes`:
+- **Invoice "Print / Save as PDF" did nothing.** Android's in-app WebView
+  has no print support, so `window.print()` was silently ignored. The button
+  now opens a new page, `legal/invoice/` (…web.app/invoice/), in the phone's
+  browser. The invoice travels after the `#` in the link, which is never sent
+  to a server, and the page opens Chrome's print screen by itself, where
+  "Save as PDF" works.
+- **Request a driver was hard to find** (it was only in Home shortcuts, and
+  only for business accounts). It's now open to **every customer** and sits:
+  - on Home
+  - in **Account** (its own "Driver" section, with a line saying what it's for)
+  - on the **order-placed** screen
+  - on each **order** (not on denied or cancelled ones)
+
+  A request made from an order carries its `orderNo`. The admin Driver
+  requests tab shows Business/Personal and "Order #…". The rules now accept
+  `customerType` b2b or b2c plus an optional `orderNo`.
+- **A denied order didn't show the reason.** The order screen already had the
+  banner, but the live listener only copied `status`. It now also copies
+  `deniedReason`/`deniedBy`, updates the saved order list, and the banner
+  reads "Reason: …".
+- **Location precision.**
+  - "Use my current location" no longer takes the first rough fix. It keeps
+    watching GPS for up to 12 s, keeps the most accurate reading, stops once
+    it's within 15 m, and shows the accuracy as it improves.
+  - It then shows a map with a draggable 🏠 pin, so the customer drags or taps
+    it onto their exact door. That pin is what's saved.
+  - Rider tracking now sends every 12 m instead of 25 m, and skips fixes
+    worse than 60 m, unless nothing better has arrived for 30 s.
+- **A rider typing the order/bill number in the app found nothing.** This is
+  by design: order numbers run in sequence and could be guessed, so
+  deliveries are found only by the random delivery code. The rider now gets
+  a plain explanation instead of "not found", and:
+  - The admin's WhatsApp message ends with "Delivery code (for the Modern
+    Dairy app): XXXXX-XXXXX".
+  - **Android App Links:** tapping the rider link on a phone with the app
+    opens the app straight to that delivery. A rider not yet in rider mode
+    gives their name first; the code is kept meanwhile.
+    - The intent filter covers `/ride` on both hosting domains.
+    - `legal/.well-known/assetlinks.json` names `in.moderndairy.app` and the
+      debug-keystore SHA-256. `firebase.json` no longer ignores dot-folders,
+      so it deploys.
+    - When the app is signed with a different key, add its SHA-256 there.
+
 ### Still to do
-1. **Merged and released.** PR #4 is merged into `master`, so `master`
+0. **v5.19 (above) needs:** `firebase deploy --only hosting,firestore:rules`
+   (the invoice page, `assetlinks.json`, the admin changes and the driver
+   request rule), then merge, build and release v5.19.0-debug.
+1. **Merged and released (up to v5.18).** PR #4 is merged into `master`, so `master`
    matches what is live (Hosting, Firestore rules) and the APK. The latest
    APK is **v5.18.0-debug**, built from `master`:
    https://github.com/VeerBhagtani/modern-dairy-app/releases/tag/v5.18.0-debug

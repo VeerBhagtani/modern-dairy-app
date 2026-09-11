@@ -478,6 +478,11 @@ svg{display:block;flex-shrink:0;}
 .pcard.out .pcard-img img{opacity:.45;filter:grayscale(1);}
 
 /* ── Home shortcuts: one grouped list ── */
+.rfd-block{padding:0 0 4px;}
+.rfd-block .utils{margin-top:12px;}
+.rfd-note{margin:8px 20px 0;font-size:var(--t-xs);line-height:1.5;color:var(--ink-3);}
+.loc-map{height:220px;margin:0 0 10px;}
+.pin-drag{cursor:grab;touch-action:none;}
 .utils{margin:24px 16px 0;background:var(--surface);border:1px solid var(--line-2);border-radius:var(--r-lg);overflow:hidden;}
 .util{display:flex;align-items:center;gap:12px;width:100%;padding:13px 14px;text-align:left;color:var(--ink-3);
   border-bottom:1px solid var(--line-2);}
@@ -866,7 +871,7 @@ window.cancelOrderInFirestore = async function(firestoreId) {
   await updateDoc(doc(mirrorDb, 'orders', firestoreId), { status: 'cancelled', cancelledAt: serverTimestamp() });
 };
 
-/* ── Request a driver (business customers) ─────────────────────────────────
+/* ── Request a driver ──────────────────────────────────────────────────────
    Create-only from here; the office moves it open → assigned → done in the
    admin website, and the customer may withdraw it while it is still open. */
 window.createDriverRequest = async function(req) {
@@ -874,7 +879,9 @@ window.createDriverRequest = async function(req) {
   const ref = await addDoc(collection(mirrorDb, 'driver_requests'), {
     reason: req.reason, note: req.note || null,
     company: req.company || null, name: req.name || null, phone: req.phone,
-    address: req.address || null, gstin: req.gstin || null, customerType: 'b2b',
+    address: req.address || null, gstin: req.gstin || null,
+    customerType: req.customerType === 'b2b' ? 'b2b' : 'b2c',
+    ...(req.orderNo ? { orderNo: String(req.orderNo).slice(0, 30) } : {}),
     status: 'open', createdByUid: user.uid, createdAt: serverTimestamp(),
   });
   return ref.id;
@@ -1203,22 +1210,57 @@ async function doVerifyBank(){
    adds the specifics. Swap for Google's geocoder later for a fuller address
    once billing is on; the saved coordinates work with either.
    ═══════════════════════════════════════════════════════════ */
-async function detectDeviceCoords(){
+/* A phone's first location fix is often a rough Wi-Fi or mobile-tower
+   estimate, 50–500 m out; GPS sharpens it over the next few seconds. So
+   rather than take the first answer, watch for up to 12 s, keep the most
+   accurate reading, and stop early once it is within 15 m. onFix(metres)
+   reports progress so the screen can show the fix tightening. */
+const FIX_GOOD_M = 15, FIX_WAIT_MS = 12000;
+function bestFix(start, stop, onFix){
+  return new Promise((resolve, reject)=>{
+    let best = null, id = null, done = false;
+    const end = err => {
+      if(done) return; done = true; clearTimeout(timer);
+      if(id != null){ try{ stop(id); }catch(e){} }
+      if(err) reject(err);
+      else if(best) resolve({ lat:best.latitude, lng:best.longitude, accuracy:best.accuracy });
+      else reject(new Error('location-failed'));
+    };
+    const timer = setTimeout(() => end(), FIX_WAIT_MS);
+    const fix = c => {
+      if(!c || typeof c.latitude !== 'number') return;
+      if(!best || (c.accuracy || 9999) < (best.accuracy || 9999)) best = c;
+      onFix && onFix(best.accuracy);
+      if((best.accuracy || 9999) <= FIX_GOOD_M) end();
+    };
+    const fail = err => {
+      if(err && (err.code === 1 || /denied|permission/i.test(err.message || ''))){
+        const e = new Error('permission-denied'); e.denied = true; end(e);
+      }
+      // Anything else (a timeout, a weak signal) — keep waiting for a fix.
+    };
+    Promise.resolve(start(fix, fail)).then(x => {
+      id = x;
+      if(done && id != null){ try{ stop(id); }catch(e){} }
+    }, err => end(err));
+  });
+}
+async function detectDeviceCoords(onFix){
   const Geo = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Geolocation;
   if(Geo){
     let perm = await Geo.checkPermissions().catch(()=>({location:'prompt'}));
     if(perm.location !== 'granted'){ perm = await Geo.requestPermissions(); }
     if(perm.location !== 'granted') { const e=new Error('permission-denied'); e.denied=true; throw e; }
-    const pos = await Geo.getCurrentPosition({ enableHighAccuracy:true, timeout:15000 });
-    return { lat: pos.coords.latitude, lng: pos.coords.longitude };
+    return bestFix(
+      (fix, fail) => Geo.watchPosition({ enableHighAccuracy:true, timeout:FIX_WAIT_MS, maximumAge:0 },
+        (pos, err) => err ? fail(err) : fix(pos && pos.coords)),
+      id => Geo.clearWatch({ id }), onFix);
   }
   if(navigator.geolocation){
-    return new Promise((resolve, reject)=>{
-      navigator.geolocation.getCurrentPosition(
-        p => resolve({ lat:p.coords.latitude, lng:p.coords.longitude }),
-        err => { const e=new Error(err.message||'location-failed'); if(err.code===1) e.denied=true; reject(e); },
-        { enableHighAccuracy:true, timeout:15000, maximumAge:60000 });
-    });
+    return bestFix(
+      (fix, fail) => navigator.geolocation.watchPosition(p => fix(p.coords), fail,
+        { enableHighAccuracy:true, timeout:FIX_WAIT_MS, maximumAge:0 }),
+      id => navigator.geolocation.clearWatch(id), onFix);
   }
   throw new Error('Location is not available on this device.');
 }
@@ -1263,9 +1305,9 @@ async function useMyLocation(targetId){
   targetId = targetId || 'f-address';
   const btn = document.getElementById('btn-detect-loc');
   if(btn){ btn.disabled = true; btn.dataset.lbl = btn.textContent; btn.innerHTML = `<span class="spin"></span> Detecting…`; }
-  setLocStatus('Getting your location…');
+  setLocStatus('Getting your location… stay near a window for the best fix.');
   try{
-    const { lat, lng } = await detectDeviceCoords();
+    const { lat, lng, accuracy } = await detectDeviceCoords(m => setLocStatus(`Getting a precise fix… now within ${Math.round(m)} m`));
     LOGIN.lat = lat; LOGIN.lng = lng; LAST_DETECTED_COORDS = { lat, lng };
     let detected = '';
     try{ detected = (await reverseGeocode(lat, lng)).text; }catch(e){ /* keep coords even if geocode fails */ }
@@ -1273,12 +1315,10 @@ async function useMyLocation(targetId){
     if(ta){
       // Pre-fill the detected area and leave the cursor ready for the specifics.
       ta.value = detected ? (detected + ' — ') : ta.value;
-      ta.focus();
-      try{ ta.setSelectionRange(ta.value.length, ta.value.length); }catch(e){}
     }
-    setLocStatus(detected
-      ? '📍 We detected this area. Add your flat/shop number and a landmark, or correct it if it’s wrong.'
-      : '📍 Got your GPS location — type your address below; we’ve saved the pin for delivery.', 'ok');
+    const within = accuracy ? ` (within ${Math.round(accuracy)} m)` : '';
+    setLocStatus(`📍 Pinned${within}. Drag the 🏠 pin onto your exact door or gate, then add your flat/shop number and a landmark.`, 'ok');
+    showPinPicker(lat, lng);
   }catch(e){
     setLocStatus(e && e.denied
       ? 'Location access was declined — no problem, just type your address below.'
@@ -1286,6 +1326,29 @@ async function useMyLocation(targetId){
   }finally{
     if(btn){ btn.disabled = false; btn.innerHTML = btn.dataset.lbl || 'Use my current location'; }
   }
+}
+/* GPS indoors can still be a building or two out, so the detected spot is
+   shown on a map with a 🏠 pin the customer drags (or taps) onto their exact
+   door. Wherever it ends up is the pin saved for delivery and the rider's
+   directions. Without WebGL there is no map; the GPS pin stands as is. */
+let PIN_MAP = null;
+function showPinPicker(lat, lng){
+  const status = document.getElementById('h-loc-status'); if(!status) return;
+  let box = document.getElementById('loc-map');
+  if(!box){ box = document.createElement('div'); box.id = 'loc-map'; box.className = 'map-wrap loc-map'; status.after(box); }
+  if(PIN_MAP){ try{ PIN_MAP.remove(); }catch(e){} PIN_MAP = null; }
+  box.innerHTML = '';
+  const map = mdMap(box, [lat, lng], 17);
+  if(!map){ box.remove(); return; }
+  PIN_MAP = map;
+  const el = document.createElement('div'); el.className = 'dest-dot pin-drag'; el.textContent = '🏠';
+  const pin = new maplibregl.Marker({ element: el, draggable: true }).setLngLat([lng, lat]).addTo(map);
+  const set = ll => {
+    LOGIN.lat = ll.lat; LOGIN.lng = ll.lng; LAST_DETECTED_COORDS = { lat: ll.lat, lng: ll.lng };
+    setLocStatus('📍 Pin set. This exact spot is where the rider will come.', 'ok');
+  };
+  pin.on('dragend', () => set(pin.getLngLat()));
+  map.on('click', e => { pin.setLngLat(e.lngLat); set(e.lngLat); });
 }
 
 function withTimeout(promise, ms, timeoutMessage) {
@@ -2418,11 +2481,12 @@ function scrPending(){
    3. What can I spend?             4. Jump into the catalogue
    ═══════════════════════════════════════════════════════════ */
 /* ═══════════════════════════════════════════════════════════
-   REQUEST A DRIVER (business customers)
-   A hotel asks the office for a driver — to collect a payment (cash or
-   cheque), for an urgent delivery, or for other help. It lands live in the
-   admin website's Driver requests tab; once the office assigns someone,
-   this card shows the driver's name and number.
+   REQUEST A DRIVER
+   Any customer can ask the office for a driver — to collect a payment (cash
+   or cheque), for an urgent delivery, or for other help. It is offered on
+   Home, in Account, and on an order (then the request names that order).
+   It lands live in the admin website's Driver requests tab; once the office
+   assigns someone, the row shows the driver's name and number.
    ═══════════════════════════════════════════════════════════ */
 const RFD_KEY = 'mda_rfd';
 const RFD_REASONS = [
@@ -2447,9 +2511,10 @@ function rfdChargeText(){
   const fee = Number(APPCFG.rfdFee) || 0;
   return fee > 0 ? `An extra ${money(fee)} applies per request.` : 'A small extra charge applies.';
 }
-function openRfdSheet(){
+function openRfdSheet(orderNo){
+  RFD.forOrder = orderNo || null;
   openSheet(`<div class="sheet-head"><div class="t-lg">Request a driver</div></div>
-    <div class="t-sm muted mb-12" style="line-height:1.5;">What do you need the driver for? ${esc(rfdChargeText())}</div>
+    <div class="t-sm muted mb-12" style="line-height:1.5;">${orderNo ? `For order <b>${esc(orderNo)}</b>. ` : ''}What do you need the driver for? ${esc(rfdChargeText())}</div>
     ${RFD_REASONS.map((x, i) => `<label class="card mb-8" style="display:flex;gap:12px;padding:12px;align-items:flex-start;">
       <input type="radio" name="rfd-reason" value="${x.id}" ${i===0?'checked':''} style="margin-top:3px;">
       <div><div class="t-base" style="font-weight:600;">${x.label}</div><div class="t-sm muted">${x.hint}</div></div></label>`).join('')}
@@ -2468,8 +2533,9 @@ async function sendRfd(){
   busy('btn-rfd-send', true, 'Sending');
   try{
     const id = await window.createDriverRequest({ reason, note: note || null, company:S.user?.company, name:S.user?.name,
-      phone:S.user?.phone, address:S.user?.address, gstin:S.user?.gstin });
-    RFD.last = { id, reason, status:'open', at:Date.now(), phone:S.user?.phone };
+      phone:S.user?.phone, address:S.user?.address, gstin:S.user?.gstin,
+      customerType: isB2B() ? 'b2b' : 'b2c', orderNo: RFD.forOrder });
+    RFD.last = { id, reason, status:'open', at:Date.now(), phone:S.user?.phone, orderNo: RFD.forOrder || null };
     rfdStore(); closeSheet(); rfdListen();
     toast('Request sent — the office will call you','check');
     paint();
@@ -2487,7 +2553,10 @@ function rfdListen(){
     RFD.last = { ...RFD.last, status:d.status, driverName:d.driverName || null, driverPhone:d.driverPhone || null };
     rfdStore();
     if(!rfdActive() && RFD.unsub){ RFD.unsub(); RFD.unsub = null; }
-    if(S.screen === 'home') paint();
+    if(['home','account','placed','order'].includes(S.screen)){
+      if(S.screen === 'order'){ document.querySelectorAll('.rfd-slot').forEach(el => el.innerHTML = rfdRowHtml(RFD.forOrder)); }
+      else paint();
+    }
   });
 }
 async function rfdWithdraw(){
@@ -2694,16 +2763,17 @@ function homeUtility(){
       <span class="util-ic a">${icon('wallet',19)}</span>
       <span class="grow"><b>${isB2B() ? 'Business credit' : 'Wallet'}</b><span>${money(S.wallet.balance)} available</span></span>
       ${icon('right',18)}</button>`);
-  if(isB2B()) rows.push(rfdRowHtml());
+  rows.push(rfdRowHtml());
   return rows.length ? `<div class="utils">${rows.join('')}</div>` : '';
 }
 // "Request a driver" as a row in the shortcuts; the sheet explains the charge.
-function rfdRowHtml(){
+// orderNo ties the request to one order (asked from the order screens).
+function rfdRowHtml(orderNo){
   const r = rfdActive();
   if(r && !RFD.unsub) setTimeout(rfdListen, 0);
   if(!r){
     const fee = Number(APPCFG.rfdFee) || 0;
-    return `<button class="util" onclick="openRfdSheet()">
+    return `<button class="util" onclick="openRfdSheet(${orderNo ? `'${jsStr(orderNo)}'` : ''})">
       <span class="util-ic">${icon('truck',19)}</span>
       <span class="grow"><b>Request a driver</b><span>Payment pickup, urgent delivery or other help · ${fee > 0 ? money(fee) + ' extra' : 'small extra charge'}</span></span>
       ${icon('right',18)}</button>`;
@@ -2715,6 +2785,15 @@ function rfdRowHtml(){
       <span class="grow"><b>${esc(reason)}</b><span>${who} · sent ${esc(dtFmt(r.at))}</span></span>
       ${r.status === 'assigned' && r.driverPhone ? `<a class="util-act" href="tel:+91${esc(r.driverPhone)}">Call</a>`
         : r.status === 'open' ? `<button class="util-act" onclick="rfdWithdraw()">Withdraw</button>` : ''}
+    </div>`;
+}
+// The driver row as its own block, with a line on what it is for. Used in
+// Account and on the order screens, where there is no shortcut list.
+function rfdBlockHtml(orderNo){
+  return `<div class="rfd-block">
+      <div class="utils rfd-slot">${rfdRowHtml(orderNo)}</div>
+      <div class="rfd-note">Need a driver to collect cash or a cheque, bring stock urgently, or help with
+        something else? Send a request and the office will call you back. ${esc(rfdChargeText())}</div>
     </div>`;
 }
 
@@ -3334,7 +3413,8 @@ function scrPlaced(){
         ${o.payment==='credit'?`<div class="banner ok mt-12">${icon('wallet',17)}
           <div>${money(o.total)} deducted. Remaining credit <b>${money(S.wallet.balance)}</b>.</div></div>`:''}
       </div>
-      <div style="padding:0 16px calc(24px + var(--safe-b));">
+      ${rfdBlockHtml(o.orderNo)}
+      <div style="padding:20px 16px calc(24px + var(--safe-b));">
         <button class="btn" onclick="openOrder('${jsStr(o.orderNo||'')}')">Track this order</button>
         <button class="btn btn-quiet mt-8" onclick="switchTab('catalogue')">Continue ordering</button>
       </div>
@@ -3402,24 +3482,29 @@ function startOrderStatusListener(o){
     const code = data.deliveryCode || null;
     const codeChanged = code !== (S.order?.deliveryCode || null);
     const changed = status && status !== S.order?.status;
-    if(!changed && !codeChanged) return;
-    S.order = {...S.order, status: status || S.order?.status, deliveryCode: code};
+    // The office's reason for denying (or cancelling) travels with the status.
+    const why = { deniedReason: data.deniedReason || S.order?.deniedReason || null,
+                  deniedBy: data.deniedBy || S.order?.deniedBy || null };
+    const whyChanged = why.deniedReason !== (S.order?.deniedReason || null);
+    if(!changed && !codeChanged && !whyChanged) return;
+    S.order = {...S.order, status: status || S.order?.status, deliveryCode: code, ...why};
     // Rider position lives on the delivery record (keyed by the office's
     // delivery code), so start/stop that listener as the order enters and
     // leaves out_for_delivery, or when the office issues a fresh code.
     if(S.order.status === 'out_for_delivery') startDeliveryListener(S.order);
     else { stopDeliveryListener(); S.order = {...S.order, riderLat:null, riderLng:null}; }
-    if(changed){
+    if(changed || whyChanged){
+      const patch = { status: S.order.status, ...why };
       const list = DB.orders;
       const idx = list.findIndex(x=>x.orderNo===o.orderNo);
-      if(idx!==-1){ list[idx] = {...list[idx], status}; DB.orders = list; }
+      if(idx!==-1){ list[idx] = {...list[idx], ...patch}; DB.orders = list; }
       const oi = S.orders.findIndex(x=>x.orderNo===o.orderNo);
-      if(oi!==-1) S.orders[oi] = {...S.orders[oi], status};
+      if(oi!==-1) S.orders[oi] = {...S.orders[oi], ...patch};
     }
     if(S.screen==='order'){
       // A status change alters the markup, so repaint; a position change only
       // moves the marker, and repainting would rebuild (and re-centre) the map.
-      if(changed){
+      if(changed || whyChanged){
         // The cancel-confirm sheet is anchored to a button that may have just
         // disappeared (e.g. the order went out for delivery). Don't leave it
         // hanging over a screen that no longer offers the action.
@@ -3500,7 +3585,8 @@ function scrOrder(){
       <div class="section">
         <div class="row between mb-16"><span class="pill ${st.c}">${st.l}</span>
           <span class="t-sm muted">${esc(o.deliverySlot||'')}</span></div>
-        ${o.status==='denied'?`<div class="banner alert mb-16">${icon('alert',17)}<div><b>This order was denied</b><br>${esc(o.deniedReason||'Please call us for details.')}</div></div>`:''}
+        ${o.status==='denied'?`<div class="banner alert mb-16">${icon('alert',17)}<div><b>This order was denied</b><br>
+          ${o.deniedReason ? `Reason: ${esc(o.deniedReason)}` : 'The office did not give a reason. Please call us for details.'}</div></div>`:''}
         ${o.status==='out_for_delivery' ? `<div class="mb-16">
           <div class="row between mb-8"><span class="eyebrow">Live tracking</span>
             ${o.riderLat ? '<span class="rider-live"><i></i>Rider on the way</span>' : ''}</div>
@@ -3538,7 +3624,8 @@ function scrOrder(){
         ${o.txnId?`<div class="row between"><span class="t-md muted">Transaction</span>
           <span class="t-md num">${esc(o.txnId)}</span></div>`:''}
       </div>
-      <div style="padding:0 16px calc(24px + var(--safe-b));">
+      ${o.status!=='denied' && o.status!=='cancelled' ? `<div class="divider"></div>${rfdBlockHtml(o.orderNo)}` : ''}
+      <div style="padding:20px 16px calc(24px + var(--safe-b));">
         <button class="btn btn-ghost" onclick="reorder('${esc(o.orderNo)}')">${icon('repeat',18)} Reorder these items</button>
         <a class="btn btn-quiet mt-8" href="tel:${APPCFG.supportPhone}">${icon('phone',18)} Call about this order</a>
         <!-- Cancel is offered only while the order is genuinely still
@@ -3755,9 +3842,35 @@ function scrInvoiceDetail(){
         <div class="divider" style="margin:16px -20px;"></div>
         <div class="t-xs muted-2 center">FSSAI licensed · Thank you for your business</div>
       </div>
-      <button class="btn btn-ghost mt-16" onclick="window.print()">${icon('file',18)} Print / Save as PDF</button>
+      <button class="btn btn-ghost mt-16" onclick="openInvoicePdf()">${icon('file',18)} Print / Save as PDF</button>
+      <div class="t-xs muted-2 center mt-8">Opens the invoice in your browser. Choose “Save as PDF” as the printer.</div>
     </div></div>
   </div>`;
+}
+/* Android's in-app WebView has no print support — window.print() does
+   nothing there. So the invoice opens as a page in the phone's browser
+   (Chrome), which can print it or save it as a PDF. The invoice travels in
+   the part of the link after "#", which browsers never send to a server:
+   the page draws it on the phone and nothing is uploaded or stored. */
+const INVOICE_PAGE = 'https://modern-dairy-pune.web.app/invoice/';
+function invoicePayload(o){
+  return {
+    v:1,
+    biz:{ n:APPCFG.businessName, a:APPCFG.address, e:APPCFG.email, p:APPCFG.supportPhone },
+    no:o.orderNo, at:o.placedAt,
+    to:{ c:o.company||'', n:o.name||'', p:o.phone||'', g:o.gstin||'', a:o.address||'' },
+    items:(o.items||[]).map(i=>[i.name, i.label||'', Number(i.qty)||0, Number(i.price)||0]),
+    sub:o.subtotal ?? (o.total-(o.gst||0)-(o.delivery||0)-(o.platform||0)),
+    gst:o.gst||0, del:o.delivery||0, plat:o.platform||0, tot:o.total||0,
+    pay:o.payment==='credit'?'Business credit':o.payment==='cod'?'Pay on delivery':'Paid online',
+  };
+}
+function openInvoicePdf(){
+  const o=S.order; if(!o) return;
+  const bytes = new TextEncoder().encode(JSON.stringify(invoicePayload(o)));
+  let bin=''; bytes.forEach(b=>{ bin+=String.fromCharCode(b); });
+  const data = btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  window.open(INVOICE_PAGE + '#' + data, '_blank');
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -3849,6 +3962,9 @@ function scrAccount(){
         ${arow('repeat','Reorder items','', `switchTab('reorder')`)}
         ${arow('file','Invoices', `${S.orders.length} past invoice${S.orders.length===1?'':'s'}`, `go('invoices')`)}
       </div>
+
+      <div class="section-head"><span class="eyebrow">Driver</span></div>
+      ${rfdBlockHtml()}
 
       <div class="section-head"><span class="eyebrow">Support</span></div>
       <div class="card" style="margin:0 16px;">
@@ -4210,14 +4326,58 @@ function doRiderStart(){
   RIDER.error = null;
   riderRemember();
   go('rider', {replace:true});
+  riderOpenPending();
+}
+/* Android App Links: on a phone with this app, tapping the rider link from
+   WhatsApp (…/ride/#CODE) opens the app instead of the browser, straight to
+   that delivery. A rider not yet signed in to rider mode gives their name
+   first; the code waits in RIDER.pendingCode meanwhile. */
+let BOOTED = false, PENDING_OPEN_URL = null, LAST_OPEN_URL = { url:null, at:0 };
+function handleOpenUrl(url){
+  if(!url) return;
+  // Before boot has picked the first screen, opening one would be overwritten.
+  if(!BOOTED){ PENDING_OPEN_URL = url; return; }
+  // A cold start can report the same link twice (the launch URL and the event).
+  if(url === LAST_OPEN_URL.url && Date.now() - LAST_OPEN_URL.at < 5000) return;
+  LAST_OPEN_URL = { url, at: Date.now() };
+  const m = String(url || '').match(/\/ride\/?#(.+)$/);
+  const code = m && riderCode(m[1]);
+  if(!code || MAINTENANCE_LOCKED) return;
+  if(RIDER.watchId || RIDER.webWatchId){
+    if(RIDER.delivery?.code !== code) toast('Finish the delivery you are tracking first','alert');
+    if(S.screen !== 'rider') go('rider');
+    return;
+  }
+  RIDER.pendingCode = code;
+  RIDER.delivery = null; RIDER.error = null;
+  riderRestore();
+  if(RIDER.name){ go('rider'); riderOpenPending(); }
+  else go('riderLogin');
+}
+function riderOpenPending(){
+  const code = RIDER.pendingCode;
+  if(!code) return;
+  RIDER.pendingCode = null;
+  RIDER.lookupTried = code;
+  riderLookup(code);
 }
 
 /* ── Find the delivery ─────────────────────────────────── */
 // A code typed with or without dashes, or the whole rider link pasted in.
 function riderCode(s){ return String(s || '').split('#').pop().toUpperCase().replace(/[^A-Z0-9]/g, ''); }
-async function riderLookup(){
-  const raw = riderCode(document.getElementById('f-rider-order')?.value);
+async function riderLookup(typed){
+  const raw = riderCode(typed ?? document.getElementById('f-rider-order')?.value);
   if(!raw){ RIDER.error = 'Enter the delivery code.'; paint(); return; }
+  // Order and bill numbers (MD-1041) run in sequence, so anyone could guess
+  // the next one; deliveries are found only by the office's random code.
+  // Say so plainly instead of a bare "not found".
+  if(raw.length !== 10){
+    RIDER.error = /^(MD)?\d+$/.test(raw)
+      ? 'That is the order / bill number. For the customer’s safety the app finds a delivery by its delivery code instead — the 10 letters and numbers in the office’s WhatsApp message (like K7QMP-4XA9R). Or just tap the link in that message: it opens straight here.'
+      : 'A delivery code has 10 letters and numbers, like K7QMP-4XA9R. Check the office’s WhatsApp message, or tap the link in it.';
+    RIDER.lookupTried = raw;
+    paint(); return;
+  }
   RIDER.error = null;
   RIDER.looking = true;
   paint();
@@ -4259,7 +4419,8 @@ function riderLookupBody(){
   return `<div class="card" style="padding:16px;">
       <div class="eyebrow mb-8">Which delivery?</div>
       <div class="t-sm muted mb-16" style="line-height:1.5;">
-        Type the delivery code the office sent you — for example <b>K7QMP-4XA9R</b> — or paste the whole link.
+        Type the delivery code from the office’s WhatsApp message — for example <b>K7QMP-4XA9R</b> — or paste the whole link.
+        Not the order or bill number: that won’t work. Tapping the link in the message opens this screen with the code filled in.
       </div>
       <div class="field"><label class="label">Delivery code</label>
         <input id="f-rider-order" placeholder="K7QMP-4XA9R" autocomplete="off" autocapitalize="characters"
@@ -4402,7 +4563,7 @@ async function riderStartTracking(){
         backgroundTitle: 'Delivery in progress',
         requestPermissions: true,
         stale: false,
-        distanceFilter: 25,       // metres — real movement, not GPS jitter
+        distanceFilter: 12,       // metres — real movement, not GPS jitter
       }, (location, error) => {
         if(error){
           RIDER.error = error.code === 'NOT_AUTHORIZED'
@@ -4411,7 +4572,7 @@ async function riderStartTracking(){
           paint();
           return;
         }
-        if(location) riderPush(location.latitude, location.longitude, location.accuracy);
+        if(location && riderFixUsable(location.accuracy)) riderPush(location.latitude, location.longitude, location.accuracy);
       });
       paint();
       return;
@@ -4423,10 +4584,18 @@ async function riderStartTracking(){
   // is hidden, which is precisely why the plugin above is what ships.
   if(!navigator.geolocation){ RIDER.error = 'This device has no location support.'; paint(); return; }
   RIDER.webWatchId = navigator.geolocation.watchPosition(
-    p => riderPush(p.coords.latitude, p.coords.longitude, p.coords.accuracy),
+    p => { if(riderFixUsable(p.coords.accuracy)) riderPush(p.coords.latitude, p.coords.longitude, p.coords.accuracy); },
     e => { RIDER.error = 'Location error: ' + e.message; paint(); },
-    { enableHighAccuracy:true, maximumAge:10000, timeout:20000 });
+    { enableHighAccuracy:true, maximumAge:0, timeout:20000 });
   paint();
+}
+/* A rough tower/Wi-Fi fix (worse than 60 m) would make the scooter jump
+   around the customer's map, so it is skipped — unless nothing better has
+   come for 30 s, when a rough position beats a frozen one. */
+function riderFixUsable(accuracy){
+  if(accuracy == null || accuracy <= 60) return true;
+  const last = RIDER.lastFix ? Date.parse(RIDER.lastFix.at) : 0;
+  return Date.now() - last > 30000;
 }
 
 async function riderStopTracking(quiet){
@@ -4738,8 +4907,16 @@ function handleHardwareBack(){
 }
 if(window.Capacitor?.Plugins?.App){
   try{ window.Capacitor.Plugins.App.addListener('backButton', handleHardwareBack); }catch(e){}
+  // A rider link tapped while the app is already running…
+  try{ window.Capacitor.Plugins.App.addListener('appUrlOpen', e => handleOpenUrl(e && e.url)); }catch(e){}
 }
-boot();
+Promise.resolve(boot()).finally(() => {
+  // …or one that launched it: wait for boot to pick the first screen, then open it.
+  BOOTED = true;
+  if(PENDING_OPEN_URL){ const u = PENDING_OPEN_URL; PENDING_OPEN_URL = null; handleOpenUrl(u); }
+  window.Capacitor?.Plugins?.App?.getLaunchUrl?.()
+    .then(r => { if(r && r.url) handleOpenUrl(r.url); }).catch(() => {});
+});
 
 /* Keep the focused input visible when the keyboard opens. With the native
    resize configured above this is mostly automatic, but centering the focused
