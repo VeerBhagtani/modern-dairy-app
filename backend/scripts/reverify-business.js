@@ -75,19 +75,47 @@ async function patchDoc(token, docPath, fields) {
   if (!res.ok) throw new Error(`patch ${docPath} failed (${res.status}): ${await res.text()}`);
 }
 async function listOrders(token) {
+  /* Only b2b orders can contribute a business GSTIN, so let Firestore do that
+     filtering instead of dragging every retail order across the wire to throw
+     it away here. Two reasons this matters beyond tidiness:
+       · cost — this used to read the entire orders collection, growing with
+         every order ever placed;
+       · correctness — it gave up silently after 50 pages and returned a
+         partial list, so once the collection passed ~15,000 documents some
+         businesses simply stopped being re-verified, with nothing in the
+         output saying so. Truncation is now loud, and much harder to reach. */
   const out = [];
-  let pageToken = '';
-  for (let p = 0; p < 50; p++) {
-    const url = `${FIRESTORE_BASE}/orders?pageSize=300` + (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  let cursorId = null;
+  const MAX_PAGES = 50, BATCH = 300;
+  for (let p = 0; p < MAX_PAGES; p++) {
+    const structuredQuery = {
+      from: [{ collectionId: 'orders' }],
+      where: { fieldFilter: { field: { fieldPath: 'customerType' }, op: 'EQUAL', value: { stringValue: 'b2b' } } },
+      orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
+      limit: BATCH,
+    };
+    if (cursorId) {
+      structuredQuery.startAt = {
+        values: [{ referenceValue: `projects/${PROJECT_ID}/databases/(default)/documents/orders/${cursorId}` }],
+        before: false,
+      };
+    }
+    const res = await fetch(`${FIRESTORE_BASE}:runQuery`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ structuredQuery }),
+    });
     if (res.status === 404) return out;
-    if (!res.ok) throw new Error(`list orders failed (${res.status})`);
-    const data = await res.json();
-    for (const d of (data.documents || [])) out.push(Object.fromEntries(Object.entries(d.fields || {}).map(([k, v]) => [k, fromValue(v)])));
-    pageToken = data.nextPageToken || '';
-    if (!pageToken) return out;
+    if (!res.ok) throw new Error(`list b2b orders failed (${res.status}): ${await res.text()}`);
+    const rows = await res.json();
+    const docs = rows.map(r => r.document).filter(Boolean);
+    for (const d of docs) out.push(Object.fromEntries(Object.entries(d.fields || {}).map(([k, v]) => [k, fromValue(v)])));
+    if (docs.length < BATCH) return out;
+    cursorId = docs[docs.length - 1].name.split('/').pop();
   }
-  return out;
+  // Do not return a silently partial list — the caller would report a clean
+  // re-verification over businesses it never actually looked at.
+  throw new Error(`Stopped after ${MAX_PAGES} pages of b2b orders (${out.length}). Refusing to report a partial re-verification — raise MAX_PAGES.`);
 }
 
 /* ── sandbox.co.in GST ── */

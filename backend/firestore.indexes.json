@@ -15,14 +15,6 @@
         { "fieldPath": "customerId", "order": "ASCENDING" },
         { "fieldPath": "idempotencyKey", "order": "ASCENDING" }
       ]
-    },
-    {
-      "collectionGroup": "orders",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "priceVerified", "order": "ASCENDING" },
-        { "fieldPath": "__name__", "order": "ASCENDING" }
-      ]
     }
   ],
   "fieldOverrides": []

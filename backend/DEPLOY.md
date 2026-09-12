@@ -101,6 +101,38 @@ curl -s https://<service-url>/healthz    # -> {"ok":true}
 - [ ] Firestore scheduled backups / PITR enabled (F5).
 - [ ] Rotate the previously-exposed OTP + GST credentials.
 
+## 7. TTL policies — required, and NOT covered by `firebase deploy`
+
+Three collections now store short-lived state with an `expiresAt` field. The
+code treats an expired document as invalid, so nothing insecure happens without
+these policies — but nothing *deletes* the rows either, and they accumulate
+forever. `refresh_tokens` is the one that actually grows: rotation deletes a
+token when it is used, so an abandoned session leaves its document behind for
+good.
+
+Firestore TTL is configured per field on the database, not in `firestore.rules`
+or `firestore.indexes.json`, so `firebase deploy` will not do this for you:
+
+```bash
+gcloud firestore fields ttls update expiresAt \
+  --collection-group=refresh_tokens --enable-ttl --project=modern-dairy-pune
+gcloud firestore fields ttls update expiresAt \
+  --collection-group=otp_challenges --enable-ttl --project=modern-dairy-pune
+gcloud firestore fields ttls update expiresAt \
+  --collection-group=gst_verifications --enable-ttl --project=modern-dairy-pune
+```
+
+Note the field must be a **timestamp** for Firestore's TTL to act on it. These
+are currently written as epoch milliseconds (a number), which the application
+compares correctly but Firestore's TTL will ignore — so either switch those
+three writes to `FieldValue.serverTimestamp()`-based expiry before enabling
+TTL, or schedule a small cleanup job instead. Left as an explicit decision
+rather than changed silently, because it alters the stored shape of documents
+the running code reads.
+
+- [ ] TTL policies enabled (or a cleanup job scheduled) for the three
+      collections above.
+
 ## Notes
 
 - `src/index.js` already: reads `process.env.PORT`, sets `trust proxy`, uses

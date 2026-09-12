@@ -114,8 +114,68 @@ async function firestoreList(token, collection) {
  *
  * A structured query does the filtering server-side, so the work is
  * proportional to the backlog instead of to history, and there is no ceiling
- * to outgrow. Needs the composite index in backend/firestore.indexes.json.
+ * to outgrow. No composite index is required: an equality filter on one field
+ * ordered by __name__ is served by Firestore's automatic single-field index,
+ * and declaring a composite one for it is rejected at deploy time as redundant.
  */
+/* ONE-TIME BACKFILL, and why it has to exist.
+ *
+ * The query below filters `priceVerified == false`. Firestore only returns
+ * documents that HAVE the field — a missing field does not equal false, it is
+ * simply not indexed for that filter. Every order written before the client
+ * started stamping priceVerified therefore has no such field and is invisible
+ * to the query. The old code scanned everything and filtered
+ * `!o.priceVerified` in memory, which did catch them, so switching to a query
+ * silently dropped those orders out of the price check entirely.
+ *
+ * There is no "where field is missing" query in Firestore, so finding them
+ * requires exactly one full scan. This does that scan once, stamps
+ * priceVerified:false on anything lacking it, and records completion so it
+ * never runs again. Self-retiring: after the first successful pass this costs
+ * a single document read per run.
+ */
+const BACKFILL_DOC = 'audit_control/price_verified_backfill';
+async function backfillMissingPriceVerified(token) {
+  const marker = await getDocFields(token, BACKFILL_DOC);
+  if (marker && marker.done === true) return;
+
+  console.log('Back-filling priceVerified on pre-existing orders (one time)...');
+  let scanned = 0, stamped = 0, pageToken = '';
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const url = `${FIRESTORE_BASE}/orders?pageSize=300`
+      + (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`backfill list failed (${res.status}): ${await res.text()}`);
+    const data = await res.json();
+    for (const raw of data.documents || []) {
+      scanned++;
+      // Read the RAW fields: docToObj would turn a missing field and an
+      // explicit false into the same thing.
+      if (raw.fields && Object.prototype.hasOwnProperty.call(raw.fields, 'priceVerified')) continue;
+      const id = raw.name.split('/').pop();
+      await firestorePatch(token, 'orders', id, { priceVerified: false });
+      stamped++;
+    }
+    pageToken = data.nextPageToken || '';
+    if (!pageToken) {
+      await firestorePatch(token, 'audit_control', 'price_verified_backfill', { done: true, scanned, stamped, at: new Date().toISOString() });
+      console.log(`Backfill complete: ${scanned} order(s) scanned, ${stamped} stamped.`);
+      return;
+    }
+  }
+  // Ran out of pages without finishing. Deliberately NOT marked done, so the
+  // next run picks up where a bigger MAX_PAGES can finish the job.
+  console.warn(`Backfill incomplete after ${MAX_PAGES} pages (${scanned} scanned, ${stamped} stamped) — it will resume next run. Raise MAX_PAGES if this persists.`);
+}
+
+async function getDocFields(token, docPath) {
+  const res = await fetch(`${FIRESTORE_BASE}/${docPath}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`get ${docPath} failed (${res.status})`);
+  const d = await res.json();
+  return Object.fromEntries(Object.entries(d.fields || {}).map(([k, v]) => [k, fromValue(v)]));
+}
+
 const ORDER_BATCH = 300;
 async function listUnverifiedOrders(token) {
   const out = [];
@@ -198,6 +258,10 @@ async function main() {
   if (!raw) throw new Error('FCM_SERVICE_ACCOUNT_JSON is not set.');
   const sa = JSON.parse(raw);
   const token = await getAccessToken(sa);
+
+  // Must run BEFORE the query: it is what makes pre-existing orders visible
+  // to it at all.
+  await backfillMissingPriceVerified(token);
 
   const [products, pending] = await Promise.all([
     firestoreList(token, 'products'),

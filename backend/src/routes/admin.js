@@ -3,7 +3,7 @@ const { col, db, FieldValue } = require('../services/firestore');
 const { writeAuditLog } = require('../services/firestore');
 const { requireAdmin, verifyAdminLogin, issueAdminToken } = require('../middleware/adminAuth');
 const { adminLoginLimiter, writeLimiter, generalLimiter } = require('../middleware/rateLimit');
-const { isBoundedString, isValidId, pickAllowed, hasForbiddenKeys } = require('../middleware/validate');
+const { isBoundedString, isValidId, isValidGstin, pickAllowed, hasForbiddenKeys } = require('../middleware/validate');
 const secretManager = require('../services/secretManager');
 const goFrugalClient = require('../services/goFrugalClient');
 
@@ -182,6 +182,51 @@ router.post('/wallet/:customerId/confirm-topup', writeLimiter, async (req, res) 
 
   await writeAuditLog({ adminId: req.adminId, action: 'wallet_topup_confirmed', target: `${customerId}/${ledgerEntryId}`, after: { newBalance: result } });
   res.json({ success: true, data: { newBalance: result } });
+});
+
+/* POST /admin/customers/:id/tier { customerType, gstin?, company? }
+ *
+ * The only way a customer's tier ever changes after their account exists.
+ *
+ * This endpoint exists because verify-otp deliberately refuses to change the
+ * tier of an existing account: taking it from the request (which is what it
+ * used to do) meant anyone could self-grant wholesale pricing and credit terms
+ * by choosing a URL. But refusing there without providing a path here would
+ * have meant a customer who first signed up personally could NEVER become a
+ * business account — a real dead end for a genuine customer whose GSTIN
+ * arrived later.
+ *
+ * So the upgrade is what the comment in auth.js says it is: deliberate,
+ * performed by the office, and written to the audit log with who did it.
+ */
+router.post('/customers/:id/tier', writeLimiter, async (req, res) => {
+  const { id } = req.params;
+  const { customerType, gstin, company } = req.body || {};
+  if (!isValidId(id)) return res.status(400).json({ success: false, message: 'Invalid customer id' });
+  if (customerType !== 'b2b' && customerType !== 'b2c') {
+    return res.status(400).json({ success: false, message: "customerType must be 'b2b' or 'b2c'" });
+  }
+  if (customerType === 'b2b' && !isValidGstin(gstin)) {
+    // A business account without a GSTIN is the thing this whole path exists to
+    // prevent, so it is refused here too — not only at signup.
+    return res.status(400).json({ success: false, message: 'A valid GSTIN is required to make an account a business account' });
+  }
+  if (company !== undefined && company !== null && !isBoundedString(company, { max: 200 })) {
+    return res.status(400).json({ success: false, message: 'company is too long' });
+  }
+
+  const ref = col.customers().doc(id);
+  const snap = await ref.get();
+  if (!snap.exists) return res.status(404).json({ success: false, message: 'Customer not found' });
+  const before = { customerType: snap.data().customerType, gstin: snap.data().gstin || null, company: snap.data().company || null };
+
+  const after = customerType === 'b2b'
+    ? { customerType: 'b2b', gstin: String(gstin).toUpperCase(), company: company || snap.data().company || null }
+    : { customerType: 'b2c', gstin: null, company: null };
+
+  await ref.set(after, { merge: true });
+  await writeAuditLog({ adminId: req.adminId, action: 'customer_tier_changed', target: id, before, after });
+  res.json({ success: true, data: after });
 });
 
 // GET /admin/audit-log

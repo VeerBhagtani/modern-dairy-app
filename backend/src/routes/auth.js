@@ -178,7 +178,8 @@ router.post('/:mode(b2b|b2c)/verify-otp', async (req, res) => {
     userDoc = existingSnap.docs[0];
     userData = userDoc.data();
     // An existing account keeps its tier. Upgrades are a deliberate, audited
-    // admin action, never a side effect of signing in again with a b2b URL.
+    // admin action (POST /admin/customers/:id/tier), never a side effect of
+    // signing in again with a b2b URL.
   } else {
     const id = uuid();
     userData = {
