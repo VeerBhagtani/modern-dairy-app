@@ -429,6 +429,8 @@ svg{display:block;flex-shrink:0;}
 .ticket-cut .ticket-v{font-size:16px;}
 .ticket-cut.open .ticket-v{color:var(--fresh);}
 .ticket-cut.shut .ticket-v{color:var(--ink-2);}
+.ticket-cd{display:flex;align-items:center;margin-top:4px;font-size:var(--t-xs);font-weight:700;color:var(--fresh);}
+.ticket-cd.shut{color:var(--ink-3);}
 .home-body{padding-top:46px;}
 
 /* ── Promotions: one treatment for every slide ── */
@@ -557,6 +559,96 @@ svg{display:block;flex-shrink:0;}
 .center{text-align:center}
 .truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .hide{display:none !important;}
+
+/* ═══════════════════════════════════════════════════════════
+   LONG FORM · Outlet Details and anything else field-heavy
+   ═══════════════════════════════════════════════════════════ */
+.fsec{font-family:var(--font-display);font-size:var(--t-lg);font-weight:700;letter-spacing:-.015em;margin:24px 0 12px;}
+.fsec:first-child{margin-top:0;}
+/* A footer that holds the primary action while the fields scroll under it. */
+.formbar{flex-shrink:0;padding:12px 16px calc(12px + var(--safe-b));border-top:1px solid var(--line);background:var(--surface);}
+/* Choice chips sized for a form, not for the catalogue's filter bar. */
+.chipwrap{display:flex;flex-wrap:wrap;gap:8px;}
+.chipwrap .chip{height:42px;padding:0 17px;border-radius:var(--r);font-size:var(--t-base);font-weight:600;}
+select.input{
+  appearance:none;-webkit-appearance:none;padding-right:38px;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='%237C8798' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+  background-repeat:no-repeat;background-position:right 11px center;
+}
+select.input.ph{color:var(--ink-3);}
+.input:disabled{background:var(--surface-2);color:var(--ink-3);}
+
+/* ═══════════════════════════════════════════════════════════
+   LIVE MOTION
+   House rules for everything in this block, so the app stays light on the
+   low-end Android phones most outlets order from:
+     · animate transform and opacity ONLY — the compositor handles both
+       without a layout or paint pass
+     · never filter/blur/box-shadow/background-position — each repaints the
+       whole layer every frame in Android WebView
+     · never from JS: no rAF, no animation timers
+   An off-screen .screen is display:none, so its animations stop ticking.
+   prefers-reduced-motion is already honoured at the top of this sheet.
+   ═══════════════════════════════════════════════════════════ */
+
+/* Screen entrance. paint() swaps #app's innerHTML, so this replays on
+   navigation with no JS hook of its own. */
+.screen.on{animation:scr-in var(--mid) var(--ease) both;}
+@keyframes scr-in{from{opacity:0;transform:translate3d(0,8px,0)}to{opacity:1;transform:none}}
+
+/* Auth backdrop — two slow washes drifting behind the sign-in and Outlet
+   Details headers. Big soft radial gradients rather than blurred blobs:
+   a blur filter would repaint the layer on every one of those frames. */
+.authbg{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:0;}
+.authbg::before,.authbg::after{content:'';position:absolute;width:150%;padding-bottom:150%;border-radius:50%;}
+.authbg::before{left:-48%;top:-72%;background:radial-gradient(circle closest-side,rgba(27,42,107,.16),rgba(27,42,107,0));animation:drift-a 26s var(--ease) infinite;}
+.authbg::after{right:-52%;top:-34%;background:radial-gradient(circle closest-side,rgba(255,201,40,.26),rgba(255,201,40,0));animation:drift-b 33s var(--ease) infinite;}
+@keyframes drift-a{0%,100%{transform:translate3d(0,0,0) scale(1)}50%{transform:translate3d(7%,6%,0) scale(1.14)}}
+@keyframes drift-b{0%,100%{transform:translate3d(0,0,0) scale(1.1)}50%{transform:translate3d(-9%,8%,0) scale(.92)}}
+.auth-head{position:relative;z-index:1;}
+.auth-logo{animation:rise 460ms var(--ease) both;}
+@keyframes rise{from{opacity:0;transform:translate3d(0,12px,0) scale(.92)}to{opacity:1;transform:none}}
+
+/* Promo hero — a highlight travelling across the card, so the shelf reads as
+   live rather than as a flat image. One pseudo-element, transform only. */
+.promo::after{
+  content:'';position:absolute;top:-60%;bottom:-60%;left:-60%;width:42%;pointer-events:none;
+  background:linear-gradient(100deg,rgba(255,255,255,0),rgba(255,255,255,.15),rgba(255,255,255,0));
+  animation:sheen 6s var(--ease) infinite;
+}
+@keyframes sheen{0%{transform:translate3d(0,0,0) skewX(-14deg)}55%,100%{transform:translate3d(460%,0,0) skewX(-14deg)}}
+
+/* "Live" marker on an order that is still moving: a breathing core with one
+   ring expanding out of it. */
+.live-dot{
+  display:inline-block;width:7px;height:7px;border-radius:50%;background:currentColor;
+  margin-right:7px;vertical-align:1px;position:relative;animation:live-core 1.9s var(--ease) infinite;
+}
+.live-dot::after{content:'';position:absolute;inset:0;border-radius:50%;background:currentColor;animation:live-ring 1.9s var(--ease) infinite;}
+@keyframes live-core{0%,100%{opacity:1}50%{opacity:.5}}
+@keyframes live-ring{0%{transform:scale(1);opacity:.45}70%,100%{transform:scale(3);opacity:0}}
+
+/* Announcement ticker. The copy is in the markup twice and the track shifts
+   by exactly -50%, which is one full copy — so the loop has no seam. */
+.ticker{display:flex;overflow:hidden;margin:0 16px 14px;padding:7px 0;border-radius:var(--r-sm);
+  background:var(--butter);color:var(--butter-ink);}
+.ticker-track{display:flex;flex-shrink:0;white-space:nowrap;font-size:var(--t-md);font-weight:700;
+  animation:ticker 26s linear infinite;}
+.ticker-track span{padding-right:46px;}
+@keyframes ticker{from{transform:translate3d(0,0,0)}to{transform:translate3d(-50%,0,0)}}
+
+/* Micro-interactions. The cart count changing is often the only signal that
+   a tap landed, so it pops; everything tappable gives way under a finger. */
+.pop{animation:pop 330ms var(--ease);}
+@keyframes pop{0%{transform:scale(1)}36%{transform:scale(1.45)}100%{transform:scale(1)}}
+.addbtn,.chip,.cat,.promo,.util{transition:transform var(--fast) var(--ease);}
+.seg-item{transition:background .14s,color .14s,transform var(--fast) var(--ease);}
+.seg-item:active{transform:scale(.97);}
+.addbtn:active{transform:scale(.93);}
+.chip:active{transform:scale(.96);}
+.cat:active{transform:scale(.96);}
+.promo:active{transform:scale(.985);}
+.util:active{transform:scale(.99);}
 </style>
 </head>
 <body>
@@ -1309,13 +1401,18 @@ async function useMyLocation(targetId){
   try{
     const { lat, lng, accuracy } = await detectDeviceCoords(m => setLocStatus(`Getting a precise fix… now within ${Math.round(m)} m`));
     LOGIN.lat = lat; LOGIN.lng = lng; LAST_DETECTED_COORDS = { lat, lng };
-    let detected = '';
-    try{ detected = (await reverseGeocode(lat, lng)).text; }catch(e){ /* keep coords even if geocode fails */ }
+    let detected = '', postcode = '';
+    try{ const g = await reverseGeocode(lat, lng); detected = g.text; postcode = g.postcode || ''; }
+    catch(e){ /* keep coords even if geocode fails */ }
     const ta = document.getElementById(targetId);
     if(ta){
       // Pre-fill the detected area and leave the cursor ready for the specifics.
       ta.value = detected ? (detected + ' — ') : ta.value;
     }
+    // Outlet Details asks for the PIN in its own field; the geocoder already knows it.
+    const pin = document.getElementById('f-pincode');
+    if(pin && !pin.value && /^\d{6}$/.test(postcode)) pin.value = postcode;
+    if(typeof outletGate === 'function') outletGate();
     const within = accuracy ? ` (within ${Math.round(accuracy)} m)` : '';
     setLocStatus(`📍 Pinned${within}. Drag the 🏠 pin onto your exact door or gate, then add your flat/shop number and a landmark.`, 'ok');
     showPinPicker(lat, lng);
@@ -1952,25 +2049,35 @@ function tabBar(){
   </nav>`;
 }
 function switchTab(id){ S.tab=id; NAV.length=0; go(id,{replace:true}); }
+/* The count changing is often the only feedback that an ADD landed, since the
+   button itself is already on screen — so a changed badge pops once. Removing
+   the class and reading offsetWidth forces the reflow that lets the same
+   animation restart on the next tap. */
 function renderTabBadge(){
   const c=cartTotals().count;
-  const el=document.getElementById('cart-count');
-  if(el){ el.textContent=c; el.style.display=c?'flex':'none'; }
+  document.querySelectorAll('.js-cart-count').forEach(el => {
+    const changed = el.textContent !== String(c);
+    el.textContent=c; el.style.display=c?'flex':'none';
+    if(changed && c){ el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); }
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════
    11. LOGIN
    ═══════════════════════════════════════════════════════════ */
-let LOGIN = {mode:'b2b', authMode:'signup', step:'entry', gstin:'', company:'', gstData:null, phone:'', name:'', address:''};
+let LOGIN = {mode:'b2b', authMode:'signup', step:'entry', gstin:'', company:'', gstData:null, phone:'', name:'', address:'',
+             email:'', outletName:'', outletType:'', pincode:'', floor:'', floorNo:'', lift:null, landmark:''};
 
 function scrLogin(){
+  if(LOGIN.mode==='b2b' && LOGIN.authMode==='signup' && LOGIN.step==='contact') return scrOutlet();
   return `<div class="screen on" style="background:var(--surface);">
-    <div style="padding:calc(var(--safe-t) + 40px) 24px 24px;">
-      <img src="${esc(safeUrl(APPCFG.logo,'assets/logo.png'))}" alt="" onclick="tapLogo()" style="width:112px;height:112px;object-fit:contain;margin-bottom:20px;-webkit-tap-highlight-color:transparent;">
+    <div class="authbg"></div>
+    <div class="auth-head" style="padding:calc(var(--safe-t) + 40px) 24px 24px;">
+      <img class="auth-logo" src="${esc(safeUrl(APPCFG.logo,'assets/logo.png'))}" alt="" onclick="tapLogo()" style="width:112px;height:112px;object-fit:contain;margin-bottom:20px;-webkit-tap-highlight-color:transparent;">
       <div class="t-2xl mb-4">${LOGIN.authMode==='signin'?'Welcome back':'Order for your business'}</div>
       <div class="t-md muted">Wholesale dairy, frozen and beverage supply across Pune.</div>
     </div>
-    <div class="scroll" style="padding:0 24px 24px;">
+    <div class="scroll" style="padding:0 24px 24px;position:relative;z-index:1;">
       <div class="seg mb-12">
         <button class="seg-item ${LOGIN.authMode==='signin'?'on':''}" onclick="setAuthMode('signin')">Sign in</button>
         <button class="seg-item ${LOGIN.authMode==='signup'?'on':''}" onclick="setAuthMode('signup')">New account</button>
@@ -1981,10 +2088,138 @@ function scrLogin(){
       </div>
       <div id="login-body">${LOGIN.mode==='b2b'?b2bForm():b2cForm()}</div>
     </div>
-    <div style="padding:16px 24px calc(20px + var(--safe-b));border-top:1px solid var(--line-2);">
+    <div style="padding:16px 24px calc(20px + var(--safe-b));border-top:1px solid var(--line-2);position:relative;z-index:1;background:var(--surface);">
       <div class="t-xs muted-2 center">By continuing you agree to Modern Dairy's terms of supply.<br>FSSAI licensed · Est. 1975</div>
     </div>
   </div>`;
+}
+
+/* ── OUTLET DETAILS ──────────────────────────────────────────
+   The B2B signup's third step, after the GSTIN and the bank-account check.
+   It is one long scroll with the primary action pinned to the bottom, so a
+   shop owner never has to hunt for it between eleven fields.
+   Floor, lift and landmark exist for the rider, not for the invoice: a
+   crate of curd going to a 3rd-floor kitchen with no lift is a different
+   delivery from the same crate going to a ground-floor counter.
+   ───────────────────────────────────────────────────────────── */
+const OUTLET_TYPES = ['Restaurant','Café / coffee shop','Bakery','Sweet shop','Hotel / banquet',
+  'Cloud kitchen','Caterer','Ice cream parlour','Retail store / kirana','Canteen / institution','Other'];
+const FLOORS = [['basement','Basement'],['ground','Ground'],['1','1st'],['2','2nd'],['3plus','3rd or above']];
+
+function scrOutlet(){
+  setTimeout(wireOutlet, 0);
+  const legal = LOGIN.gstData?.legalName || LOGIN.company || '';
+  const chip = (id, group, val, label) =>
+    `<button type="button" class="chip ${String(val)===String(LOGIN[group]??'')?'on':''}" data-v="${esc(String(val))}"
+       onclick="${id}('${jsStr(String(val))}')">${esc(label)}</button>`;
+  return `<div class="screen on">
+    <div class="topbar">
+      <button class="iconbtn" onclick="LOGIN.step='bank';paint()" aria-label="Back">${icon('left',22)}</button>
+      <div class="t-lg grow">Outlet details</div>
+    </div>
+    <div class="scroll" id="outlet-body" style="padding:16px;">
+      ${legal ? `<div class="banner ok mb-16">${icon('check',17)}<div><b>Business verified</b><br>${esc(legal)}</div></div>` : ''}
+
+      <div class="fsec">Address details</div>
+      <div class="field"><input class="input" id="f-name" placeholder="Your name" autocomplete="name" value="${esc(LOGIN.name)}">
+        <div class="hint" id="h-name">Who places the orders for this outlet.</div></div>
+      <div class="field"><input class="input" id="f-email" type="email" inputmode="email" autocomplete="email"
+          placeholder="Your email" value="${esc(LOGIN.email)}">
+        <div class="hint" id="h-email">Invoices and delivery notes go here.</div></div>
+      <div class="field"><input class="input" id="f-outlet" placeholder="Outlet name" value="${esc(LOGIN.outletName)}">
+        <div class="hint" id="h-outlet">The name on the shopfront, if it differs from the registered one.</div></div>
+      <div class="field">
+        <select class="input ${LOGIN.outletType?'':'ph'}" id="f-outlet-type" onchange="this.classList.toggle('ph',!this.value)">
+          <option value="">Outlet type</option>
+          ${OUTLET_TYPES.map(t=>`<option value="${esc(t)}" ${LOGIN.outletType===t?'selected':''}>${esc(t)}</option>`).join('')}
+        </select>
+        <div class="hint" id="h-outlet-type">Sets the pack sizes and rates we show you.</div></div>
+      <div class="field">
+        <button type="button" class="btn btn-quiet mb-8" id="btn-detect-loc" onclick="useMyLocation()" style="justify-content:center;">${icon('pin',17)} Use my current location</button>
+        <div class="hint" id="h-loc-status" style="margin:-4px 0 8px;"></div>
+        <textarea class="input" id="f-address" rows="3" style="height:auto;padding:12px;"
+          placeholder="Complete address">${esc(LOGIN.address)}</textarea>
+        <div class="hint" id="h-address">Shop or unit number, building, street and area.</div></div>
+      <div class="field"><input class="input" id="f-pincode" inputmode="numeric" maxlength="6" placeholder="Pincode"
+          value="${esc(LOGIN.pincode)}" oninput="this.value=this.value.replace(/\\D/g,'')">
+        <div class="hint" id="h-pincode">We deliver across Pune — six digits.</div></div>
+
+      <div class="fsec">Floor</div>
+      <div class="chipwrap mb-12" id="floor-chips">${FLOORS.map(([v,l])=>chip('pickFloor','floor',v,l)).join('')}</div>
+      <div class="field"><input class="input" id="f-floorno" inputmode="numeric" maxlength="3" placeholder="Floor number"
+          value="${esc(LOGIN.floorNo)}" ${LOGIN.floor==='3plus'?'':'disabled'} oninput="this.value=this.value.replace(/\\D/g,'')">
+        <div class="hint" id="h-floorno">Only needed for the 3rd floor and above.</div></div>
+
+      <div class="fsec">Is lift available?</div>
+      <div class="chipwrap" id="lift-chips">${[[1,'Yes'],[0,'No']].map(([v,l])=>chip('pickLift','lift',v,l)).join('')}</div>
+
+      <div class="fsec">Nearby landmark</div>
+      <div class="field"><input class="input" id="f-landmark" placeholder="Add any nearby landmark (optional)" value="${esc(LOGIN.landmark)}">
+        <div class="hint">Helps the rider find you on the first delivery.</div></div>
+
+      <div class="fsec">Contact and sign-in</div>
+      <div class="field">
+        <div class="phone-field"><span class="phone-cc">+91</span>
+        <input id="f-phone" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit number" value="${esc(LOGIN.phone)}"></div>
+        <div class="hint" id="h-phone">We'll send a one-time code to verify this number.</div></div>
+      ${passwordField()}
+    </div>
+    <div class="formbar">
+      <button class="btn" id="btn-reg" onclick="doB2BRegister()" disabled>Next</button>
+    </div>
+  </div>`;
+}
+
+/* Floor and lift are picked, not typed, so they update the DOM directly
+   instead of calling paint() — a repaint here would throw away everything
+   already typed into the eleven fields above. */
+function pickFloor(v){
+  LOGIN.floor = v;
+  document.querySelectorAll('#floor-chips .chip').forEach(c => c.classList.toggle('on', c.dataset.v === v));
+  const f = document.getElementById('f-floorno');
+  if(f){ f.disabled = v !== '3plus'; if(f.disabled) f.value = ''; }
+  outletGate();
+}
+function pickLift(v){
+  LOGIN.lift = Number(v);
+  document.querySelectorAll('#lift-chips .chip').forEach(c => c.classList.toggle('on', Number(c.dataset.v) === LOGIN.lift));
+  outletGate();
+}
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/;
+function outletVals(){
+  const g = id => (document.getElementById(id)?.value || '').trim();
+  return { name:g('f-name'), email:g('f-email'), outletName:g('f-outlet'), outletType:g('f-outlet-type'),
+           address:g('f-address'), pincode:g('f-pincode'), floorNo:g('f-floorno'),
+           landmark:g('f-landmark'), phone:g('f-phone') };
+}
+/* Returns [fieldId, hintId, message] for the first thing still missing, or
+   null when the form is complete. One list drives both the disabled state of
+   the Next button and the error shown when it is pressed. */
+function outletMissing(v){
+  if(!v.name) return ['f-name','h-name','Enter your name.'];
+  if(!EMAIL_RE.test(v.email)) return ['f-email','h-email','Enter a valid email address.'];
+  if(!v.outletName) return ['f-outlet','h-outlet','Enter the outlet name.'];
+  if(!v.outletType) return ['f-outlet-type','h-outlet-type','Choose the outlet type.'];
+  if(!v.address) return ['f-address','h-address','Enter the complete address.'];
+  if(!/^\d{6}$/.test(v.pincode)) return ['f-pincode','h-pincode','Enter a 6-digit pincode.'];
+  if(!LOGIN.floor) return ['','','Choose which floor the outlet is on.'];
+  if(LOGIN.floor === '3plus' && !/^\d{1,3}$/.test(v.floorNo)) return ['f-floorno','h-floorno','Enter the floor number.'];
+  if(LOGIN.lift !== 0 && LOGIN.lift !== 1) return ['','','Tell us whether a lift is available.'];
+  if(!/^[6-9]\d{9}$/.test(v.phone)) return ['f-phone','h-phone','Enter a valid 10-digit Indian mobile number.'];
+  return null;
+}
+function outletGate(){
+  const b = document.getElementById('btn-reg');
+  if(b && !b.dataset.busy) b.disabled = !!outletMissing(outletVals());
+}
+function wireOutlet(){
+  const body = document.getElementById('outlet-body');
+  if(body && !body.dataset.wired){
+    body.dataset.wired = '1';
+    body.addEventListener('input', outletGate);
+    body.addEventListener('change', outletGate);
+  }
+  outletGate();
 }
 function setLoginMode(m){ LOGIN.mode=m; LOGIN.step='entry'; paint(); }
 function setAuthMode(m){ LOGIN.authMode=m; LOGIN.step='entry'; paint(); }
@@ -2007,22 +2242,7 @@ function b2bForm(){
   if(LOGIN.step==='otp') return otpForm();
   if(LOGIN.authMode==='signin') return signInForm();
   if(LOGIN.step==='bank') return bankForm();
-  if(LOGIN.step==='contact') return `
-    <div class="banner ok mb-16">${icon('check',17)}<div><b>GSTIN verified</b><br>${esc(LOGIN.gstData?.legalName||LOGIN.company)}</div></div>
-    <div class="field"><label class="label">Contact person</label>
-      <input class="input" id="f-name" placeholder="Name of person placing orders" value="${esc(LOGIN.name)}"></div>
-    <div class="field"><label class="label">Mobile number</label>
-      <div class="phone-field"><span class="phone-cc">+91</span>
-      <input id="f-phone" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit number" value="${esc(LOGIN.phone)}"></div>
-      <div class="hint" id="h-phone">We'll send a one-time code to verify this number.</div></div>
-    <div class="field"><label class="label">Delivery address</label>
-      <button type="button" class="btn btn-quiet mb-8" id="btn-detect-loc" onclick="useMyLocation()" style="justify-content:center;">${icon('pin',17)} Use my current location</button>
-      <div class="hint" id="h-loc-status" style="margin:-4px 0 8px;"></div>
-      <textarea class="input" id="f-address" rows="2" placeholder="Shop/warehouse address, area, landmark, Pune - PIN code">${esc(LOGIN.address)}</textarea>
-      <div class="hint" id="h-address">Where should we deliver your orders?</div></div>
-    ${passwordField()}
-    <button class="btn" id="btn-reg" onclick="doB2BRegister()">Continue</button>
-    <button class="btn btn-quiet mt-8" onclick="LOGIN.step='entry';paint()">Back</button>`;
+  // step 'contact' is the Outlet Details screen — scrLogin() routes to it.
   return `
     <div class="field"><label class="label">GSTIN</label>
       <input class="input" id="f-gstin" maxlength="15" placeholder="27AAPFM1234A1ZV" value="${esc(LOGIN.gstin)}"
@@ -2082,6 +2302,11 @@ async function doSignIn(){
   await upgradeLegacyPassword(p, pw);
   LOGIN.name=existing.name||''; LOGIN.phone=p; LOGIN.password='';
   LOGIN.company=existing.company||''; LOGIN.gstin=existing.gstin||''; LOGIN.address=existing.address||'';
+  LOGIN.email=existing.email||'';
+  const o=existing.outlet||{};
+  LOGIN.outletName=o.outletName||''; LOGIN.outletType=o.outletType||''; LOGIN.pincode=o.pincode||'';
+  LOGIN.floor=o.floor||''; LOGIN.floorNo=o.floorNo||''; LOGIN.landmark=o.landmark||'';
+  LOGIN.lift = o.lift===true?1 : o.lift===false?0 : null;
   if(existing.type) LOGIN.mode=existing.type;
   const btn=document.getElementById('btn-signin'); btn.dataset.lbl='Sign in';
   busy('btn-signin',true,'Sending code');
@@ -2240,7 +2465,7 @@ function getCustomerAccounts(){
    through here even by accident — it is stripped, and any legacy plaintext
    left on the record is dropped the moment the record is touched. Password
    changes go through setAccountPassword() below. */
-const ACCOUNT_FIELDS = ['name','company','gstin','type','address','lat','lng','bankVerified','bankName','acctLast4'];
+const ACCOUNT_FIELDS = ['name','company','gstin','type','address','email','outlet','lat','lng','bankVerified','bankName','acctLast4'];
 function saveCustomerAccount(phone, patch){
   const cur = getCustomerAccounts();
   const clean = {};
@@ -2315,33 +2540,53 @@ function isStrongEnough(pw){
 }
 async function doB2BRegister(){
   if(!LOGIN.bankVerified){ toast('Please verify your business bank account first','alert'); LOGIN.step='bank'; paint(); return; }
-  const n=document.getElementById('f-name').value.trim();
-  const p=document.getElementById('f-phone').value.trim();
-  const addr=document.getElementById('f-address').value.trim();
-  if(!n){ toast('Enter the contact person name','alert'); return; }
-  if(!/^[6-9]\d{9}$/.test(p)){ setErr('f-phone','h-phone','Enter a valid 10-digit Indian mobile number.'); return; }
-  if(!addr){ setErr('f-address','h-address','Enter a delivery address.'); return; }
-  const pw = await checkLoginPassword(p);
+  const v = outletVals();
+  const miss = outletMissing(v);
+  if(miss){
+    const [f,h,msg] = miss;
+    if(f) setErr(f,h,msg); else toast(msg,'alert');
+    document.getElementById(f||'')?.scrollIntoView({block:'center',behavior:'smooth'});
+    return;
+  }
+  const pw = await checkLoginPassword(v.phone);
   if(pw===null) return;
-  LOGIN.name=n; LOGIN.phone=p; LOGIN.password=pw; LOGIN.address=addr;
-  const btn=document.getElementById('btn-reg'); btn.dataset.lbl='Continue';
+  Object.assign(LOGIN, {
+    name:v.name, email:v.email, outletName:v.outletName, outletType:v.outletType,
+    address:v.address, pincode:v.pincode, landmark:v.landmark,
+    floorNo: LOGIN.floor==='3plus' ? v.floorNo : '',
+    phone:v.phone, password:pw,
+  });
+  const p = v.phone;
+  const btn=document.getElementById('btn-reg'); btn.dataset.lbl='Next'; btn.dataset.busy='1';
+  const done = () => { const b=document.getElementById('btn-reg'); if(b) delete b.dataset.busy;
+                       busy('btn-reg',false,'Next'); outletGate(); };
   busy('btn-reg',true,'Verifying account');
   if(OTP_READY){
     try{ await otpSend('91'+p); }
-    catch(e){ busy('btn-reg',false,'Continue'); showDebugError('Could not send the code', e); return; }
-    busy('btn-reg',false,'Continue'); LOGIN.step='otp'; paint(); return;
+    catch(e){ done(); showDebugError('Could not send the code', e); return; }
+    done(); LOGIN.step='otp'; paint(); return;
   }
   if(FB){
     try{ await FB.sendOTP(p); }
-    catch(e){ busy('btn-reg',false,'Continue');
-      toast('Could not send the code. '+(e.code||''),'alert'); return; }
-    busy('btn-reg',false,'Continue'); LOGIN.step='otp'; paint(); return;
+    catch(e){ done(); toast('Could not send the code. '+(e.code||''),'alert'); return; }
+    done(); LOGIN.step='otp'; paint(); return;
   }
-  const r=await API.post('/auth/b2b/register',{gstin:LOGIN.gstin,companyName:LOGIN.company,name:n,phone:p,gstData:LOGIN.gstData});
-  busy('btn-reg',false,'Continue');
+  const r=await API.post('/auth/b2b/register',{gstin:LOGIN.gstin,companyName:LOGIN.company,name:v.name,phone:p,gstData:LOGIN.gstData,outlet:outletPayload()});
+  done();
   if(!r.success){ toast(r.message,'alert'); return; }
   if(r.requiresApproval){ go('pending'); return; }
   LOGIN.step='otp'; paint();
+}
+/* The delivery-side facts about the outlet, in one object, so every save
+   path (API, Firestore, local account store) writes the same shape. */
+function outletPayload(){
+  if(LOGIN.mode !== 'b2b') return null;
+  return {
+    outletName: LOGIN.outletName || null, outletType: LOGIN.outletType || null,
+    pincode: LOGIN.pincode || null, floor: LOGIN.floor || null,
+    floorNo: LOGIN.floorNo || null, lift: LOGIN.lift === 1 ? true : LOGIN.lift === 0 ? false : null,
+    landmark: LOGIN.landmark || null,
+  };
 }
 async function doSendOTP(){
   const n=document.getElementById('f-name').value.trim();
@@ -2402,10 +2647,12 @@ async function doVerifyOTP(){
         phone: LOGIN.phone,
         type: LOGIN.mode==='b2b' ? 'b2b' : 'b2c',
         address: LOGIN.address || existing.address || '',
-        ...(LOGIN.mode==='b2b' ? { company:LOGIN.company, gstin:LOGIN.gstin } : {}),
+        email: LOGIN.email || existing.email || '',
+        ...(LOGIN.mode==='b2b' ? { company:LOGIN.company, gstin:LOGIN.gstin, outlet:outletPayload() } : {}),
       };
       r={success:true,data:{user:{id:'local.'+LOGIN.phone,name:profile.name,phone:profile.phone,
-         customerType:profile.type,company:profile.company||null,gstin:profile.gstin||null,address:profile.address},
+         customerType:profile.type,company:profile.company||null,gstin:profile.gstin||null,address:profile.address,
+         email:profile.email||null,outlet:profile.outlet||null},
          accessToken:'demo.'+Date.now(),refreshToken:'demo.r.'+Date.now()}};
     }catch(e){
       busy('btn-verify',false,'Verify and continue');
@@ -2424,12 +2671,14 @@ async function doVerifyOTP(){
         name: LOGIN.name || existing.name || 'Customer',
         phone: LOGIN.phone,
         type: LOGIN.mode==='b2b' ? 'b2b' : 'b2c',
-        ...(LOGIN.mode==='b2b' ? { company:LOGIN.company, gstin:LOGIN.gstin } : {}),
+        email: LOGIN.email || existing.email || '',
+        ...(LOGIN.mode==='b2b' ? { company:LOGIN.company, gstin:LOGIN.gstin, outlet:outletPayload() } : {}),
         balance: existing.balance ?? 0,
       };
       if(FIRESTORE_LIVE) await FB.saveCustomer(u.uid, profile);
       r={success:true,data:{user:{id:u.uid,name:profile.name,phone:profile.phone,
-         customerType:profile.type,company:profile.company||null,gstin:profile.gstin||null},
+         customerType:profile.type,company:profile.company||null,gstin:profile.gstin||null,
+         email:profile.email||null,outlet:profile.outlet||null},
          accessToken:'firebase',refreshToken:'firebase'}};
     }catch(e){
       busy('btn-verify',false,'Verify and continue');
@@ -2446,7 +2695,7 @@ async function doVerifyOTP(){
   busy('btn-verify',false,'Verify and continue');
   if(!r.success){ setErr('f-otp','h-otp', r.message); return; }
   if(LOGIN.phone){
-    saveCustomerAccount(LOGIN.phone, {name:LOGIN.name, company:LOGIN.company||null, gstin:LOGIN.gstin||null, type:LOGIN.mode, address:LOGIN.address||null, lat:LOGIN.lat??null, lng:LOGIN.lng??null, bankVerified:LOGIN.bankVerified||false, bankName:LOGIN.bankName||null, acctLast4:LOGIN.acctLast4||null});
+    saveCustomerAccount(LOGIN.phone, {name:LOGIN.name, company:LOGIN.company||null, gstin:LOGIN.gstin||null, type:LOGIN.mode, address:LOGIN.address||null, email:LOGIN.email||null, outlet:outletPayload(), lat:LOGIN.lat??null, lng:LOGIN.lng??null, bankVerified:LOGIN.bankVerified||false, bankName:LOGIN.bankName||null, acctLast4:LOGIN.acctLast4||null});
     // Only set/replace the stored credential when this flow actually
     // captured one (signup, or a signup on an existing number). Plain
     // sign-in clears LOGIN.password, so it never rewrites the hash.
@@ -2671,7 +2920,7 @@ function liveOrdersHtml(){
   if(!live.length) return '';
   const card = o => `<button class="card live-card" onclick="openOrder('${jsStr(o.orderNo)}')">
       <div class="row between mb-8">
-        <span class="eyebrow" style="color:var(--brand);">${live.length > 1 ? 'Placed ' + esc(dtFmt(o.placedAt)) : 'Order in progress'}</span>
+        <span class="eyebrow" style="color:var(--brand);"><i class="live-dot"></i>${live.length > 1 ? 'Placed ' + esc(dtFmt(o.placedAt)) : 'Order in progress'}</span>
         <span class="pill b">${(STATUS[o.status] || STATUS.placed).l}</span></div>
       <div class="row between">
         <div><div class="t-base num" style="font-weight:700;">${esc(o.orderNo)}</div>
@@ -2715,14 +2964,43 @@ function shopLabel(){
   const s = shopStatus();
   return { k: s.open ? 'Shop open' : 'Shop closed', v: s.text, tone: s.open ? 'open' : 'shut' };
 }
+/* How long is left to order onto tomorrow's van. The pulsing dot stays in the
+   markup and only the text is swapped on the minute (see wireHome), so its
+   animation is never restarted. */
+function cutoffText(cut){
+  cut = cut || cutoffInfo();
+  return !cut ? '' : cut.open ? `Order within ${cut.left}` : 'Cutoff passed — ordering for the day after';
+}
 function dispatchTicket(){
   const cut = cutoffInfo(), c = shopLabel();
   return `<div class="ticket" role="status">
     <div class="ticket-slot"><div class="ticket-k">Next delivery</div>
-      <div class="ticket-v">${!cut || cut.open ? 'Tomorrow' : 'Day after'}, 7–11 AM</div></div>
+      <div class="ticket-v">${!cut || cut.open ? 'Tomorrow' : 'Day after'}, 7–11 AM</div>
+      ${cut ? `<div class="ticket-cd ${cut.open ? '' : 'shut'}"><i class="live-dot"></i><span id="cut-cd">${esc(cutoffText(cut))}</span></div>` : ''}</div>
     <div class="ticket-cut ${c.tone}" id="cut"><div class="ticket-k">${c.k}</div>
       <div class="ticket-v">${c.v}</div></div>
   </div>`;
+}
+/* The strip under the masthead. Marquee, so a long announcement still reads
+   in full on a narrow phone; the copy is emitted twice because the track
+   shifts by exactly -50% to loop without a seam. Deliberately holds nothing
+   that changes minute to minute — swapping the copy would restart the scroll. */
+function tickerLine(){
+  const bits = [];
+  if(APPCFG.announcement) bits.push(APPCFG.announcement);
+  // Both thresholds are admin-settable and can be 0, which would read as
+  // "Free delivery over ₹0" — so each clause only appears when it is real.
+  const mov = Number(APPCFG.minOrderValue) || 0, fdel = Number(APPCFG.freeDeliveryAbove) || 0;
+  if(isB2B() && mov > 0) bits.push(`Wholesale rates on every pack · ${money(mov)} minimum order`);
+  if(!isB2B() && fdel > 0) bits.push(`Free delivery over ${money(fdel)}`);
+  return bits.join('   ·   ');
+}
+function homeTicker(){
+  const line = tickerLine();
+  if(!line) return '';
+  const copy = `<span>${esc(line)}</span>`;
+  return `<div class="ticker" role="status" aria-label="${esc(line)}">
+    <div class="ticker-track" aria-hidden="true">${copy}${copy}</div></div>`;
 }
 function promoCarousel(){
   const slides = promoSlides();
@@ -2822,6 +3100,10 @@ function wireHome(){
     if(tick % 12 === 0){
       const el = document.getElementById('cut'), c = shopLabel();
       if(el){ el.className = 'ticket-cut ' + c.tone; el.innerHTML = `<div class="ticket-k">${c.k}</div><div class="ticket-v">${c.v}</div>`; }
+      // Text only — the pulsing dot beside it is left alone so it keeps its phase.
+      const cd = document.getElementById('cut-cd');
+      if(cd){ const cut = cutoffInfo(); cd.textContent = cutoffText(cut);
+              cd.parentElement.classList.toggle('shut', !(cut && cut.open)); }
     }
     if(track && !touched && !still && dots.length > 1){
       const next = (Math.round(track.scrollLeft / step()) + 1) % dots.length;
@@ -2846,7 +3128,7 @@ function scrHome(){
             <div class="mast-name truncate">${esc(S.user?.company || S.user?.name || 'Modern Dairy')}</div>
           </div>
           <button class="mast-cart" onclick="go('cart')" aria-label="Cart, ${t.count} items">
-            ${icon('cart',21)}${t.count ? `<b>${t.count}</b>` : ''}</button>
+            ${icon('cart',21)}<b class="js-cart-count" style="display:${t.count?'flex':'none'};">${t.count}</b></button>
         </div>
         <button class="mast-search" onclick="switchTab('catalogue');setTimeout(()=>document.getElementById('q')?.focus(),60)">
           ${icon('search',18)}<span>Search paneer, ghee, curd…</span></button>
@@ -2854,8 +3136,7 @@ function scrHome(){
       </header>
 
       <div class="home-body">
-        ${APPCFG.announcement ? `<div style="padding:0 16px 14px;">
-          <div class="banner info">${icon('info',17)}<div>${esc(APPCFG.announcement)}</div></div></div>` : ''}
+        ${homeTicker()}
 
         ${liveOrdersHtml()}
 
@@ -2899,7 +3180,7 @@ function scrCatalogue(){
       <div class="row gap-10">
         <div class="grow cat-head-t">Catalogue</div>
         <button class="mast-cart" onclick="go('cart')" aria-label="Cart">
-          ${icon('cart',21)}<b id="cart-count" style="display:none;">0</b></button>
+          ${icon('cart',21)}<b class="js-cart-count" id="cart-count" style="display:none;">0</b></button>
       </div>
       <label class="mast-search">${icon('search',18)}
         <input id="q" placeholder="Search paneer, ghee, curd…" value="${esc(S.query)}"
