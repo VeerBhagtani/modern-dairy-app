@@ -336,24 +336,42 @@ async function logAdmin(action, detail){
   try{ await addDoc(collection(db,'admin_audit_log'), { action:String(action||'').slice(0,80), detail:String(detail||'').slice(0,400), by:(auth.currentUser&&auth.currentUser.email)||'admin', at:serverTimestamp() }); }
   catch(e){ /* logging must never break the operation */ }
 }
-async function sha256Hex(str){
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(str)));
-  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
-}
-// Credit holds: customers blocked from placing orders (enforced authoritatively
-// by the order-create Firestore rule via order_blocks/list; the public
-// order_blocks_public/hashes doc lets the customer app show a clear message).
-let blockList = { blockedPhones:[], entries:[] };
+/* Credit holds: customers blocked from placing orders.
+   Enforced by the order-create rule in backend/firestore.rules — but read the
+   comment on notBlocked() there before trusting it, because the two halves of
+   the list are not equally strong:
+     · blockedUids  compares against request.auth.uid, which the client cannot
+                    forge. This is the half that actually holds. We collect the
+                    uids from the customer's own orders (createdByUid).
+     · blockedPhones compares against a field the client fills in. It stops the
+                    honest path only.
+   A customer with no order on record has no uid to block yet, so the hold is
+   phone-only until they next order — which is exactly when it gets recorded.
+   order_blocks_public/hashes is GONE: it published SHA-256 of every blocked
+   phone number world-readable, and a 10-digit mobile is far too small a
+   keyspace for a bare hash to hide anything. */
+let blockList = { blockedPhones:[], blockedUids:[], entries:[] };
 async function loadBlocks(){
-  try{ const d=await getDoc(doc(db,'order_blocks','list')); blockList = d.exists()?{ blockedPhones:d.data().blockedPhones||[], entries:d.data().entries||[] }:{ blockedPhones:[], entries:[] }; }
-  catch(e){ blockList={ blockedPhones:[], entries:[] }; }
+  try{
+    const d=await getDoc(doc(db,'order_blocks','list'));
+    blockList = d.exists()
+      ? { blockedPhones:d.data().blockedPhones||[], blockedUids:d.data().blockedUids||[], entries:d.data().entries||[] }
+      : { blockedPhones:[], blockedUids:[], entries:[] };
+  }
+  catch(e){ blockList={ blockedPhones:[], blockedUids:[], entries:[] }; }
   if(tab==='controls') render();
 }
-async function writeBlocks(phones, entries){
-  const hashes = await Promise.all(phones.map(sha256Hex));
-  await setDoc(doc(db,'order_blocks','list'), { blockedPhones:phones, entries });
-  await setDoc(doc(db,'order_blocks_public','hashes'), { hashes });
-  blockList = { blockedPhones:phones, entries };
+async function writeBlocks(phones, uids, entries){
+  await setDoc(doc(db,'order_blocks','list'), { blockedPhones:phones, blockedUids:uids, entries });
+  blockList = { blockedPhones:phones, blockedUids:uids, entries };
+}
+// Every uid this phone number has ever ordered from. Anonymous auth issues a
+// fresh uid per install, so one customer can legitimately have several.
+function uidsForPhone(phone){
+  return [...new Set((orders||[])
+    .filter(o => String(o.phone||'').replace(/\D/g,'').slice(-10) === phone)
+    .map(o => o.createdByUid)
+    .filter(Boolean))];
 }
 // kind is 'hold' (temporary, e.g. payment pending) or 'stop' (supply ended).
 // Both block ordering the same way; the Account Center shows which it was.
@@ -362,14 +380,25 @@ async function blockCustomer(phone, gstin, name, reason, kind = 'hold'){
   if(!/^[6-9]\d{9}$/.test(phone)){ alert('Enter a valid 10-digit mobile number.'); return false; }
   if((blockList.blockedPhones||[]).includes(phone)){ alert('That customer is already on hold.'); return false; }
   const phones=[...(blockList.blockedPhones||[]), phone];
+  const uids=[...new Set([...(blockList.blockedUids||[]), ...uidsForPhone(phone)])];
   const entries=[...(blockList.entries||[]), { phone, gstin:gstin||'', name:name||'', reason:reason||'', kind: kind==='stop'?'stop':'hold', at:new Date().toISOString() }];
-  try{ await writeBlocks(phones, entries); logAdmin(kind==='stop'?'customer_supply_stopped':'customer_order_blocked', phone+(reason?(' — '+reason):'')); render(); return true; }
+  try{
+    await writeBlocks(phones, uids, entries);
+    logAdmin(kind==='stop'?'customer_supply_stopped':'customer_order_blocked', phone+(reason?(' — '+reason):''));
+    render();
+    if(!uidsForPhone(phone).length){
+      alert('Hold recorded.\n\nThis customer has no order on file yet, so only their phone number could be held — which a modified app can work around. The hold becomes fully enforced the moment they place an order from this number.');
+    }
+    return true;
+  }
   catch(e){ alert('Could not block: '+e.message); return false; }
 }
 async function unblockCustomer(phone){
   const phones=(blockList.blockedPhones||[]).filter(p=>p!==phone);
+  const gone=new Set(uidsForPhone(phone));
+  const uids=(blockList.blockedUids||[]).filter(u=>!gone.has(u));
   const entries=(blockList.entries||[]).filter(e=>e.phone!==phone);
-  try{ await writeBlocks(phones, entries); logAdmin('customer_order_unblocked', phone); render(); }
+  try{ await writeBlocks(phones, uids, entries); logAdmin('customer_order_unblocked', phone); render(); }
   catch(e){ alert('Could not unblock: '+e.message); }
 }
 function money(n){ return '₹' + Math.round(Number(n)||0).toLocaleString('en-IN'); }
@@ -606,6 +635,23 @@ function filteredPeople(){
     .filter(p => { if(!q) return true; const v = effective(p); return [v.name, v.company, p.phone, p.gstin].some(x => String(x||'').toLowerCase().includes(q)); })
     .sort((a, b) => b.seen - a.seen);
 }
+/* The Outlet Details the customer gave at signup, condensed to one line. The
+   app has been collecting outlet type, floor, lift and landmark and syncing
+   them here; nothing displayed them, so the office could not see what the
+   customer had already told them. */
+function outletSummary(p){
+  const o = p.outlet;
+  if(!o) return '';
+  const bits = [];
+  if(o.outletType) bits.push(o.outletType);
+  if(o.outletName && o.outletName !== p.company) bits.push(`“${o.outletName}”`);
+  const acc = customerAccess(p.phone);
+  if(acc.floor) bits.push(acc.floor);
+  if(acc.lift === false) bits.push('no lift');
+  if(o.pincode) bits.push(o.pincode);
+  if(!bits.length) return '';
+  return `<br><span class="muted" style="font-size:.78rem;">${esc(bits.join(' · '))}</span>`;
+}
 function acctListHtml(){
   const list = filteredPeople();
   return `
@@ -617,7 +663,7 @@ function acctListHtml(){
         <tbody>
           ${list.map(p => { const v = effective(p); const os = ordersFor(p.phone); return `
             <tr data-acct="${esc(p.phone)}">
-              <td data-l="Customer"><b>${esc(v.company||v.name||'—')}</b>${v.company&&v.name?`<br><span class="muted">${esc(v.name)}</span>`:''}</td>
+              <td data-l="Customer"><b>${esc(v.company||v.name||'—')}</b>${v.company&&v.name?`<br><span class="muted">${esc(v.name)}</span>`:''}${outletSummary(p)}</td>
               <td data-l="Type"><span class="pill ${p.type==='b2b'?'placed':'info'}">${p.type==='b2b'?'Business':'Personal'}</span></td>
               <td data-l="Phone">+91 ${esc(p.phone)}</td>
               <td data-l="GSTIN">${esc(p.gstin||'—')}</td>
@@ -869,7 +915,10 @@ function filterChipsHtml(){
 }
 function ordersListHtml(){
   const list = filteredOrders();
+  const stale = priceCheckStaleWarning();
   return `
+    ${stale ? `<div class="card" style="padding:12px;margin-bottom:10px;background:#fbe4e2;color:var(--bad);font-size:.85rem;line-height:1.5;">
+      <b>⚠ Price checking has stalled</b><br>${esc(stale)}</div>` : ''}
     <div class="muted" style="margin-bottom:10px;">${list.length} order${list.length===1?'':'s'}${orderFilter!=='all'||orderSearch?' matching':''}</div>
     <div class="card" style="padding:0;overflow:auto;">
       ${!list.length ? `<div class="empty">${orders.length?'No orders match this filter/search.':'No orders yet. New orders from the app will appear here in real time.'}</div>` : `
@@ -966,13 +1015,59 @@ function openModal(id){
 }
 function closeModal(){ document.getElementById('modal-bg')?.classList.remove('on'); openOrderId = null; }
 
+/* Statuses that commit stock or a van to an order. Past 'confirmed' the goods
+   are being picked, so this is the last point where a price problem is cheap
+   to catch. */
+const FULFILMENT_STATUSES = ['confirmed', 'packed', 'out_for_delivery', 'delivered'];
+
 async function setStatus(id, status){
+  const o = orders.find(x => x.id === id);
+  /* PRICE GATE.
+     Orders are written straight to Firestore by the customer app, and the
+     Firestore rules cannot check an item's price against the catalogue — that
+     is done out of band by backend/scripts/verify-order-prices.js, every three
+     minutes. Until that has run, an order's prices are simply unknown.
+     A red ⚠ on the row was the only signal before, and a warning nobody is
+     forced to read is not a control: it was entirely possible to confirm and
+     ship an order priced at ₹1. Fulfilment now stops here and asks.
+     Two distinct cases, and they are not equally serious:
+       · priceMismatch === true   — checked, and the prices are WRONG.
+       · priceVerified !== true   — not checked yet. Usually just means the
+         order is newer than the last cron run; but if it stays unverified,
+         the checker itself has stopped (GitHub disables scheduled workflows
+         after 60 days of repo inactivity), which is worth knowing about. */
+  if(o && FULFILMENT_STATUSES.includes(status)){
+    if(o.priceMismatch === true){
+      const detail = o.priceMismatchDetail ? '\n\n' + o.priceMismatchDetail : '';
+      if(!confirm('⚠ THIS ORDER\'S PRICES DO NOT MATCH THE CATALOGUE.' + detail
+        + '\n\nFulfilling it means supplying goods at these prices. Continue anyway?')) return;
+    } else if(o.priceVerified !== true){
+      if(!confirm('This order has not been price-checked yet.\n\nThe check runs every few minutes — '
+        + 'if you wait a moment and refresh, it should clear on its own. If orders stay unchecked, '
+        + 'the Verify Order Prices workflow has stopped running and needs attention.'
+        + '\n\nFulfil without the price check?')) return;
+    }
+  }
   try{
     await updateDoc(doc(db, 'orders', id), { status, statusUpdatedAt: serverTimestamp() });
     const code = await syncDelivery(id, status);
     closeModal();
     if(code) openModal(id);   // the rider link is right there to send
   }catch(e){ alert('Could not update status: ' + e.message); }
+}
+
+/* Is the price checker still alive? If orders placed more than this long ago
+   are still unverified, the every-3-minutes workflow is not running. Returns
+   null when everything is fine, or a message to show. */
+const PRICE_CHECK_STALE_MS = 20 * 60 * 1000;
+function priceCheckStaleWarning(){
+  const cutoff = Date.now() - PRICE_CHECK_STALE_MS;
+  const stale = (orders||[]).filter(o => o.priceVerified !== true && tsMs(o.placedAt) && tsMs(o.placedAt) < cutoff);
+  if(!stale.length) return null;
+  return `${stale.length} order${stale.length===1?'':'s'} placed over 20 minutes ago `
+    + `${stale.length===1?'has':'have'} still not been price-checked — the "Verify Order Prices" `
+    + `GitHub Action has probably stopped. Scheduled workflows are disabled automatically after `
+    + `60 days without a commit; re-enable it in the repository's Actions tab.`;
 }
 
 /* The rider's copy of a delivery.
@@ -1000,6 +1095,26 @@ function customerPin(phone){
     .sort((x, y) => tsMs(y.updatedAt) - tsMs(x.updatedAt))[0];
   return a ? { destLat: a.lat, destLng: a.lng } : { destLat: null, destLng: null };
 }
+/* Doorstep facts from the customer's Outlet Details: which floor, whether
+   there is a lift, and the landmark they gave. Collected at B2B signup and
+   until now never shown to anyone — so a rider carrying crates to a 3rd-floor
+   kitchen with no lift found that out on arrival. Copied onto the delivery
+   document (which is all a rider can read) rather than left on the order. */
+const FLOOR_LABELS = { basement:'Basement', ground:'Ground floor', '1':'1st floor', '2':'2nd floor', '3plus':'3rd floor or above' };
+function customerAccess(phone){
+  const a = accounts.filter(x => x.phone === phone && x.outlet)
+    .sort((x, y) => tsMs(y.updatedAt) - tsMs(x.updatedAt))[0];
+  const o = a && a.outlet;
+  if(!o) return { floor: null, lift: null, landmark: null };
+  const floor = o.floor === '3plus' && o.floorNo
+    ? `Floor ${o.floorNo}`
+    : (FLOOR_LABELS[o.floor] || null);
+  return {
+    floor,
+    lift: typeof o.lift === 'boolean' ? o.lift : null,
+    landmark: o.landmark || null,
+  };
+}
 async function closeTrip(key){
   if(!key) return;
   const snap = await getDoc(doc(db, 'deliveries', key));
@@ -1021,6 +1136,7 @@ async function syncDelivery(id, status){
       phone: o.phone || null,
       address: o.address || null,
       ...customerPin(o.phone),
+      ...customerAccess(o.phone),
       items: (o.items || []).length,
       total: Number(o.total) || 0,
       startedAt: serverTimestamp(),

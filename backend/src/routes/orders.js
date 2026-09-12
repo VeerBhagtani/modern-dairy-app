@@ -59,11 +59,18 @@ router.post('/', writeLimiter, async (req, res) => {
         }
       }
 
-      const [configSnap, ...productSnaps] = await Promise.all([
+      const [configSnap, customerSnap, ...productSnaps] = await Promise.all([
         tx.get(col.appConfig()),
+        tx.get(col.customers().doc(req.userId)),
         ...items.map(i => tx.get(col.products().doc(i.productId))),
       ]);
       const appConfig = configSnap.exists ? configSnap.data() : {};
+      // The customer's tier comes from their SERVER-SIDE record, read inside
+      // this transaction — never from the request. Without this the line below
+      // charged variant.b2b to everyone whenever a wholesale price existed, so
+      // every retail order was silently billed at wholesale.
+      if (!customerSnap.exists) throw httpError(401, 'Account not found');
+      const isB2B = customerSnap.data().customerType === 'b2b';
 
       let subtotal = 0;
       const lineItems = [];
@@ -81,7 +88,7 @@ router.post('/', writeLimiter, async (req, res) => {
           throw httpError(400, `${product.name} (${variant.label}) requires a minimum quantity of ${variant.moq}`);
         }
 
-        const unitPrice = Number(variant.b2b ?? variant.mrp);
+        const unitPrice = Number(isB2B ? (variant.b2b ?? variant.mrp) : variant.mrp);
         const lineTotal = unitPrice * qty;
         subtotal += lineTotal;
         lineItems.push({
@@ -92,13 +99,21 @@ router.post('/', writeLimiter, async (req, res) => {
       }
 
       const gstRate = Number(appConfig.gstRate ?? 0.05);
-      const gstAmount = Math.round(subtotal * gstRate);
+      // Rounded to paise, matching cartTotals() in www/index.html. This was
+      // Math.round(...) — whole rupees — so the server's total disagreed with
+      // the total the customer was quoted on any order where GST had a paise
+      // component, and with the 1-rupee tolerance the Firestore rules allow.
+      const gstAmount = Math.round(subtotal * gstRate * 100) / 100;
       const deliveryFee = Number(appConfig.deliveryFee ?? 0);
       const platformFee = Number(appConfig.platformFee ?? 2);
-      const total = subtotal + gstAmount + deliveryFee + platformFee;
+      const total = Math.round((subtotal + gstAmount + deliveryFee + platformFee) * 100) / 100;
 
+      // The minimum order value is a WHOLESALE term — it buys the customer
+      // wholesale rates and credit. Applying it to retail (as this did) would
+      // have rejected every ordinary customer's order under ₹2,000 the day the
+      // backend went live. movMet() in the app has always gated it on b2b.
       const minOrderValue = Number(appConfig.minOrderValue ?? 0);
-      if (subtotal < minOrderValue) {
+      if (isB2B && subtotal < minOrderValue) {
         throw httpError(400, `Minimum order value is ₹${minOrderValue}. Current subtotal is ₹${subtotal}.`);
       }
 
@@ -106,8 +121,15 @@ router.post('/', writeLimiter, async (req, res) => {
       const orderRef = col.orders().doc(uuid());
       const orderData = {
         customerId: req.userId, orderNo, items: lineItems,
+        // Recorded from the server-side customer record, so anything that
+        // re-checks this order later (verify-order-prices.js, billing) is
+        // reading a tier the customer could not choose for themselves.
+        customerType: isB2B ? 'b2b' : 'b2c',
         subtotal, gstAmount, deliveryFee, platformFee, total,
         status: 'placed', idempotencyKey: key,
+        // Priced server-side in this transaction, so it never needs the
+        // out-of-band price check that client-written orders do.
+        priceVerified: true, priceMismatch: false,
         placedAt: FieldValue.serverTimestamp(),
       };
       tx.set(orderRef, orderData);

@@ -148,6 +148,19 @@ function render(){
   }
 
   const nav = navUrl(d);
+  /* Which floor, is there a lift, what to look for. The customer gave these at
+     signup; they reach the rider here because a delivery document is the only
+     thing a rider can read. "3rd floor, no lift" is the difference between
+     planning one trip and three. */
+  const accessNote = (d) => {
+    const bits = [];
+    if (d.floor) bits.push(esc(d.floor));
+    if (d.lift === true) bits.push('lift available');
+    else if (d.lift === false) bits.push('<b>no lift</b>');
+    const line = bits.join(' · ');
+    const mark = d.landmark ? `<div class="note">Landmark: ${esc(d.landmark)}</div>` : '';
+    return (line ? `<div class="note">${line}</div>` : '') + mark;
+  };
   m.innerHTML = `
     ${R.err ? `<div class="err" role="alert">${esc(R.err)}</div>` : ''}
     <div id="map" role="img" aria-label="Map of you and the delivery address"></div>
@@ -155,6 +168,7 @@ function render(){
       <div class="k">Deliver to</div>
       <div class="v">${esc(d.customer || 'Customer')}${d.contact ? ` · ${esc(d.contact)}` : ''}</div>
       <div class="note">${esc(d.address || 'No address on this delivery — call the customer.')}</div>
+      ${accessNote(d)}
       <div class="dist" id="dist">${esc(distText())}</div>
     </div>
     <div class="row">

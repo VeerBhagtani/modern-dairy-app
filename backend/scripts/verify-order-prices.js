@@ -25,6 +25,11 @@ const PROJECT_ID = 'modern-dairy-pune';
 const FIRESTORE_BASE = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
 const SCOPES = 'https://www.googleapis.com/auth/datastore';
 const PRICE_TOLERANCE_PAISE = 1; // rupee rounding slack
+// Statuses from which pulling an order back to pending_confirmation is still
+// meaningful. Past these it is on a van or delivered, and rewriting its status
+// would misrepresent where the goods actually are.
+const PRE_FULFILMENT = ['placed', 'confirmed', 'pending_confirmation', 'packed'];
+const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 
 function base64url(input) {
   return Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -72,13 +77,9 @@ function docToObj(doc) {
   return out;
 }
 
-// Pages through the WHOLE collection. This used to be a single
-// `?pageSize=300` request with no pageToken follow-up, which was a real
-// bypass rather than a scaling nit: Firestore returns documents in document-
-// id order, so once the collection passed 300 docs an attacker could place a
-// forged order and have a good chance of it sitting outside page one — never
-// price-checked, never flagged, and (because priceVerified was never set) it
-// would not even be retried on the next run. MAX_PAGES is a runaway guard.
+// Pages through a whole collection. Used for `products`, which is small and
+// bounded. It is deliberately NOT used for `orders` any more — see
+// listUnverifiedOrders below.
 const MAX_PAGES = 50;
 async function firestoreList(token, collection) {
   const out = [];
@@ -94,6 +95,63 @@ async function firestoreList(token, collection) {
     if (!pageToken) return out;
   }
   console.warn(`Stopped paging ${collection} at ${MAX_PAGES} pages (${out.length} docs) — raise MAX_PAGES if this is legitimate.`);
+  return out;
+}
+
+/* Fetches ONLY the orders that still need checking, with a query.
+ *
+ * This used to list the entire orders collection and filter `!priceVerified`
+ * in memory, behind a 50-page x 300-doc ceiling. Two problems, one of them a
+ * security hole rather than a scaling nit:
+ *
+ *   · Firestore returns documents in id order, so once the collection passed
+ *     15,000 documents, everything beyond the ceiling was never fetched, never
+ *     price-checked, and never retried — the forged-price defence quietly
+ *     stopped covering new orders. The previous fix raised the ceiling; a
+ *     ceiling is the wrong shape of answer.
+ *   · It re-read every order ever placed, every three minutes. That is 480
+ *     full scans a day, growing linearly and billed per document read.
+ *
+ * A structured query does the filtering server-side, so the work is
+ * proportional to the backlog instead of to history, and there is no ceiling
+ * to outgrow. Needs the composite index in backend/firestore.indexes.json.
+ */
+const ORDER_BATCH = 300;
+async function listUnverifiedOrders(token) {
+  const out = [];
+  let cursorId = null;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const structuredQuery = {
+      from: [{ collectionId: 'orders' }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: 'priceVerified' },
+          op: 'EQUAL',
+          value: { booleanValue: false },
+        },
+      },
+      orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
+      limit: ORDER_BATCH,
+    };
+    if (cursorId) {
+      structuredQuery.startAt = {
+        values: [{ referenceValue: `projects/${PROJECT_ID}/databases/(default)/documents/orders/${cursorId}` }],
+        before: false,
+      };
+    }
+    const res = await fetch(`${FIRESTORE_BASE}:runQuery`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ structuredQuery }),
+    });
+    if (!res.ok) throw new Error(`Firestore runQuery orders failed (${res.status}): ${await res.text()}`);
+    const rows = await res.json();
+    const docs = rows.map(r => r.document).filter(Boolean).map(docToObj);
+    out.push(...docs);
+    if (docs.length < ORDER_BATCH) return out;
+    cursorId = docs[docs.length - 1].id;
+  }
+  console.warn(`Stopped after ${MAX_PAGES} pages of unverified orders (${out.length}). Backlog is unusually large — investigate.`);
   return out;
 }
 
@@ -141,13 +199,12 @@ async function main() {
   const sa = JSON.parse(raw);
   const token = await getAccessToken(sa);
 
-  const [products, orders] = await Promise.all([
+  const [products, pending] = await Promise.all([
     firestoreList(token, 'products'),
-    firestoreList(token, 'orders'),
+    listUnverifiedOrders(token),
   ]);
   const productsById = Object.fromEntries(products.map(p => [p.id, p]));
 
-  const pending = orders.filter(o => !o.priceVerified);
   if (!pending.length) { console.log('No new orders to price-check.'); return; }
 
   for (const o of pending) {
@@ -178,15 +235,33 @@ async function main() {
       mismatches.push(`order total ₹${o.total} is below the catalogue value of its items (₹${expectedItemsSum})`);
     }
 
+    // A b2b tag is what selects the (lower) wholesale price above, and until
+    // there is a server-side customer record it is just a string the client
+    // wrote. Flagging a b2b order with no structurally valid GSTIN catches the
+    // cheapest version of claiming wholesale rates without a business.
+    if (o.customerType === 'b2b' && !GSTIN_RE.test(String(o.gstin || '').toUpperCase())) {
+      mismatches.push('order claims business (b2b) pricing but carries no valid GSTIN');
+    }
+
     if (mismatches.length) {
       console.warn(`Order ${o.id} (${o.orderNo || o.id}) has ${mismatches.length} price mismatch(es):`);
       mismatches.forEach(m => console.warn(`  - ${m}`));
-      await firestorePatch(token, 'orders', o.id, {
+      const patch = {
         priceVerified: true,
         priceMismatch: true,
         priceMismatchDetail: mismatches.join(' | ').slice(0, 1400),
-        status: 'pending_confirmation',
-      });
+      };
+      // Only pull an order BACK to pending_confirmation if it hasn't already
+      // moved past the point where that makes sense. This used to be
+      // unconditional, so a mismatch found on an order that was already packed
+      // — or delivered — dragged it backwards through its own lifecycle and
+      // confused the admin list about what was actually on the van.
+      if (PRE_FULFILMENT.includes(o.status)) {
+        patch.status = 'pending_confirmation';
+      } else {
+        console.warn(`  (order is already '${o.status}' — flagged but status left alone)`);
+      }
+      await firestorePatch(token, 'orders', o.id, patch);
     } else {
       await firestorePatch(token, 'orders', o.id, { priceVerified: true, priceMismatch: false });
     }

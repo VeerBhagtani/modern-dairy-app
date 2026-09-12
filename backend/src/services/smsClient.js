@@ -1,7 +1,20 @@
-// Twilio Verify API v2 (https://www.twilio.com/docs/verify/api) — chosen as the
-// SMS/OTP provider since none was specified. Swap this file if a different
-// provider (MSG91, Gupshup, etc.) is preferred; the send/check contract below
-// is what auth.js routes depend on, so keep sendOTP/checkOTP's signatures.
+// Twilio Verify API v2 (https://www.twilio.com/docs/verify/api).
+//
+// NOT CURRENTLY WIRED UP. This project's OTP provider is Message Central —
+// that is what the customer app calls, what the admin recovery flow calls, and
+// what the configured secrets (otp-customer-id / otp-auth-token) belong to.
+// routes/auth.js used to import THIS file, which meant customer sign-in would
+// have failed with NOT_CONFIGURED on every request the moment the backend went
+// live, because no twilio_* secret exists. It now uses
+// services/messageCentralClient.js like everything else.
+//
+// Kept as a documented swap-in: if Twilio ever replaces Message Central, note
+// that the contracts differ. Twilio Verify is stateless (checkOTP takes the
+// phone number), whereas Message Central returns a verificationId from send
+// that validate needs back — which is why routes/auth.js persists a challenge
+// in otp_challenges/{phone}. Moving to this file means that challenge document
+// is no longer strictly required for correctness, but keep it anyway: it is
+// also where the per-phone attempt cap lives.
 const { getSecret } = require('./secretManager');
 
 const BASE_URL = 'https://verify.twilio.com/v2';

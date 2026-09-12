@@ -1,0 +1,30 @@
+rules_version = '2';
+
+// Firebase Storage is NOT used by this application: nothing in www/,
+// legal/admin/ or backend/src/ imports the Storage SDK, and no upload or
+// download path exists. This file exists so that state is deliberate and
+// version-controlled rather than left at whatever the console defaults to.
+//
+// Until there is a real upload feature, deny everything. A bucket with no
+// managed rules is one console click away from world-readable, and product
+// images / invoices / KYC documents are exactly the things that end up in one.
+//
+// When a genuine upload feature arrives, replace this with per-path rules that
+// check ownership, content type and size at the rules layer — for example:
+//
+//   match /invoices/{orderId}/{file} {
+//     allow read: if request.auth != null
+//                 && firestore.get(/databases/(default)/documents/orders/$(orderId))
+//                      .data.createdByUid == request.auth.uid;
+//     allow write: if false;   // server-generated only, via the Admin SDK
+//   }
+//
+// Note that the Admin SDK (backend, CI service accounts) bypasses these rules
+// entirely, so server-side writes keep working with this file as it stands.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

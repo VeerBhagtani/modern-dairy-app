@@ -40,11 +40,20 @@ function sendError(res, e, fallback) {
   res.status(502).json({ success: false, message: fallback });
 }
 
-// GET /admin-recovery/options -> [{ id, label: '••••••0666' }]
+// GET /admin-recovery/options -> [{ id, label: 'Recovery number 1' }]
+//
+// This route has to stay unauthenticated — it is the first step of "I cannot
+// sign in" — but it used to answer with maskPhone(), i.e. the last four digits
+// of the owner's personal numbers, to anyone on the internet who asked. Those
+// four digits are exactly what makes a SIM-swap or a "calling from your bank"
+// pretext convincing, and nothing about picking which number to text requires
+// them: an ordinal is enough for the one person who knows what their own
+// numbers are. No unauthenticated route returns those digits now — maskPhone()
+// survives only for the audit log, which is admin-only.
 router.get('/options', async (req, res) => {
   try {
     const phones = await recoveryPhones();
-    res.json({ success: true, data: phones.map((p, id) => ({ id, label: maskPhone(p) })) });
+    res.json({ success: true, data: phones.map((_p, id) => ({ id, label: `Recovery number ${id + 1}` })) });
   } catch (e) { sendError(res, e, 'Could not load the recovery numbers.'); }
 });
 
@@ -60,6 +69,10 @@ router.post('/send-otp', authLimiter, recoverySendLimiter, async (req, res) => {
     const verificationId = await otp.sendOtp(phones[which]);
     await challengeRef().set({ which, verificationId, attempts: 0, expiresAt: Date.now() + CHALLENGE_TTL_MS });
     await writeAuditLog({ adminId: 'recovery', action: 'admin_recovery_code_sent', target: maskPhone(phones[which]) });
+    // Deliberately reveals nothing about the number, not even masked. The
+    // person who owns these handsets knows which one is "Recovery number 1";
+    // anyone else would just be harvesting the last four digits, and this
+    // endpoint is reachable without signing in.
     res.json({ success: true });
   } catch (e) { sendError(res, e, 'Could not send the code. Please try again.'); }
 });

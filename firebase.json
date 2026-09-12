@@ -3,6 +3,9 @@
     "rules": "backend/firestore.rules",
     "indexes": "backend/firestore.indexes.json"
   },
+  "storage": {
+    "rules": "backend/storage.rules"
+  },
   "hosting": {
     "public": "legal",
     "ignore": ["firebase.json", "**/.*"],

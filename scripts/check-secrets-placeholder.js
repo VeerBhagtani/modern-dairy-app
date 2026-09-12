@@ -32,7 +32,13 @@ let cfg;
 try { cfg = JSON.parse(json); }
 catch (e) { console.error('FAILED: could not parse www/secrets.js — keep it a simple object literal. ' + e.message); process.exit(1); }
 
-const filled = Object.keys(cfg).filter((k) => cfg[k]);
+// DEMO_BUILD is a build-mode flag, not a credential — it is expected to be
+// "true" in the committed placeholder so that serving www/ locally still
+// demos. CI overwrites this whole file at build time (inject-secrets.js), and
+// that script refuses to combine DEMO_BUILD with real credentials, so a "true"
+// here can never reach a release build.
+const NON_SECRET_KEYS = new Set(['DEMO_BUILD']);
+const filled = Object.keys(cfg).filter((k) => cfg[k] && !NON_SECRET_KEYS.has(k));
 if (filled.length) {
   console.error('FAILED: www/secrets.js is committed with real values for: ' + filled.join(', '));
   console.error('That file must stay EMPTY in git — CI fills it at build time from GitHub secrets.');

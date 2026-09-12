@@ -834,6 +834,12 @@ function buildOrderDoc(order, uid) {
     company: order.company || null, gstin: order.gstin || null,
     name: order.name || null, phone: order.phone || null, address: order.address || null,
     status: 'placed', createdByUid: uid,
+    // Always false on create — the rules pin it to that value. It exists so
+    // the out-of-band price check can QUERY for its backlog
+    // (backend/scripts/verify-order-prices.js) rather than scanning the whole
+    // orders collection; only that script, using a service account, ever sets
+    // it true.
+    priceVerified: false,
   };
 }
 
@@ -864,24 +870,42 @@ async function mirrorOrderViaRest(order, uid, idToken) {
   return body.name.split('/').pop();
 }
 
-// Returns the created Firestore doc id (or null if the write failed
-// entirely), so the app can target this exact doc later for live status
-// sync and self-cancel — no query/read-list permission needed for that.
+// Returns { id } on success, or { error } describing why not.
+//
+// The error matters, which is why this no longer collapses every failure to
+// null. Until the backend deploys, this write is the ONLY durable record of an
+// order — the office sees nothing else — and the rules refuse it when the
+// customer is on credit hold. So 'blocked' (permission-denied) means the order
+// genuinely does not exist and must not be shown to the customer as placed,
+// whereas 'offline' is a transport failure worth retrying. Collapsing the two
+// is what let a refused order sit on the phone looking accepted.
+function mirrorErrorKind(e) {
+  const code = String(e && (e.code || e.message) || '');
+  return /permission-denied|PERMISSION_DENIED|HTTP 403/.test(code) ? 'blocked' : 'offline';
+}
 window.mirrorOrderToFirestore = async function(order) {
+  let firstKind = 'offline';
   try {
     const user = await ensureSignedIn();
     const ref = await addDoc(collection(mirrorDb, 'orders'), { ...buildOrderDoc(order, user.uid), placedAt: serverTimestamp() });
-    return ref.id;
+    return { id: ref.id };
   } catch (e) {
-    console.warn('Firestore SDK write failed, falling back to plain REST:', e);
-    try {
-      const user = await ensureSignedIn();
-      const token = await user.getIdToken();
-      return await mirrorOrderViaRest(order, user.uid, token);
-    } catch (e2) {
-      console.warn('Could not mirror order to Firestore at all (admin website will not see this one):', e2);
-      return null;
+    firstKind = mirrorErrorKind(e);
+    // A refusal is a decision, not a transport problem — retrying it over
+    // plain REST just gets refused again, so don't.
+    if (firstKind === 'blocked') {
+      console.warn('Firestore refused the order write (credit hold or failed validation).');
+      return { error: 'blocked' };
     }
+    console.warn('Firestore SDK write failed, falling back to plain REST:', e);
+  }
+  try {
+    const user = await ensureSignedIn();
+    const token = await user.getIdToken();
+    return { id: await mirrorOrderViaRest(order, user.uid, token) };
+  } catch (e2) {
+    console.warn('Could not mirror order to Firestore at all (admin website will not see this one):', e2);
+    return { error: mirrorErrorKind(e2) };
   }
 };
 
@@ -998,7 +1022,11 @@ window.cancelDriverRequest = async function(id) {
    password — to customer_accounts/{installUid}_{phone} so the office can see
    and manage every customer, and returns the office's edits (the `admin`
    map) so the caller can apply them back to the phone. */
-const ACCOUNT_SYNC_FIELDS = ['name', 'company', 'gstin', 'address', 'lat', 'lng', 'acctLast4'];
+// `email` and `outlet` carry the Outlet Details captured at B2B signup. Without
+// them the office never saw the outlet type, and — the part that actually
+// costs someone a wasted trip — the rider never learned the floor, whether
+// there is a lift, or the landmark. They were collected and then went nowhere.
+const ACCOUNT_SYNC_FIELDS = ['name', 'company', 'gstin', 'address', 'email', 'outlet', 'lat', 'lng', 'acctLast4'];
 window.syncCustomerAccount = async function(profile) {
   const phone = String(profile.phone || '');
   if (!/^[6-9]\d{9}$/.test(phone)) return null;
@@ -1107,7 +1135,17 @@ const TEST_OTP = '0000';
      real SMS. That's a SINGLE known test number, not "every number", so it's
      not a broad backdoor — only sign-ins to 9000000000 itself use 0000, and
      every other number still gets a real SMS code. */
-const OTP_TESTING_MODE = !OTP_HAS_CREDENTIAL;
+/* FAIL CLOSED. This was `!OTP_HAS_CREDENTIAL` — deriving the bypass from the
+   ABSENCE of a secret, which is backwards: a CI run with an expired or renamed
+   GitHub secret, a locally produced APK, or a `cap sync` that beat
+   inject-secrets.js to the punch would each silently ship a build where every
+   phone number signs in with 0000. A missing input must never widen access.
+   It is now an explicit opt-in that a release build cannot carry by accident:
+   DEMO_BUILD has to be deliberately set, AND there must genuinely be no
+   credential (so setting it in a live build still cannot open the bypass).
+   scripts/check-secrets-placeholder.js enforces the release side. */
+const DEMO_BUILD = SECRETS.DEMO_BUILD === 'true' || SECRETS.DEMO_BUILD === true;
+const OTP_TESTING_MODE = DEMO_BUILD && !OTP_HAS_CREDENTIAL;
 // The test-number (9000000000 + 0000) path is always allowed; only the
 // all-numbers testing mode is gated to demo builds.
 const OTP_TEST_BYPASS_ALLOWED = true;
@@ -1859,8 +1897,22 @@ function MOCK(method, path, b){
 
   if(path==='/wallet'){ const w=DB.wallet; return ok({balance:w.balance,txns:w.txns}); }
   if(path==='/wallet/topup'){
-    const t=ledgerPost('DEPOSIT', Number(b.amount)||0, b.note||'Prepaid deposit');
-    return ok({txn:t,balance:DB.wallet.balance});
+    // Mirrors the real endpoint: RECORD the request, do not credit the
+    // balance. Only the Razorpay webhook or an admin confirming a bank
+    // transfer can settle a deposit (backend/src/routes/payments.js,
+    // routes/admin.js). This used to credit instantly, which made the demo
+    // teach the opposite of how the system actually behaves — and made a
+    // "your money has arrived" message look correct when it was not.
+    const w = DB.wallet;
+    const t = {
+      id:'TXN'+Date.now().toString(36).toUpperCase(),
+      type:'topup_requested', amount:Number(b.amount)||0,
+      prevBalance:w.balance, newBalance:w.balance,
+      status:'pending_confirmation',
+      note:b.note||'Prepaid deposit', orderNo:null, at:new Date().toISOString(),
+    };
+    w.txns.unshift(t); DB.wallet = w;
+    return ok({id:t.id, status:'pending_confirmation', amount:t.amount, razorpayOrder:null});
   }
 
   if(path==='/orders'&&method==='POST'){
@@ -2835,6 +2887,8 @@ async function syncAccount(){
       phone, type: S.user.customerType === 'b2b' ? 'b2b' : 'b2c',
       name: a.name ?? S.user.name, company: a.company ?? S.user.company, gstin: a.gstin ?? S.user.gstin,
       address: a.address ?? S.user.address, lat: a.lat, lng: a.lng,
+      email: a.email ?? S.user.email ?? null,
+      outlet: a.outlet ?? S.user.outlet ?? null,
       bankVerified: a.bankVerified, acctLast4: a.acctLast4,
     });
     applyAdminEdits(phone, edits);
@@ -3646,14 +3700,19 @@ async function placeOrder(){
   // just written to DB.orders, but S.orders (what the Orders/Invoices/Home
   // screens render) is only otherwise reloaded on app boot, so without this a
   // freshly placed order wouldn't show until the app was restarted.
+  const cartBackup = S.cart.slice();
   S.cart=[]; persist(); await Promise.all([loadWallet(), loadOrders()]);
   go('placed',{replace:true});
-  // Fire-and-forget: doesn't block navigation, but once the doc id comes
-  // back it's saved onto the local order record so the tracking screen can
-  // live-listen to status changes and self-cancel against the right doc.
+  // The mirror is still not awaited — navigation should not wait on a network
+  // round trip — but its OUTCOME is now acted on. Success attaches the doc id
+  // so tracking and self-cancel can target the right document. A refusal means
+  // the office never received this order, so showing it as placed would be a
+  // lie: undo it, restore the cart, and say why.
   if(window.mirrorOrderToFirestore){
-    window.mirrorOrderToFirestore({...payload, orderNo:r.data.orderNo}).then(firestoreId=>{
-      if(!firestoreId) return;
+    window.mirrorOrderToFirestore({...payload, orderNo:r.data.orderNo}).then(res=>{
+      if(res && res.error === 'blocked'){ rollBackRefusedOrder(r.data.orderNo, cartBackup); return; }
+      const firestoreId = res && res.id;
+      if(!firestoreId) return;   // transport failure — order stands, retried on next boot
       const list = DB.orders;
       const idx = list.findIndex(o=>o.orderNo===r.data.orderNo);
       if(idx!==-1){ list[idx] = {...list[idx], firestoreId}; DB.orders = list; }
@@ -3663,6 +3722,22 @@ async function placeOrder(){
     });
   }
   PLACING_ORDER = false;   // order placed and navigated away — ready for the next one
+}
+
+/* Firestore refused the order — credit hold, or the order failed the rules'
+   own validation. The office has no record of it, so neither should the phone.
+   Remove the local order, put the cart back so the customer does not have to
+   rebuild it, and send them somewhere that explains itself. */
+function rollBackRefusedOrder(orderNo, cartBackup){
+  DB.orders = DB.orders.filter(o => o.orderNo !== orderNo);
+  S.orders = S.orders.filter(o => o.orderNo !== orderNo);
+  if(S.lastOrder?.orderNo === orderNo) S.lastOrder = null;
+  if(!S.cart.length && cartBackup?.length){ S.cart = cartBackup.slice(); }
+  persist();
+  markOrderBlocked();
+  renderTabBadge();
+  toast('That order could not be placed — your account is on hold for new orders. Please contact the office.','alert');
+  if(S.screen === 'placed') go('cart',{replace:true}); else paint();
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -4297,14 +4372,11 @@ function arow(ic,title,sub,onclick){
    The real admin system is the Firebase-authenticated web panel at /admin/,
    which is unaffected by this.
 
-   loadAdminOverrides() survives alone because openRazorpayCheckout() reads a
-   Razorpay key out of that store. Nothing writes it any more, so it now
-   always returns {} and the wallet takes its simulated-payment path — the
-   same behaviour as an unconfigured key today. */
-function loadAdminOverrides(){
-  try{ return JSON.parse(localStorage.getItem('mda_admin_overrides')||'{}'); }
-  catch(e){ return {}; }
-}
+   loadAdminOverrides() is gone too. It was kept alive for one reader —
+   openRazorpayCheckout() looked up a Razorpay key in that store — but nothing
+   had written to it since the panel was removed, so it always returned {} and
+   every top-up silently fell through to the simulated-payment path. The
+   Razorpay key id now comes from the server with the order it belongs to. */
 
 function showHours(){
   openSheet(`<div class="sheet-head"><div class="t-lg">Business hours</div>
@@ -4462,55 +4534,70 @@ function topUpSheet(){
       <div class="t-xs muted-2 center mt-12">Secured by Razorpay</div>
     </div>`);
 }
-function startRazorpayTopUp(){
+/* Top-up.
+   Order of operations matters and used to be backwards: the old flow opened
+   the checkout widget FIRST and treated its success callback as proof of
+   payment, then told the customer their money had arrived. It had not — the
+   server credits a balance only when Razorpay's signed webhook says a payment
+   was captured (backend/src/routes/payments.js).
+   Now the deposit request is created server-side first (which is what mints the
+   Razorpay order and the routing notes the webhook needs), the widget is opened
+   against THAT order, and the customer is told the truth: payment received,
+   balance updating shortly. */
+async function startRazorpayTopUp(){
   const amt=parseInt(String(document.getElementById('f-amt').value).replace(/\D/g,''))||0;
   if(amt<100){ toast('Minimum top-up is ₹100','alert'); return; }
+  busy('btn-top',true,'Starting payment');
+  const r=await API.post('/wallet/topup',{amount:amt,note:'Wallet top-up via Razorpay'});
+  busy('btn-top',false,'Pay with Razorpay');
+  if(!r.success){ toast(r.message||'Could not start the payment','alert'); return; }
   closeSheet();
-  openRazorpayCheckout(amt, async ()=>{
-    const r=await API.post('/wallet/topup',{amount:amt,note:'Wallet top-up via Razorpay'});
-    if(!r.success){ toast(r.message||'Could not add money','alert'); return; }
+  openRazorpayCheckout(amt, r.data?.razorpayOrder, async ()=>{
+    // Reload so the balance reflects whatever the SERVER currently says. If the
+    // webhook has already landed the new balance shows immediately; if not, the
+    // pending entry is visible in the ledger and it updates on the next load.
     await loadWallet(); paint();
-    toast(`${money(amt)} added to your ${isB2B()?'credit':'wallet'}`,'check');
+    toast('Payment received — your balance updates once the bank confirms it.','check');
   });
 }
-// Opens the real Razorpay checkout if a live key is configured in Admin Panel;
-// otherwise simulates a successful payment locally so the wallet flow is fully
-// testable before real payment keys exist.
-function openRazorpayCheckout(amount, onSuccess){
-  const keys = loadAdminOverrides().apiKeys || {};
-  const keyId = keys.razorpay_key_id || keys.razorpay;
-  if(window.Razorpay && keyId){
-    try{
-      const rzp = new Razorpay({
-        key: keyId, amount: amount*100, currency:'INR',
-        name: APPCFG.businessName, description:`${isB2B()?'Business credit':'Wallet'} top-up`,
-        prefill:{ name:S.user?.name||'', contact:S.user?.phone||'' },
-        handler: function(){ onSuccess(); },
-        modal:{ ondismiss:function(){ toast('Payment cancelled','info'); } },
-      });
-      rzp.open();
-      return;
-    }catch(e){ console.warn('Razorpay widget failed, falling back to simulated checkout:', e); }
+/* Opens the real Razorpay checkout against a server-created order.
+ *
+ * The simulated-payment fallback that used to live here is GONE. It existed so
+ * the wallet flow could be tested before real keys existed, which was
+ * reasonable — but it shipped in the app, it was reachable from the console
+ * (`window.__rzpFakeSuccess()`), and it ended by calling exactly the same
+ * success path a real payment did. "Pretend the payment succeeded" is not a
+ * thing a production build should be able to do at all, and its absence is now
+ * what makes the success path meaningful.
+ *
+ * The key id comes from the server-created order, not from a client-side
+ * store: the old code read it out of localStorage via loadAdminOverrides(),
+ * which nothing has written to since the admin-key feature was removed, so
+ * that branch was dead and every call fell through to the simulator.
+ */
+function openRazorpayCheckout(amount, rzpOrder, onSuccess){
+  if(!window.Razorpay || !rzpOrder?.id || !rzpOrder?.keyId){
+    toast('Online payment is not available right now. You can pay by bank transfer — contact the office.','alert');
+    return;
   }
-  window.__rzpFakeSuccess = onSuccess;
-  openSheet(`<div class="sheet-head"><div class="t-lg">Razorpay Checkout</div>
-      <button class="iconbtn" onclick="closeSheet()">${icon('close',20)}</button></div>
-    <div class="section" style="text-align:center;">
-      <div class="banner info mb-16">${icon('info',17)}
-        <div>No live Razorpay key is configured yet — this simulates a successful payment so
-        you can test the wallet end-to-end. Add a real Key ID in Admin Panel → API keys →
-        Razorpay to switch to the live checkout.</div></div>
-      <div class="t-sm muted mb-4">Amount</div>
-      <div class="t-2xl num mb-20" style="font-weight:700;">${money(amount)}</div>
-      <button class="btn" id="btn-fake-pay" onclick="fakeRazorpayPay()">Pay ${money(amount)}</button>
-    </div>`);
-}
-async function fakeRazorpayPay(){
-  busy('btn-fake-pay',true,'Processing payment');
-  await new Promise(r=>setTimeout(r,1200));
-  closeSheet();
-  const cb = window.__rzpFakeSuccess; window.__rzpFakeSuccess = null;
-  if(cb) await cb();
+  try{
+    const rzp = new Razorpay({
+      key: rzpOrder.keyId,
+      order_id: rzpOrder.id,          // server-created: amount is fixed by the server
+      amount: rzpOrder.amount, currency: rzpOrder.currency || 'INR',
+      name: APPCFG.businessName, description:`${isB2B()?'Business credit':'Wallet'} top-up`,
+      prefill:{ name:S.user?.name||'', contact:S.user?.phone||'' },
+      // This callback means "the widget closed successfully", nothing more. It
+      // refreshes the view; it does not assert that money moved. The webhook
+      // decides that, server-side.
+      handler: function(){ onSuccess(); },
+      modal:{ ondismiss:function(){ toast('Payment cancelled','info'); } },
+    });
+    rzp.open();
+  }catch(e){
+    console.warn('Razorpay checkout failed to open:', e);
+    toast('Could not open the payment screen. Please try again.','alert');
+  }
 }
 
 
@@ -4680,6 +4767,18 @@ function riderLookupBody(){
 
 function riderTrackingCard(d){
   const live = RIDER.watchId || RIDER.webWatchId;
+  // Floor, lift and landmark, copied onto the delivery by the office from the
+  // customer's Outlet Details. "3rd floor, no lift" changes how a rider packs
+  // the trip, so it belongs next to the address, not buried in a profile.
+  const riderAccessHtml = (d) => {
+    const bits = [];
+    if(d.floor) bits.push(esc(d.floor));
+    if(d.lift === true) bits.push('lift available');
+    else if(d.lift === false) bits.push('<b>no lift</b>');
+    const line = bits.length ? `<div class="t-xs" style="margin-top:4px;">${bits.join(' · ')}</div>` : '';
+    const mark = d.landmark ? `<div class="t-xs" style="margin-top:2px;">Landmark: ${esc(d.landmark)}</div>` : '';
+    return line + mark;
+  };
   return `<div class="card" style="padding:16px;">
       <div class="row between mb-12">
         <div><div class="t-base" style="font-weight:700;">${esc(d.orderNo || '')}</div>
@@ -4689,6 +4788,7 @@ function riderTrackingCard(d){
       <div class="map-wrap mb-12" id="rider-map" role="img" aria-label="Map of you and the delivery address"></div>
       <div class="banner info mb-12">${icon('pin',17)}<div>
         ${esc(d.address || 'No address on this delivery — call the customer.')}
+        ${riderAccessHtml(d)}
         <div id="rider-dist" class="t-xs" style="margin-top:4px;font-weight:700;">${esc(riderDistText())}</div></div></div>
       <div class="row gap-8 mb-12">
         <button class="btn" style="flex:1;" onclick="riderNavigate()">${icon('truck',18)} Navigate</button>
@@ -4997,7 +5097,8 @@ async function boot(){
   if(!S.user){ S.screen='login'; paint(); return; }
   S.screen='home'; S.tab='home'; paint();
   await Promise.all([loadWallet(), loadOrders()]);
-  refreshOrderBlock();
+  // No credit-hold pre-check here any more — see markOrderBlocked(). The hold
+  // is learned from the order write being refused, not from a published list.
   paint();
   initPushNotifications();
   syncAccount();
@@ -5083,24 +5184,25 @@ async function pollLiveState(){
     }
   }catch(e){ /* offline — keep current state */ }
   if(MAINTENANCE_LOCKED) return;
-  // 3) Credit hold — is this customer blocked from ordering? (opaque phone
-  //    hashes, public-read; the real enforcement is in the Firestore rules.)
-  await refreshOrderBlock();
 }
+/* Credit hold.
+   This used to be answered by fetching a public list of SHA-256'd phone
+   numbers and hashing our own to see if it was in it. That list is gone: a
+   10-digit Indian mobile is a 4-billion keyspace, so an unsalted hash of one
+   is not anonymous, and publishing the set told the whole internet which
+   customers were on credit hold. See order_blocks_public in
+   backend/firestore.rules.
+   The hold is now learned the honest way — the order write is refused by the
+   rules and placeOrder() reports it (see markOrderBlocked below). That means
+   the customer finds out when they try to order rather than beforehand, which
+   is a small UX cost for not publishing the list. */
 let ORDER_BLOCKED = false;
-async function refreshOrderBlock(){
-  if(!S.user?.phone){ ORDER_BLOCKED = false; return; }
-  try{
-    const res = await fetch('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/order_blocks_public/hashes');
-    if(!res.ok){ if(res.status===404) ORDER_BLOCKED = false; return; }
-    const doc = await res.json();
-    const arr = (doc.fields && doc.fields.hashes && doc.fields.hashes.arrayValue && doc.fields.hashes.arrayValue.values) || [];
-    const hashes = arr.map(v=>v.stringValue).filter(Boolean);
-    const mine = await sha256Hex(String(S.user.phone));
-    const wasBlocked = ORDER_BLOCKED;
-    ORDER_BLOCKED = !!mine && hashes.includes(mine);
-    if(ORDER_BLOCKED !== wasBlocked && (S.screen==='home' || S.screen==='checkout')) paint();
-  }catch(e){ /* offline — leave current state */ }
+// Called by the order-placement path when Firestore refuses the write with
+// permission-denied and nothing else about the order was wrong.
+function markOrderBlocked(){
+  const was = ORDER_BLOCKED;
+  ORDER_BLOCKED = true;
+  if(!was && (S.screen==='home' || S.screen==='checkout' || S.screen==='cart')) paint();
 }
 function startMaintenancePolling(){
   if(LIVE_TIMER) return;

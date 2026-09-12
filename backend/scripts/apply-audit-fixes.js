@@ -75,56 +75,111 @@ async function patchDoc(token, docPath, fields) {
   if (!res.ok) throw new Error(`patch ${docPath} failed (${res.status}): ${await res.text()}`);
 }
 function sh(cmd, opts = {}) { return execSync(cmd, { cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts }); }
-function shOk(cmd) { try { sh(cmd); return true; } catch (e) { return false; } }
 
-async function main() {
+function setOutput(key, value) {
+  if (process.env.GITHUB_OUTPUT) {
+    require('fs').appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
+  }
+  console.log(`${key}=${value}`);
+}
+
+/* PHASE 1 — decide whether there is anything to do, and which PR.
+   Runs with the service account but executes none of the PR's code. */
+async function select() {
   const sa = JSON.parse(process.env.FCM_SERVICE_ACCOUNT_JSON || '{}');
   if (!sa.client_email) throw new Error('FCM_SERVICE_ACCOUNT_JSON is not set.');
   const token = await getAccessToken(sa);
 
   const req = (await getDoc(token, 'deploy_control/request')) || {};
-  if (!req.requested) { console.log('No apply requested — nothing to do.'); return; }
-  console.log('Apply requested by', req.requestedBy || 'admin');
-
-  const finish = (result) => patchDoc(token, 'deploy_control/request', { requested: false, lastResult: result, lastAt: new Date().toISOString() });
-
-  // 1. Newest open audit PR.
-  let pr;
-  try {
-    const prs = JSON.parse(sh('gh pr list --state open --json number,headRefName,title --limit 50'));
-    const audits = prs.filter(p => String(p.headRefName || '').startsWith('nightly-audit/')).sort((a, b) => b.number - a.number);
-    pr = audits[0];
-  } catch (e) { await finish('could not list PRs: ' + e.message.slice(0, 120)); return; }
-  if (!pr) { console.log('No open audit fix PR found.'); await finish('no open audit fix PR to apply'); return; }
-  console.log(`Applying PR #${pr.number}: ${pr.title}`);
-
-  // 2. Check it out and re-run the tests.
-  try { sh(`gh pr checkout ${pr.number}`); }
-  catch (e) { await finish(`could not check out PR #${pr.number}`); return; }
-  sh('npm ci --ignore-scripts');
-  sh('cd backend && npm ci --ignore-scripts');
-  const testsPass = shOk('npm run test:security') && shOk('node scripts/check-no-secrets.js') && shOk('node scripts/check-secrets-placeholder.js');
-  if (!testsPass) {
-    console.log('Tests FAILED on the PR — not merging.');
-    sh('git checkout master');
-    await finish(`tests failed on PR #${pr.number} — not applied (left open for review)`);
+  if (!req.requested) {
+    console.log('No apply requested — nothing to do.');
+    setOutput('requested', 'false');
+    setOutput('pr', '');
     return;
   }
-  console.log('Tests pass.');
+  console.log('Apply requested by', req.requestedBy || 'admin');
+  setOutput('requested', 'true');
 
-  // 3. VALIDATE ONLY — never merge and never deploy automatically.
-  // The maintenance baseline is explicit: automation must not merge its own PR
-  // or push to production. AI-authored changes gated by a thin (security-only)
-  // test suite must not reach the live website/rules or an auto-merged master
-  // without a human reading the diff. So this job checks the tests pass, then
-  // hands the PR back to you to review + merge on GitHub. It touches nothing
-  // in production.
-  shOk('git checkout master');
-  await finish(`PR #${pr.number} passed the tests and is READY FOR YOUR REVIEW — open it on GitHub, read the diff, and merge it yourself if it's good. (Automation does not merge or deploy.)`);
-  console.log(`Validated PR #${pr.number}. Left for human review — nothing merged or deployed.`);
+  let pr = null;
+  try {
+    const prs = JSON.parse(sh('gh pr list --state open --json number,headRefName,title --limit 50'));
+    // The branch-name filter picks the INTENDED PR; it is not a security
+    // control, because a fork can name its branch anything. What makes running
+    // this PR's code safe is that the job which runs it holds no secrets.
+    const audits = prs
+      .filter((p) => String(p.headRefName || '').startsWith('nightly-audit/'))
+      .sort((a, b) => b.number - a.number);
+    pr = audits[0] || null;
+  } catch (e) {
+    await patchDoc(token, 'deploy_control/request', {
+      requested: false,
+      lastResult: 'could not list PRs: ' + e.message.slice(0, 120),
+      lastAt: new Date().toISOString(),
+    });
+    setOutput('pr', '');
+    return;
+  }
+
+  if (!pr) {
+    console.log('No open audit fix PR found.');
+    await patchDoc(token, 'deploy_control/request', {
+      requested: false,
+      lastResult: 'no open audit fix PR to apply',
+      lastAt: new Date().toISOString(),
+    });
+    setOutput('pr', '');
+    return;
+  }
+  console.log(`Selected PR #${pr.number}: ${pr.title}`);
+  setOutput('pr', String(pr.number));
 }
 
-main().catch(async (e) => {
+/* PHASE 3 — write the outcome back. Holds the service account; never checks
+   out or runs the pull request's code.
+   VALIDATE ONLY: automation must not merge its own PR or push to production.
+   AI-authored changes gated by a thin (security-only) test suite must not
+   reach the live website, the rules, or master without a human reading the
+   diff. This records a verdict and stops. */
+async function report() {
+  const sa = JSON.parse(process.env.FCM_SERVICE_ACCOUNT_JSON || '{}');
+  if (!sa.client_email) throw new Error('FCM_SERVICE_ACCOUNT_JSON is not set.');
+  const token = await getAccessToken(sa);
+
+  const pr = process.env.AUDIT_PR || '';
+  const passed = process.env.AUDIT_TESTS_PASSED;
+
+  let result;
+  if (!pr) {
+    result = 'no open audit fix PR to apply';
+  } else if (passed === 'true') {
+    result = `PR #${pr} passed the tests and is READY FOR YOUR REVIEW — open it on GitHub, read the diff, and merge it yourself if it's good. (Automation does not merge or deploy.)`;
+  } else if (passed === 'false') {
+    result = `tests failed on PR #${pr} — not applied (left open for review)`;
+  } else {
+    // The test job errored or was skipped rather than reporting a verdict.
+    result = `could not complete the test run for PR #${pr} — check the workflow logs`;
+  }
+
+  await patchDoc(token, 'deploy_control/request', {
+    requested: false,
+    lastResult: result,
+    lastAt: new Date().toISOString(),
+  });
+  console.log(result);
+}
+
+const mode = process.argv.includes('--report') ? 'report'
+  : process.argv.includes('--select') ? 'select'
+  : null;
+
+if (!mode) {
+  console.error('Usage: apply-audit-fixes.js --select | --report');
+  console.error('These run as SEPARATE GitHub Actions jobs so that the pull request\'s own');
+  console.error('code never executes in a job that holds FCM_SERVICE_ACCOUNT_JSON.');
+  process.exit(2);
+}
+
+(mode === 'select' ? select() : report()).catch(async (e) => {
   console.error('apply-audit-fixes failed:', e);
   try {
     const sa = JSON.parse(process.env.FCM_SERVICE_ACCOUNT_JSON);

@@ -124,16 +124,34 @@ async function main() {
   const sa = JSON.parse(raw);
   const token = await getAccessToken(sa);
 
-  const [broadcasts, deviceTokens] = await Promise.all([
+  const [broadcasts, deviceTokens, accounts] = await Promise.all([
     firestoreList(token, 'broadcasts'),
     firestoreList(token, 'device_tokens'),
+    firestoreList(token, 'customer_accounts'),
   ]);
 
   const pending = broadcasts.filter(b => !b.pushSent);
   if (!pending.length) { console.log('No new broadcasts to push.'); return; }
 
+  /* A device token's `audience` field is chosen by the client that registered
+     it (the Firestore rule only checks it is 'b2b' or 'b2c'), so on its own it
+     decides nothing: a retail install could set 'b2b' and receive wholesale
+     pricing announcements meant for businesses.
+     customer_accounts/{uid}_{phone} carries the account type and its id is
+     pinned to the writer's own uid, so the type recorded there is the better
+     answer whenever there is one. Fall back to the token's own claim only when
+     the device has no account on file (a fresh install that has not signed in
+     yet), and in that case treat it as retail — the failure direction is
+     toward the less privileged audience. */
+  const typeByUid = {};
+  for (const a of accounts) {
+    const uid = String(a.id || '').split('_')[0];
+    if (uid && (a.type === 'b2b' || a.type === 'b2c')) typeByUid[uid] = a.type;
+  }
+  const audienceOf = (d) => typeByUid[d.uid] || (d.uid ? 'b2c' : (d.audience || 'b2c'));
+
   for (const b of pending) {
-    const targets = deviceTokens.filter(d => b.audience === 'all' || d.audience === b.audience);
+    const targets = deviceTokens.filter(d => b.audience === 'all' || audienceOf(d) === b.audience);
     console.log(`Broadcast ${b.id} ("${b.message}") -> ${targets.length} device(s), audience=${b.audience}`);
     let sent = 0, failed = 0;
     for (const d of targets) {

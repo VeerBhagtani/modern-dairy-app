@@ -11,6 +11,10 @@ const KNOWN_SECRETS = {
   gst_api_secret: 'gst-api-secret',
   razorpay: 'razorpay-key-secret',
   razorpay_key_id: 'razorpay-key-id',
+  // Razorpay's webhook signing secret is a SEPARATE value you choose in
+  // Dashboard → Settings → Webhooks. It is not the API key secret, and
+  // verifying webhook signatures with the key secret simply never matches.
+  razorpay_webhook_secret: 'razorpay-webhook-secret',
   whatsapp: 'whatsapp-access-token',
   whatsapp_phone_number_id: 'whatsapp-phone-number-id',
   uber: 'uber-direct-client-secret',

@@ -3,6 +3,7 @@ const { col, db, FieldValue } = require('../services/firestore');
 const { requireAuth } = require('../middleware/auth');
 const { writeLimiter } = require('../middleware/rateLimit');
 const { isOptionalBoundedString } = require('../middleware/validate');
+const razorpay = require('../services/razorpayClient');
 
 router.use(requireAuth());
 
@@ -27,10 +28,17 @@ router.get('/', async (req, res) => {
 });
 
 // POST /wallet/topup { amount, note } — this only RECORDS a deposit request.
-// It does not move real money and does not credit the balance itself — an admin
-// must confirm the transfer was actually received (see routes/admin.js) before
-// the ledger entry is marked settled and the balance updated. Never trust a
-// client-submitted top-up as proof of payment.
+// It does not move real money and does not credit the balance itself. Exactly
+// two things can settle it:
+//   · the Razorpay webhook, after verifying Razorpay's signature
+//     (routes/payments.js), for an online payment; or
+//   · an admin confirming a bank transfer actually arrived (routes/admin.js).
+// A client saying "I paid" is never one of them.
+//
+// When Razorpay is configured this also opens a real Razorpay order and returns
+// its id, so the checkout the customer sees is tied to a server-created order
+// for a server-decided amount. The `notes` are what let the webhook find this
+// ledger entry again — without them a captured payment cannot be routed.
 router.post('/topup', writeLimiter, async (req, res) => {
   const amount = Number(req.body?.amount) || 0;
   if (!Number.isFinite(amount) || amount < 1000 || amount > 1000000) {
@@ -47,7 +55,33 @@ router.post('/topup', writeLimiter, async (req, res) => {
     status: 'pending_confirmation',
     at: FieldValue.serverTimestamp(),
   });
-  res.json({ success: true, data: { id: entry.id, status: 'pending_confirmation' } });
+
+  let razorpayOrder = null;
+  try {
+    const order = await razorpay.createOrder({
+      amountInRupees: amount,
+      receipt: entry.id,
+      notes: { customerId: req.userId, ledgerEntryId: entry.id },
+    });
+    // keyId is the PUBLISHABLE Razorpay key — it is meant to be in the client,
+    // unlike the key secret, which never leaves Secret Manager. Sending it here
+    // means the app does not need its own copy of any Razorpay configuration.
+    razorpayOrder = {
+      id: order.id, amount: order.amount, currency: order.currency,
+      keyId: await razorpay.publishableKeyId(),
+    };
+    await entry.update({ razorpayOrderId: order.id });
+  } catch (e) {
+    // Razorpay not configured, or its API is down. The deposit request still
+    // stands and an admin can confirm a bank transfer against it — so this is
+    // a degraded path, not a failure.
+    if (e.code !== 'NOT_CONFIGURED') console.error('wallet topup: razorpay order failed', e.message);
+  }
+
+  res.json({
+    success: true,
+    data: { id: entry.id, status: 'pending_confirmation', amount, razorpayOrder },
+  });
 });
 
 module.exports = router;

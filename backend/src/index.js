@@ -8,6 +8,7 @@ const ordersRoutes = require('./routes/orders');
 const walletRoutes = require('./routes/wallet');
 const adminRoutes = require('./routes/admin');
 const adminRecoveryRoutes = require('./routes/adminRecovery');
+const paymentRoutes = require('./routes/payments');
 const { generalLimiter } = require('./middleware/rateLimit');
 
 const app = express();
@@ -57,6 +58,14 @@ app.use(cors({
   },
 }));
 
+// The Razorpay webhook must see the EXACT bytes Razorpay signed, so it is
+// mounted with a raw body parser BEFORE express.json() gets a chance to parse
+// and discard them. Re-serialising a parsed body does not reliably reproduce
+// the original bytes (key order, number formatting, unicode escapes), so an
+// HMAC computed over it would fail against genuine webhooks and — worse —
+// tempt someone into "fixing" that by skipping verification.
+app.use('/payments/razorpay/webhook', express.raw({ type: '*/*', limit: '1mb' }));
+
 app.use(express.json({ limit: '1mb' }));
 app.use(generalLimiter);
 
@@ -66,6 +75,9 @@ app.use('/config', configRoutes);
 app.use('/auth', authRoutes);
 app.use('/orders', ordersRoutes);
 app.use('/wallet', walletRoutes);
+// Unauthenticated by design — the caller is Razorpay, not a signed-in user.
+// Its signature check is what authenticates it. See routes/payments.js.
+app.use('/payments', paymentRoutes);
 app.use('/admin', adminRoutes);
 app.use('/admin-recovery', adminRecoveryRoutes);
 

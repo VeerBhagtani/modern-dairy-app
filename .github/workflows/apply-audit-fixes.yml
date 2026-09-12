@@ -7,7 +7,21 @@ name: Apply Audit Fixes
 # on GitHub. Runs on a short schedule so a click is picked up within ~10-15 min
 # (GitHub's scheduler can add delay), plus manual dispatch.
 #
-# FCM_SERVICE_ACCOUNT_JSON is already set; GITHUB_TOKEN is automatic.
+# SPLIT INTO TWO JOBS ON PURPOSE. The PR's own test code is untrusted: anyone
+# who can open a pull request chooses what `npm run test:security` executes, and
+# the branch-name filter is not an authorisation check (a fork PR can use any
+# head branch name it likes). Previously that code ran in the same job as
+# FCM_SERVICE_ACCOUNT_JSON — a service account with datastore scope, i.e.
+# read/write over all of Firestore BYPASSING the security rules, plus FCM send.
+# `npm ci --ignore-scripts` blocked install-time execution but the test files
+# themselves were still the payload.
+#
+#   job 1 (test)   — checks out the PR, runs its code, HAS NO SECRETS.
+#   job 2 (report) — has the service account, runs no PR code, only writes the
+#                    outcome job 1 passed to it.
+#
+# So untrusted code and the credential are never in the same process, and job 1
+# cannot exfiltrate what it cannot see.
 
 on:
   schedule:
@@ -19,20 +33,73 @@ permissions:
   pull-requests: read
 
 jobs:
-  apply:
+  # ── 1. Is a validation even requested, and which PR? ─────────────────────
+  # Reads Firestore (so it needs the secret) but runs no repository code
+  # beyond this repo's own checked-out scripts at the default branch.
+  select:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      requested: ${{ steps.pick.outputs.requested }}
+      pr: ${{ steps.pick.outputs.pr }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - id: pick
+        env:
+          FCM_SERVICE_ACCOUNT_JSON: ${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}
+          GH_TOKEN: ${{ github.token }}
+        run: node backend/scripts/apply-audit-fixes.js --select
+
+  # ── 2. Run the PR's tests with NO secrets in the environment ─────────────
+  test:
+    needs: select
+    if: needs.select.outputs.requested == 'true' && needs.select.outputs.pr != ''
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      passed: ${{ steps.run.outputs.passed }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - name: Apply latest audit fixes if the admin requested it
-        env:
-          FCM_SERVICE_ACCOUNT_JSON: ${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}
+      - env:
           GH_TOKEN: ${{ github.token }}
-        run: node backend/scripts/apply-audit-fixes.js
+        run: gh pr checkout ${{ needs.select.outputs.pr }}
+      # --ignore-scripts stays: it stops package lifecycle hooks running during
+      # install. The tests below are still attacker-authored, which is exactly
+      # why this job holds nothing worth stealing.
+      - run: npm ci --ignore-scripts
+      - run: cd backend && npm ci --ignore-scripts
+      - id: run
+        run: |
+          if npm run test:security \
+            && node scripts/check-no-secrets.js \
+            && node scripts/check-secrets-placeholder.js; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── 3. Record the outcome ────────────────────────────────────────────────
+  # Has the credential; never checks out or runs the PR's code.
+  report:
+    needs: [select, test]
+    if: always() && needs.select.outputs.requested == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - env:
+          FCM_SERVICE_ACCOUNT_JSON: ${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}
+          AUDIT_PR: ${{ needs.select.outputs.pr }}
+          AUDIT_TESTS_PASSED: ${{ needs.test.outputs.passed }}
+        run: node backend/scripts/apply-audit-fixes.js --report

@@ -81,7 +81,14 @@ try {
   // ---------- options ----------
   let r = await call('/options');
   ok(r.status === 200 && r.json.data.length === 2, 'lists both recovery numbers');
-  ok(r.json.data.every((o) => /^•+\d{4}$/.test(o.label)) && !leaks(r), 'numbers are shown masked, never in full');
+  // Stronger than the old assertion, which only required the numbers to be
+  // MASKED (••••••0666). /options is unauthenticated, so even the last four
+  // digits were free to anyone who asked — and four digits is most of what a
+  // SIM-swap or a "calling about your account" pretext needs. The labels are
+  // now bare ordinals: the person who owns the handsets knows which is which,
+  // and a prober learns nothing at all.
+  ok(r.json.data.every((o) => !/\d{4}/.test(o.label)) && !leaks(r),
+    'options leak no phone digits at all, not even masked');
   secrets = {};
   r = await call('/options');
   ok(r.status === 503, 'no recovery numbers configured -> 503, nothing offered');

@@ -38,7 +38,17 @@ async function createOrder({ amountInRupees, receipt, notes }) {
 
 async function verifyWebhookSignature(rawBody, signature) {
   const crypto = require('crypto');
-  const secret = await getSecret('razorpay'); // webhook secret is typically the key secret or a dedicated webhook secret set in Razorpay dashboard
+  // The WEBHOOK secret, not the API key secret. These are different values in
+  // Razorpay (Dashboard → Settings → Webhooks sets the former), and this used
+  // to read the key secret, so every genuine webhook would have failed
+  // verification. Fail closed when it is unset: an unverifiable webhook must
+  // be rejected, never waved through.
+  const secret = await getSecret('razorpay_webhook_secret');
+  if (!secret) {
+    const err = new Error('Razorpay webhook secret is not configured — cannot verify webhook signatures.');
+    err.code = 'NOT_CONFIGURED';
+    throw err;
+  }
   const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
   // Constant-time comparison — a plain === leaks how many leading bytes
   // matched via response-timing, letting an attacker forge a valid signature
@@ -49,4 +59,11 @@ async function verifyWebhookSignature(rawBody, signature) {
   return crypto.timingSafeEqual(a, b);
 }
 
-module.exports = { createOrder, verifyWebhookSignature };
+// The key ID is publishable by design — Razorpay's own checkout script takes it
+// in the browser. Only the key secret and the webhook secret are confidential,
+// and neither ever leaves this service.
+async function publishableKeyId() {
+  return getSecret('razorpay_key_id');
+}
+
+module.exports = { createOrder, verifyWebhookSignature, publishableKeyId };

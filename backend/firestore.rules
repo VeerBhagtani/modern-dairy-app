@@ -9,8 +9,16 @@ service cloud.firestore {
     // reads/manages everything. Once the backend deploys, real writes
     // move behind the Admin SDK (which bypasses these rules via a service
     // account) and this goes back to a deny-all backstop.
+    // Admin identity. The custom claim is the real mechanism: it lets an admin
+    // be added or revoked with one setCustomUserClaims call instead of a rules
+    // redeploy, and it stops a single uid literal being the published name of
+    // the one account worth attacking. The uid below stays as a fallback so
+    // deploying these rules does not lock the existing admin out before the
+    // claim is set — remove it once `admin: true` is on that account.
     function isAdmin() {
-      return request.auth != null && request.auth.uid == '63cH4Dduh4WS7okdV0s0DcJtD7q2';
+      return request.auth != null
+             && (request.auth.token.get('admin', false) == true
+                 || request.auth.uid == '63cH4Dduh4WS7okdV0s0DcJtD7q2');
     }
     function isOwner() {
       return request.auth != null && resource.data.createdByUid == request.auth.uid;
@@ -70,16 +78,33 @@ service cloud.firestore {
     function strOk(v, max) {
       return v == null || (v is string && v.size() <= max);
     }
-    // Credit hold / block list. The admin can stop a specific customer (by
-    // phone) from placing orders — e.g. over their credit limit. This is
-    // enforced HERE, at the rules layer, so it is authoritative: a blocked
-    // customer's order write is denied on the server, not just hidden in the
-    // app. The block list (order_blocks/list.blockedPhones) is an admin-only
-    // doc, but rules get()/exists() can still read it. Absent list => nobody
-    // blocked (fail-open on the list's existence, never on a real block).
+    // Credit hold / block list — e.g. a customer over their credit limit.
+    //
+    // READ THIS BEFORE RELYING ON IT. Two checks run, and they are not equally
+    // strong:
+    //   · blockedUids  — compared against request.auth.uid, which the client
+    //                    cannot forge. This is the one that actually holds.
+    //   · blockedPhones — compared against request.resource.data.phone, which
+    //                    the client chooses. A determined caller edits that
+    //                    field and walks past it. It is kept because it still
+    //                    stops the honest path and costs nothing, NOT because
+    //                    it is a security control.
+    // So: a block is only enforceable once the admin has recorded the uid
+    // (the admin website writes it from the order's createdByUid). Because
+    // customer identity is currently a per-install anonymous uid, reinstalling
+    // yields a new uid and the hold must be re-applied. That is a real
+    // limitation of anonymous auth, not of this rule — it disappears once
+    // customers have a durable server-side identity.
+    //
+    // Absent list => nobody blocked (fail-open on the list's existence only,
+    // never on a real block).
+    function blockList() {
+      return get(/databases/$(database)/documents/order_blocks/list).data;
+    }
     function notBlocked(d) {
       return !exists(/databases/$(database)/documents/order_blocks/list)
-             || !(d.phone in get(/databases/$(database)/documents/order_blocks/list).data.get('blockedPhones', []));
+             || (!(request.auth.uid in blockList().get('blockedUids', []))
+                 && !(d.phone in blockList().get('blockedPhones', [])));
     }
     match /orders/{orderId} {
       // Any authenticated (including anonymous) client can create an order,
@@ -91,9 +116,17 @@ service cloud.firestore {
       // real lifecycle; the out-of-band cron then price-checks it.
       allow create: if request.auth != null
                     && request.resource.data.keys().hasAll(['orderNo', 'items', 'subtotal', 'gst', 'delivery', 'total', 'status', 'placedAt', 'createdByUid'])
-                    && request.resource.data.keys().hasOnly(['orderNo', 'items', 'subtotal', 'gst', 'delivery', 'platform', 'total', 'payment', 'customerType', 'company', 'gstin', 'name', 'phone', 'address', 'status', 'createdByUid', 'placedAt'])
+                    && request.resource.data.keys().hasOnly(['orderNo', 'items', 'subtotal', 'gst', 'delivery', 'platform', 'total', 'payment', 'customerType', 'company', 'gstin', 'name', 'phone', 'address', 'status', 'createdByUid', 'placedAt', 'priceVerified'])
                     && request.resource.data.createdByUid == request.auth.uid
                     && request.resource.data.status == 'placed'
+                    // priceVerified is now WRITTEN by the client but PINNED to
+                    // false, which is what lets verify-order-prices.js find its
+                    // backlog with a query instead of scanning every order ever
+                    // placed. Pinning is the whole point: the field has to
+                    // exist for the query to match, and a forged `true` would
+                    // make the price check skip the order entirely — so the
+                    // rule permits exactly one value.
+                    && request.resource.data.get('priceVerified', false) == false
                     && request.resource.data.customerType in ['b2b', 'b2c']
                     && request.resource.data.total is number
                     && request.resource.data.total > 0 && request.resource.data.total <= 500000
@@ -159,10 +192,14 @@ service cloud.firestore {
     // split, "no rider login" would mean "every customer's address is public",
     // which is not a trade worth making.
     //
-    // Residual risk, stated plainly: anyone who knows a live order number can
-    // see that one delivery's address and post a location to it. The admin
-    // sees the rider's name and phone on every update, and the document stops
-    // accepting writes the moment the order leaves out_for_delivery.
+    // Residual risk, stated plainly: the document id is a 10-character code
+    // drawn from a 32-symbol alphabet by crypto.getRandomValues (~50 bits, see
+    // newDeliveryCode in legal/admin/index.html), so it cannot be guessed and
+    // `list` is admin-only — but it IS a bearer token. Anyone it is forwarded
+    // to (the code travels over WhatsApp) can read that one delivery's address
+    // and phone, and can post a location and a rider name to it, because
+    // riders have no identity to check. Scope is one delivery; the admin sees
+    // the rider name on every update; writes stop when active becomes false.
     function isDeliveryLocationUpdate() {
       return request.resource.data.diff(resource.data).affectedKeys()
                .hasOnly(['riderLat', 'riderLng', 'riderAt', 'riderAccuracy', 'riderName', 'riderPhone'])
@@ -184,9 +221,16 @@ service cloud.firestore {
       allow create, delete: if isAdmin();
       allow update: if isAdmin() || isDeliveryLocationUpdate();
     }
+    // order_blocks_public is GONE. It published SHA-256 of each blocked
+    // customer's phone number with `allow read: if true`, described as "opaque
+    // phone hashes". They were not opaque: Indian mobiles are 10 digits with a
+    // leading 6-9, a keyspace of 4e9, and an unsalted single-round SHA-256 over
+    // that is exhausted in seconds on a GPU. Anyone could recover the phone
+    // number of every customer on credit hold — a list of local businesses in
+    // financial difficulty. The app no longer reads it; a blocked order now
+    // simply fails the create rule and the app reports that.
     match /order_blocks_public/{docId} {
-      allow read: if true;          // opaque phone hashes only — for app UX
-      allow write: if isAdmin();
+      allow read, write: if isAdmin();
     }
 
     // Catalogue/config: public read (so the app could fetch these directly
@@ -268,6 +312,23 @@ service cloud.firestore {
     // only ever write its own records. The `admin` map holds the office's
     // edits: customers can't create or change it, and the app applies it
     // back to the phone.
+    // The Outlet Details map from B2B signup. Bounded the same way every other
+    // free-text field here is: absent/null is fine, but if it is present it
+    // must be a map with only these keys and nothing oversized inside it —
+    // otherwise it is an unbounded blob on a document the office loads for
+    // every customer.
+    function outletOk(o) {
+      return o == null
+             || (o is map
+                 && o.keys().hasOnly(['outletName', 'outletType', 'pincode', 'floor', 'floorNo', 'lift', 'landmark'])
+                 && strOk(o.get('outletName', null), 120)
+                 && strOk(o.get('outletType', null), 60)
+                 && strOk(o.get('pincode', null), 6)
+                 && strOk(o.get('floor', null), 12)
+                 && strOk(o.get('floorNo', null), 3)
+                 && strOk(o.get('landmark', null), 200)
+                 && (o.get('lift', null) == null || o.get('lift', null) is bool));
+    }
     function accountFieldsOk(d) {
       return d.phone is string && d.phone.matches('^[6-9][0-9]{9}$')
              && d.type in ['b2b', 'b2c']
@@ -275,6 +336,8 @@ service cloud.firestore {
              && strOk(d.get('company', null), 200)
              && strOk(d.get('gstin', null), 20)
              && strOk(d.get('address', null), 500)
+             && strOk(d.get('email', null), 254)
+             && outletOk(d.get('outlet', null))
              && strOk(d.get('acctLast4', null), 4)
              && (d.get('lat', null) == null || d.get('lat', null) is number)
              && (d.get('lng', null) == null || d.get('lng', null) is number)
@@ -283,13 +346,13 @@ service cloud.firestore {
     match /customer_accounts/{accountId} {
       allow create: if request.auth != null
                     && accountId == request.auth.uid + '_' + request.resource.data.phone
-                    && request.resource.data.keys().hasOnly(['phone', 'type', 'name', 'company', 'gstin', 'address', 'lat', 'lng', 'bankVerified', 'acctLast4', 'createdAt', 'updatedAt'])
+                    && request.resource.data.keys().hasOnly(['phone', 'type', 'name', 'company', 'gstin', 'address', 'email', 'outlet', 'lat', 'lng', 'bankVerified', 'acctLast4', 'createdAt', 'updatedAt'])
                     && accountFieldsOk(request.resource.data);
       allow update: if isAdmin()
                     || (request.auth != null
                         && accountId == request.auth.uid + '_' + resource.data.phone
                         && request.resource.data.phone == resource.data.phone
-                        && request.resource.data.keys().hasOnly(['phone', 'type', 'name', 'company', 'gstin', 'address', 'lat', 'lng', 'bankVerified', 'acctLast4', 'createdAt', 'updatedAt', 'admin'])
+                        && request.resource.data.keys().hasOnly(['phone', 'type', 'name', 'company', 'gstin', 'address', 'email', 'outlet', 'lat', 'lng', 'bankVerified', 'acctLast4', 'createdAt', 'updatedAt', 'admin'])
                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['admin', 'createdAt'])
                         && accountFieldsOk(request.resource.data));
       // A get of a missing doc must succeed (the app checks before its first
@@ -298,10 +361,46 @@ service cloud.firestore {
       allow list, delete: if isAdmin();
     }
 
-    // Everything else (customers, wallet ledgers, admin audit log, OTP
-    // challenges) holds personal/financial data — admin-only, no exceptions.
-    match /{document=**} {
+    // ── Admin console collections ────────────────────────────────────────
+    // These hold personal/financial/operational data and are admin-only. They
+    // are named explicitly rather than swept up by a blanket catch-all, so
+    // that a collection nobody thought about does not silently inherit full
+    // admin read/write the moment some other component creates it.
+    //
+    // Note on Firestore semantics: rules are OR'd across every matching path,
+    // so this block only ever ADDS admin access — it cannot narrow what the
+    // per-collection rules above already allow.
+    match /{adminColl}/{docId} {
+      allow read, write: if isAdmin() && adminColl in [
+        'customers',            // customer records (backend-owned)
+        'admin_audit_log',      // who did what, from the admin website
+        'admins',               // admin login records (bcrypt hashes)
+        'admin_recovery',       // the outstanding password-recovery challenge
+        'otp_challenges',       // server-side OTP verification state
+        'audit_control',        // "schedule audit tonight" flag
+        'audits',               // nightly audit reports
+        'maintenance_log',      // one entry per audit finding
+        'deploy_control',       // "validate audit fixes" request flag
+        'reverify_control',     // business re-verification flag
+        'gst_verifications',    // proof a GSTIN was verified, for b2b signup
+        // Read by the main Firebase bridge in www/index.html, which is
+        // currently DORMANT (its config is still PASTE_API_KEY). Admin-only is
+        // the deliberate fail-closed default until it is switched on; turning
+        // that bridge on means writing owner-scoped rules for these two, the
+        // way /orders already has.
+        'config',               // FB.config() -> config/app
+        'ledger'                // FB.ledger(uid) -> per-customer wallet ledger
+      ];
+    }
+    // Wallet ledgers live under customers/{id}/wallet_ledger/{entry}.
+    match /customers/{customerId}/{sub=**} {
       allow read, write: if isAdmin();
+    }
+    // Anything not matched above is denied. This is already Firestore's
+    // default; stating it means a reader does not have to infer it, and a new
+    // collection starts closed rather than open.
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

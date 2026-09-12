@@ -20,6 +20,13 @@ const col = {
   auditLog: () => db.collection('admin_audit_log'),
   appConfig: () => db.collection('app_config').doc('singleton'),
   otpChallenges: () => db.collection('otp_challenges'),
+  // Proof that a phone number's GSTIN was actually checked against the GST
+  // provider. Written by POST /auth/b2b/register, required by verify-otp
+  // before it will hand out a b2b account — see routes/auth.js.
+  gstVerifications: () => db.collection('gst_verifications'),
+  // One document per LIVE refresh token, keyed by its jti. Present = usable;
+  // absent = already consumed or revoked. See middleware/auth.js.
+  refreshTokens: () => db.collection('refresh_tokens'),
 };
 
 async function writeAuditLog({ adminId, action, target, before, after }) {
