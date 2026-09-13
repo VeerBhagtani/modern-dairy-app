@@ -43,8 +43,21 @@
 <script src="vendor/maplibre/maplibre-gl-csp.js" defer></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Plus+Jakarta+Sans:opsz,wght@8..144,400;8..144,500;8..144,600;8..144,700;8..144,800&display=swap" rel="stylesheet">
-<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<!-- Loaded non-blocking. A pending stylesheet blocks EXECUTION of every
+     classic script after it, so on a phone with no signal this remote
+     stylesheet held up config.js, secrets.js and the whole app behind a
+     network timeout — a blank screen, in an app that is otherwise fully
+     usable offline. media="print" makes the browser fetch it at low priority
+     without blocking, and the onload swaps it in the moment it arrives. The
+     fonts still apply exactly as before; only the waiting is gone. -->
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Plus+Jakarta+Sans:opsz,wght@8..144,400;8..144,500;8..144,600;8..144,700;8..144,800&display=swap"
+      rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Plus+Jakarta+Sans:opsz,wght@8..144,400;8..144,500;8..144,600;8..144,700;8..144,800&display=swap" rel="stylesheet"></noscript>
+<!-- defer, for the same reason: this was a synchronous remote script sitting
+     in front of the entire app. Razorpay is needed only when someone taps
+     "Pay with Razorpay", and openRazorpayCheckout() already checks for
+     window.Razorpay and reports a clear failure if it never loaded. -->
+<script src="https://checkout.razorpay.com/v1/checkout.js" defer></script>
 <script src="config.js"></script>
 <script src="secrets.js"></script>
 <style>
@@ -5047,11 +5060,24 @@ function pickFields(obj, schema){
   }
   return out;
 }
+/* A fetch that gives up. boot() awaits loadLiveCatalogueAndConfig() before it
+   paints anything, and these were bare fetches with no deadline — so on a weak
+   or absent mobile signal the customer sat in front of a blank screen until
+   the OS gave up on the socket (measured at 13 seconds with the host
+   unreachable, and unbounded in the general case). The fallback to the bundled
+   catalogue was always there; nothing was reaching it in a useful time. The
+   abort is what actually drops the socket — a plain Promise.race would leave
+   the request running and the screen still waiting. */
+function fetchWithDeadline(url, ms = 4000){
+  const ctl = new AbortController();
+  const timer = setTimeout(()=>ctl.abort(), ms);
+  return fetch(url, { signal: ctl.signal }).finally(()=>clearTimeout(timer));
+}
 async function loadLiveCatalogueAndConfig(){
   try{
     const [prodRes, cfgRes] = await Promise.all([
-      fetch('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/products?pageSize=300'),
-      fetch('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/app_config/singleton'),
+      fetchWithDeadline('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/products?pageSize=300'),
+      fetchWithDeadline('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/app_config/singleton'),
     ]);
     if(prodRes.ok){
       const data = await prodRes.json();
@@ -5173,7 +5199,10 @@ let LIVE_TIMER = null;
 async function pollLiveState(){
   // 1) App-block flags (maintenance + per-segment disables) from app_config.
   try{
-    const res = await fetch('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/app_config/singleton');
+    // Bounded for the same reason: this runs every 20 seconds, so an
+    // unbounded request on a bad connection would stack up one hung fetch per
+    // tick instead of simply missing a poll and trying again.
+    const res = await fetchWithDeadline('https://firestore.googleapis.com/v1/projects/modern-dairy-pune/databases/(default)/documents/app_config/singleton');
     if(res.ok){
       const doc = await res.json();
       const f = doc.fields || {};

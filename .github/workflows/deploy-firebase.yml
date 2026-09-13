@@ -1,0 +1,103 @@
+name: Deploy Firebase (rules, indexes, hosting)
+
+# This is the deploy that MATTERS today. The Cloud Run backend is written but
+# not deployed, so backend/firestore.rules is the entire enforcement layer for
+# live customer orders — and until now it was shipped by someone typing
+# `firebase deploy` locally, from whatever was in their working tree, with no
+# assertion having run against it. A text-level check has already missed a
+# real bypass in these rules once, so the emulator suite runs first and a red
+# result stops the deploy.
+#
+# Required repo secret:
+#   FIREBASE_SERVICE_ACCOUNT - JSON key for a service account on
+#     modern-dairy-pune with: Firebase Rules Admin, Cloud Datastore Index
+#     Admin, Firebase Hosting Admin, Service Usage Consumer.
+#
+# Deliberately manual: rules changes should be a decision, not a side effect
+# of merging. Targets are selectable so a hosting-only change (the admin
+# panel, the rider app, the legal pages) doesn't have to touch the rules.
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: What to deploy
+        type: choice
+        default: firestore:rules,firestore:indexes,storage,hosting
+        options:
+          - firestore:rules,firestore:indexes,storage,hosting
+          - firestore:rules,firestore:indexes,storage
+          - hosting
+        required: true
+      project:
+        description: Firebase project id
+        default: modern-dairy-pune
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Guard — is the deploy credential present?
+        run: |
+          if [ -z "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" ]; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT is not set. See DEPLOYMENT.md."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          cd backend && npm ci --ignore-scripts
+
+      - name: Preflight
+        run: npm run preflight
+
+      # The gate. If the rules about to be deployed fail against a real
+      # emulator, nothing is deployed — not even hosting, because a half
+      # deploy is worse than none.
+      - name: Verify the rules that are about to ship
+        if: contains(github.event.inputs.targets, 'firestore:rules')
+        run: npm run test:rules
+
+      - name: Write service account credential
+        run: |
+          printf '%s' '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > "$RUNNER_TEMP/sa.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/sa.json" >> "$GITHUB_ENV"
+
+      - name: Deploy
+        run: |
+          npx firebase-tools deploy \
+            --project "${{ github.event.inputs.project }}" \
+            --only "${{ github.event.inputs.targets }}" \
+            --non-interactive
+
+      - name: Remove the credential
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sa.json"
+
+      # Deploying rules is not the same as the rules being live and correct.
+      # This confirms the site actually serves after the deploy, so a broken
+      # hosting release is caught here rather than by a customer.
+      - name: Smoke-check hosting
+        if: contains(github.event.inputs.targets, 'hosting')
+        run: |
+          BASE="https://${{ github.event.inputs.project }}.web.app"
+          for P in / /privacy-policy.html /terms.html /admin/ /ride/; do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --retry 3 --retry-delay 5 "$BASE$P")
+            echo "$CODE  $BASE$P"
+            [ "$CODE" = "200" ] || { echo "::error::$BASE$P returned $CODE"; exit 1; }
+          done

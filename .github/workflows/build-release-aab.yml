@@ -11,11 +11,21 @@ name: Build Signed Release AAB
 # the actual values (not committed to this repo).
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      api_base:
+        description: "Backend API base URL (blank = DEMO build, which is the project's state today)"
+        default: ''
+        required: false
+      version_name:
+        description: Version name shown to users (e.g. 1.0.1)
+        default: '1.0'
+        required: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -29,7 +39,18 @@ jobs:
           java-version: 21
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          npm ci --ignore-scripts
+          cd backend && npm ci --ignore-scripts
+
+      # A release build used to run zero checks: it would happily package and
+      # upload an AAB from a tree with failing tests or a committed credential
+      # in it. These two steps are the gate.
+      - name: Preflight
+        run: npm run preflight
+
+      - name: Full test suite (incl. Firestore rules against the emulator)
+        run: npm run test:all
 
       # SECURITY: the OTP and GST credentials used to be hardcoded literals in
       # www/index.html, a file committed to a PUBLIC repo. They now live only
@@ -45,11 +66,38 @@ jobs:
           GST_API_SECRET: ${{ secrets.GST_API_SECRET }}
         run: node scripts/inject-secrets.js
 
+      # The target environment is an INPUT to the build, not a state of the
+      # working tree. Before this, flipping www/config.js out of DEMO mode
+      # meant hand-editing a committed file and remembering to revert it, so
+      # every release AAB silently shipped the offline demo backend.
+      - name: Write www/config.js for this target
+        env:
+          API_BASE: ${{ github.event.inputs.api_base }}
+          RAZORPAY_KEY: ${{ secrets.RAZORPAY_KEY_ID }}
+        run: node scripts/inject-config.js
+
+      # Catches the combinations that must never ship together — chiefly the
+      # OTP "every number accepts 0000" bypass inside a build that can also
+      # send real SMS.
+      - name: Preflight the generated build config
+        run: npm run preflight:built
+
       - name: Sync Capacitor Android project
         run: npx cap sync android
 
       - name: Grant execute permission for gradlew
         run: chmod +x android/gradlew
+
+      # build.gradle deliberately produces an UNSIGNED release when no keystore
+      # is configured, so that debug workflows keep working. In this workflow
+      # that would mean discovering the problem at the Play upload screen,
+      # after a green build. Fail here instead.
+      - name: Guard — release keystore present?
+        run: |
+          if [ -z "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ] || [ -z "${{ secrets.ANDROID_KEY_ALIAS }}" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 / ANDROID_KEY_ALIAS are not set — the AAB would come out unsigned and Play would reject it. See DEPLOYMENT.md."
+            exit 1
+          fi
 
       - name: Decode release keystore
         run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/release.jks
@@ -57,11 +105,23 @@ jobs:
       - name: Build signed release AAB
         working-directory: android
         env:
+          # Play rejects an upload whose versionCode it has already seen. The
+          # run number is monotonic per workflow, so consecutive releases get
+          # consecutive codes without anyone having to remember to bump one.
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+          ANDROID_VERSION_NAME: ${{ github.event.inputs.version_name }}
           ANDROID_KEYSTORE_PATH: app/release.jks
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: ./gradlew bundleRelease --no-daemon
+
+      - name: Verify the AAB really is signed
+        run: |
+          AAB=android/app/build/outputs/bundle/release/app-release.aab
+          test -f "$AAB" || { echo "::error::no AAB was produced"; exit 1; }
+          jarsigner -verify "$AAB" | tee /dev/stderr | grep -q 'jar verified' \
+            || { echo "::error::the AAB is not signed — Play would reject it"; exit 1; }
 
       - name: Remove decoded keystore
         if: always()
@@ -70,5 +130,5 @@ jobs:
       - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
         with:
-          name: modern-dairy-release-aab
+          name: modern-dairy-release-aab-v${{ github.event.inputs.version_name }}-${{ github.run_number }}
           path: android/app/build/outputs/bundle/release/app-release.aab

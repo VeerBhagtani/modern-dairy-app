@@ -1,0 +1,53 @@
+name: CI
+
+# The full gate. Until this existed, the only thing running on a push was the
+# secret scanner plus two of the eight test suites — so the Firestore rules,
+# which are the ONLY enforcement layer while the Cloud Run backend is dormant,
+# could be changed and shipped without a single assertion running against
+# them. `npm run test:rules` boots a real Firestore emulator, which is why
+# this job installs a JVM.
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # The Firestore emulator is a Java process. Without this, test:rules
+      # fails with a message about Java that reads like a flake and gets
+      # ignored, which is how rules end up untested.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          cd backend && npm ci --ignore-scripts
+
+      # Repo-mode preflight: nothing credential-shaped in the tree, the
+      # generated files still at their placeholders, and every target
+      # `firebase deploy` would touch actually present and parseable.
+      - name: Preflight (deployability of the committed tree)
+        run: npm run preflight
+
+      - name: Full test suite (incl. Firestore rules against the emulator)
+        run: npm run test:all
+
+      - name: Audit the dependencies that actually ship
+        run: |
+          npm audit --omit=dev --audit-level=high
+          cd backend && npm audit --audit-level=moderate

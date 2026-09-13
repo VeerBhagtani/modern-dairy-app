@@ -8,11 +8,15 @@
     "open:android": "cap open android",
     "check:secrets": "node scripts/check-no-secrets.js",
     "inject:secrets": "node scripts/inject-secrets.js",
+    "inject:config": "node scripts/inject-config.js",
+    "preflight": "node scripts/check-no-secrets.js && node scripts/check-secrets-placeholder.js && node scripts/preflight.js",
+    "preflight:built": "node scripts/preflight.js --built",
     "test:security": "node tests/frontend-security.test.mjs && node tests/backend-security.test.mjs && node tests/admin-recovery.test.mjs && node tests/hardening.test.mjs",
     "test:bills": "node tests/bills-print.test.mjs && node tests/gofrugal.test.mjs",
     "test:app": "node tests/cancel-visibility.test.mjs",
+    "test:deploy": "node tests/deploy-preflight.test.mjs",
     "test:rules": "firebase emulators:exec --project modern-dairy-rules-test --only firestore \"node tests/firestore-rules.test.mjs\"",
-    "test:all": "npm run test:security && npm run test:bills && npm run test:app && npm run test:rules"
+    "test:all": "npm run test:security && npm run test:bills && npm run test:app && npm run test:deploy && npm run test:rules"
   },
   "dependencies": {
     "@capacitor-community/background-geolocation": "^1.2.26",

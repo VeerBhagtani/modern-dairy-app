@@ -24,6 +24,10 @@ on:
         description: Cloud Run service name
         default: modern-dairy-api
         required: true
+      allowed_origins:
+        description: "Comma-separated browser origins allowed by CORS (the admin site)"
+        default: https://modern-dairy-pune.web.app,https://modern-dairy-pune.firebaseapp.com
+        required: true
 
 jobs:
   deploy:
@@ -31,6 +35,19 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Deploying a service that fails its own test suite is not a deploy, it
+      # is an outage with extra steps.
+      - name: Verify the backend before shipping it
+        run: |
+          npm ci --ignore-scripts
+          cd backend && npm ci --ignore-scripts && cd ..
+          node tests/backend-security.test.mjs
+          node tests/admin-recovery.test.mjs
 
       - name: Guard — secrets present?
         run: |
@@ -53,14 +70,21 @@ jobs:
             --region "${{ github.event.inputs.region }}" \
             --source backend \
             --allow-unauthenticated \
-            --set-env-vars "GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},NODE_ENV=production" \
+            --set-env-vars "GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},NODE_ENV=production,ALLOWED_ORIGINS=${{ github.event.inputs.allowed_origins }}" \
             --port 8080 \
             --quiet
 
-      - name: Print service URL
+      # ALLOWED_ORIGINS was documented in DEPLOY.md as something to add by
+      # hand and was absent from the command above, so the admin site's
+      # browser requests would have been refused by CORS on a first deploy.
+
+      - name: Verify the deployed revision answers
         run: |
           URL=$(gcloud run services describe "${{ github.event.inputs.service }}" \
             --project "${{ secrets.GCP_PROJECT_ID }}" --region "${{ github.event.inputs.region }}" \
             --format 'value(status.url)')
           echo "Service URL: $URL"
-          echo "Set the app's CONFIG.API_BASE to: $URL/api  (see backend/DEPLOY.md step 6)"
+          BODY=$(curl -sS --retry 5 --retry-delay 5 --max-time 30 "$URL/healthz")
+          echo "healthz: $BODY"
+          echo "$BODY" | grep -q '"ok":true' || { echo "::error::the deployed revision is not healthy"; exit 1; }
+          echo "Build the app against this backend by running 'Build Signed Release AAB' with api_base = $URL/api"

@@ -1,5 +1,9 @@
 # Backend deployment runbook (Cloud Run)
 
+> This covers the Cloud Run service only. For the whole deployment — rules,
+> hosting, the Android release, and the order everything happens in — start at
+> [`../DEPLOYMENT.md`](../DEPLOYMENT.md).
+
 This is the prepared, near-one-click path to make the Modern Dairy backend
 **authoritative** — which is what closes the audit's critical findings (F1 credit
 ledger, F3 server-side pricing, F7 payment verification, F2 central accounts,
@@ -83,9 +87,11 @@ curl -s https://<service-url>/healthz    # -> {"ok":true}
 
 ## 5. Point the app at the backend
 
-- Set `CONFIG.API_BASE` in **`www/config.js`** to `https://<service-url>/api`
-  and `CONFIG.DEMO=false`, then rebuild the APK (CI). This flips the client from
-  the localStorage demo backend to the real API.
+- Re-run **Build Signed Release AAB** with the `api_base` input set to
+  `https://<service-url>/api`. That writes `www/config.js` at build time
+  (`scripts/inject-config.js`) and flips the client off the localStorage demo
+  backend. Do **not** edit the committed `www/config.js` — it is a placeholder
+  and `npm run preflight` fails if it has been changed.
 - In **`www/index.html`**, set `FIRESTORE_LIVE = true` once the app reads
   server-owned data (customers/wallet) instead of localStorage.
 - Move GST/OTP/bank verification to call the backend instead of the providers

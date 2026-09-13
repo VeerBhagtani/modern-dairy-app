@@ -22,7 +22,14 @@ if (!match) {
   console.error('FAILED: www/secrets.js does not assign a plain object to window.APP_SECRETS.');
   process.exit(1);
 }
-const json = match[1]
+// The CI-generated form is strict JSON already. Try it verbatim first: the
+// normalisation below strips // line comments, which would also cut a value
+// containing "//" (a URL, or a token that happens to include it) in half and
+// turn a clean file into an unparseable one.
+let direct;
+try { direct = JSON.parse(match[1]); } catch { direct = null; }
+
+const json = direct ? JSON.stringify(direct) : match[1]
   .replace(/\/\/[^\n]*/g, '')                       // line comments
   .replace(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":')  // bare keys -> quoted
   .replace(/'/g, '"')                                // single -> double quotes

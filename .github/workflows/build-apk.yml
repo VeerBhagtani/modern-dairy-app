@@ -37,6 +37,15 @@ jobs:
           GST_API_SECRET: ${{ secrets.GST_API_SECRET }}
         run: node scripts/inject-secrets.js
 
+      # Same build-time config path as the release workflow, so the debug APK
+      # is built the way a release is rather than from whatever happens to be
+      # committed in www/config.js. No API_BASE here: debug builds stay DEMO.
+      - name: Write www/config.js (DEMO)
+        run: node scripts/inject-config.js
+
+      - name: Preflight the generated build config
+        run: npm run preflight:built
+
       - name: Sync Capacitor Android project
         run: npx cap sync android
 
