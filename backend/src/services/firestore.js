@@ -17,6 +17,11 @@ const col = {
   products: () => db.collection('products'),
   categories: () => db.collection('categories'),
   walletLedger: (customerId) => db.collection('customers').doc(customerId).collection('wallet_ledger'),
+  // Across every customer. Used by the Razorpay webhook to find the deposit
+  // request a captured payment belongs to from its order id alone, without
+  // having to trust the customerId carried in the payment's notes.
+  // Needs the COLLECTION_GROUP index in firestore.indexes.json.
+  walletLedgerGroup: () => db.collectionGroup('wallet_ledger'),
   auditLog: () => db.collection('admin_audit_log'),
   appConfig: () => db.collection('app_config').doc('singleton'),
   otpChallenges: () => db.collection('otp_challenges'),

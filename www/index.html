@@ -2073,6 +2073,14 @@ function paint(){
   if(typeof renderTrackMap === 'function'){
     if(S.screen==='order') renderTrackMap(); else destroyTrackMap();
   }
+  // Same for the order's Firestore listener. It used to be stopped only when
+  // ANOTHER order's listener started, so walking back from a tracked order to
+  // any other screen left a live onSnapshot open for the rest of the session —
+  // a held connection and a billed read on every change to a document nothing
+  // was displaying any more. Leaving the screen is what should end it.
+  if(typeof stopOrderStatusListener === 'function' && S.screen !== 'order'){
+    stopOrderStatusListener();
+  }
   if(typeof renderRiderMap === 'function'){
     if(S.screen==='rider') renderRiderMap(); else destroyRiderMap();
   }

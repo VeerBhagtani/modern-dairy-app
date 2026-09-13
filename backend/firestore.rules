@@ -115,18 +115,25 @@ service cloud.firestore {
       // later status. status is pinned to 'placed' so every order enters the
       // real lifecycle; the out-of-band cron then price-checks it.
       allow create: if request.auth != null
-                    && request.resource.data.keys().hasAll(['orderNo', 'items', 'subtotal', 'gst', 'delivery', 'total', 'status', 'placedAt', 'createdByUid'])
+                    && request.resource.data.keys().hasAll(['orderNo', 'items', 'subtotal', 'gst', 'delivery', 'total', 'status', 'placedAt', 'createdByUid', 'priceVerified'])
                     && request.resource.data.keys().hasOnly(['orderNo', 'items', 'subtotal', 'gst', 'delivery', 'platform', 'total', 'payment', 'customerType', 'company', 'gstin', 'name', 'phone', 'address', 'status', 'createdByUid', 'placedAt', 'priceVerified'])
                     && request.resource.data.createdByUid == request.auth.uid
                     && request.resource.data.status == 'placed'
-                    // priceVerified is now WRITTEN by the client but PINNED to
-                    // false, which is what lets verify-order-prices.js find its
-                    // backlog with a query instead of scanning every order ever
-                    // placed. Pinning is the whole point: the field has to
-                    // exist for the query to match, and a forged `true` would
-                    // make the price check skip the order entirely — so the
-                    // rule permits exactly one value.
-                    && request.resource.data.get('priceVerified', false) == false
+                    // priceVerified is WRITTEN by the client, REQUIRED (see the
+                    // hasAll above) and pinned to exactly false.
+                    //
+                    // All three parts matter. verify-order-prices.js finds its
+                    // backlog with `where priceVerified == false` instead of
+                    // scanning every order ever placed — and a Firestore query
+                    // does not match documents where the field is ABSENT. So:
+                    //   · a forged `true` would make the price check skip the
+                    //     order  -> pinned to false;
+                    //   · an OMITTED field would make the order invisible to
+                    //     the query and therefore never price-checked at all,
+                    //     which is the same bypass wearing a different hat
+                    //     -> required, not optional.
+                    // An `is bool` check is not enough either; only false.
+                    && request.resource.data.priceVerified == false
                     && request.resource.data.customerType in ['b2b', 'b2c']
                     && request.resource.data.total is number
                     && request.resource.data.total > 0 && request.resource.data.total <= 500000

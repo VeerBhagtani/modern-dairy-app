@@ -124,31 +124,51 @@ async function main() {
   const sa = JSON.parse(raw);
   const token = await getAccessToken(sa);
 
-  const [broadcasts, deviceTokens, accounts] = await Promise.all([
+  const [broadcasts, deviceTokens, accounts, customers] = await Promise.all([
     firestoreList(token, 'broadcasts'),
     firestoreList(token, 'device_tokens'),
     firestoreList(token, 'customer_accounts'),
+    // Server-owned: written only by the backend (routes/auth.js), where the
+    // tier is decided from a verified GSTIN. Empty until the backend deploys.
+    firestoreList(token, 'customers').catch(() => []),
   ]);
 
   const pending = broadcasts.filter(b => !b.pushSent);
   if (!pending.length) { console.log('No new broadcasts to push.'); return; }
 
-  /* A device token's `audience` field is chosen by the client that registered
-     it (the Firestore rule only checks it is 'b2b' or 'b2c'), so on its own it
-     decides nothing: a retail install could set 'b2b' and receive wholesale
-     pricing announcements meant for businesses.
-     customer_accounts/{uid}_{phone} carries the account type and its id is
-     pinned to the writer's own uid, so the type recorded there is the better
-     answer whenever there is one. Fall back to the token's own claim only when
-     the device has no account on file (a fresh install that has not signed in
-     yet), and in that case treat it as retail — the failure direction is
-     toward the less privileged audience. */
-  const typeByUid = {};
+  /* Deciding which devices a b2b broadcast reaches.
+     Be clear about what this is: TARGETING, not access control. A push
+     notification saying "wholesale rates updated" is not sensitive, and there
+     is currently no source of customer tier that a client cannot influence:
+       · device_tokens.audience  — set by whoever registered the token;
+       · customer_accounts.type  — set by the client too. Its document id is
+         pinned to the writer's own uid, so a client can only lie about ITSELF,
+         but it can still just write type:'b2b'.
+     The one trustworthy source is the `customers` collection, which only the
+     backend writes and only after a GSTIN is verified. So: use that when a
+     record exists, fall back to the account record when it does not (better
+     than the per-token flag, still client-asserted), and default to retail so
+     the failure direction is always toward the smaller audience.
+     This is deliberately NOT presented as a fix for the underlying problem —
+     that needs a server-side customer record, i.e. the backend deployed. */
+  const serverTierByPhone = {};
+  for (const c of customers) {
+    if (c.phone && (c.customerType === 'b2b' || c.customerType === 'b2c')) {
+      serverTierByPhone[String(c.phone)] = c.customerType;
+    }
+  }
+  const claimedTypeByUid = {}, phoneByUid = {};
   for (const a of accounts) {
     const uid = String(a.id || '').split('_')[0];
-    if (uid && (a.type === 'b2b' || a.type === 'b2c')) typeByUid[uid] = a.type;
+    if (!uid) continue;
+    if (a.phone) phoneByUid[uid] = String(a.phone);
+    if (a.type === 'b2b' || a.type === 'b2c') claimedTypeByUid[uid] = a.type;
   }
-  const audienceOf = (d) => typeByUid[d.uid] || (d.uid ? 'b2c' : (d.audience || 'b2c'));
+  const audienceOf = (d) => {
+    const serverTier = serverTierByPhone[phoneByUid[d.uid]];
+    if (serverTier) return serverTier;                 // authoritative
+    return claimedTypeByUid[d.uid] || 'b2c';           // best effort, then retail
+  };
 
   for (const b of pending) {
     const targets = deviceTokens.filter(d => b.audience === 'all' || audienceOf(d) === b.audience);

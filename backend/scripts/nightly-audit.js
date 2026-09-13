@@ -269,9 +269,25 @@ Rules: old_string must appear VERBATIM and EXACTLY ONCE in the given file conten
   const jsonStr = text.startsWith('{') ? text : text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1);
   try { return (JSON.parse(jsonStr).edits) || []; } catch (e) { return []; }
 }
+// `edit.file` comes from the model's JSON, so it is untrusted input that ends
+// up in a filesystem write. Containment is checked three ways:
+//   · resolve first, so ".." is collapsed before comparison;
+//   · compare against REPO_ROOT + separator — a bare startsWith(REPO_ROOT)
+//     also accepts a SIBLING directory whose name merely begins with the same
+//     characters (/repo-evil/x startsWith /repo), which is a real escape;
+//   · realpath the result, so a symlink inside the repo cannot point out of it.
+const REPO_PREFIX = path.resolve(REPO_ROOT) + path.sep;
+function insideRepo(abs) {
+  const resolved = path.resolve(abs);
+  if (resolved !== path.resolve(REPO_ROOT) && !resolved.startsWith(REPO_PREFIX)) return null;
+  let real;
+  try { real = fs.realpathSync(resolved); } catch { return null; }
+  return real.startsWith(REPO_PREFIX) ? real : null;
+}
 function applyEdit(edit) {
-  const abs = path.join(REPO_ROOT, edit.file);
-  if (!abs.startsWith(REPO_ROOT) || !fs.existsSync(abs)) return false;   // no path escape, must exist
+  if (typeof edit.file !== 'string' || !edit.file) return false;
+  const abs = insideRepo(path.join(REPO_ROOT, edit.file));
+  if (!abs || !fs.statSync(abs).isFile()) return false;   // no path escape, must be a real file
   const cur = fs.readFileSync(abs, 'utf8');
   if (typeof edit.old_string !== 'string' || !edit.old_string) return false;
   const first = cur.indexOf(edit.old_string);

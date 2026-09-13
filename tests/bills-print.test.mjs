@@ -59,7 +59,16 @@ const ok = (name, cond, extra) => {
 };
 const near = (a, b) => Math.abs(a - b) < 0.005;
 
-const now = Date.now();
+/* Anchored to NOON today, not to the current instant.
+   The fixtures below place orders a few hours "ago" and then assert which of
+   them the `today` scope returns. With a bare Date.now() base that is only
+   true for part of the day: run the suite at 04:00 and "5 hours ago" is
+   yesterday, so MD-1042 drops out of today's bills and two assertions fail —
+   a test that is red every night between midnight and 05:00 and green the rest
+   of the time. Noon keeps ±5h inside the same calendar day at every run time,
+   while the multi-day fixtures stay as far in the past as they were. */
+const noon = new Date(); noon.setHours(12, 0, 0, 0);
+const now = noon.getTime();
 const day = 86400000;
 const mk = (o) => ({
   id: o.id, orderNo: o.orderNo, status: o.status || 'delivered',
