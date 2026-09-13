@@ -2,7 +2,7 @@
   "name": "modern-dairy-app",
   "version": "1.0.0",
   "private": true,
-  "description": "Modern Dairy — Business Ordering Android app (Capacitor wrapper around the existing web app)",
+  "description": "Modern Dairy \u2014 Business Ordering Android app (Capacitor wrapper around the existing web app)",
   "scripts": {
     "sync": "cap sync android",
     "open:android": "cap open android",
@@ -10,7 +10,9 @@
     "inject:secrets": "node scripts/inject-secrets.js",
     "test:security": "node tests/frontend-security.test.mjs && node tests/backend-security.test.mjs && node tests/admin-recovery.test.mjs && node tests/hardening.test.mjs",
     "test:bills": "node tests/bills-print.test.mjs && node tests/gofrugal.test.mjs",
-    "test:app": "node tests/cancel-visibility.test.mjs"
+    "test:app": "node tests/cancel-visibility.test.mjs",
+    "test:rules": "firebase emulators:exec --project modern-dairy-rules-test --only firestore \"node tests/firestore-rules.test.mjs\"",
+    "test:all": "npm run test:security && npm run test:bills && npm run test:app && npm run test:rules"
   },
   "dependencies": {
     "@capacitor-community/background-geolocation": "^1.2.26",
@@ -24,7 +26,10 @@
     "@capacitor/push-notifications": "^6.0.5"
   },
   "devDependencies": {
-    "@capacitor/cli": "^6.1.2"
+    "@capacitor/cli": "^6.1.2",
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "firebase": "^12.19.0",
+    "firebase-tools": "^13.35.1"
   },
   "_comment_overrides": "tar <7.5.1 (multiple path-traversal / DoS advisories, one critical) reached this project only through @capacitor/cli, which is CI build tooling and never ships in the app (`npm audit --omit=dev` was already clean). Pinned anyway rather than left for someone to rediscover. @capacitor/assets was removed outright: it was the only source of the remaining sharp/libvips and uuid advisories, nothing in the repo or CI referenced it, and app icons can still be regenerated on demand with `npx @capacitor/assets generate`.",
   "_comment_dependency_audit": "npm audit --omit=dev is clean: nothing that ships in the app has a known vulnerability. The remaining advisories are all in @capacitor/cli's own dependency tree (tar <7.5.1, path-traversal/DoS, one critical) and only run on a CI runner over files from this repo. An overrides pin to tar@^7 WAS tried and reverted: it breaks `npx cap sync` outright (@capacitor/cli calls tar.extract via a CJS default import that tar v7 removed), so it would have traded a non-shipping dev advisory for a broken Android build. The real fix is @capacitor/cli 8.x, a coordinated major upgrade of every @capacitor/* package - worth doing deliberately, not as part of a security pass. @capacitor/assets was removed instead: it was the only source of the sharp/libvips and uuid advisories, nothing referenced it, and icons can still be regenerated with `npx @capacitor/assets generate`."

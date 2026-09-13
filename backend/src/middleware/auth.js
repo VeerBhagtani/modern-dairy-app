@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const { v4: uuid } = require('uuid');
 const { getSecret } = require('../services/secretManager');
-const { col, db, FieldValue } = require('../services/firestore');
+const { col, db, FieldValue, expiryAt } = require('../services/firestore');
 
 const ACCESS_TTL = '15m';
 const REFRESH_TTL = '30d';
@@ -41,7 +41,7 @@ async function issueTokens(user, { rotatedFrom = null } = {}) {
   await col.refreshTokens().doc(jti).set({
     sub: user.id,
     fam,
-    expiresAt: Date.now() + REFRESH_TTL_MS,
+    expiresAt: expiryAt(REFRESH_TTL_MS),
     issuedAt: FieldValue.serverTimestamp(),
   });
   return { accessToken, refreshToken };

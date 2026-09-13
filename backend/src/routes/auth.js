@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { v4: uuid } = require('uuid');
-const { col, db, FieldValue } = require('../services/firestore');
+const { col, db, FieldValue, expiryAt, notExpired } = require('../services/firestore');
 const { issueTokens, verifyToken, revokeRefreshToken } = require('../middleware/auth');
 const { authLimiter, otpPhoneLimiter } = require('../middleware/rateLimit');
 const { isValidPhone, isValidOtp, isValidGstin, isBoundedString, isOptionalBoundedString } = require('../middleware/validate');
@@ -33,7 +33,7 @@ async function startChallenge(phone) {
   await otpRef(phone).set({
     verificationId,
     attempts: 0,
-    expiresAt: Date.now() + OTP_TTL_MS,
+    expiresAt: expiryAt(OTP_TTL_MS),
     createdAt: FieldValue.serverTimestamp(),
   });
 }
@@ -45,7 +45,7 @@ async function spendAttempt(phone) {
   return db.runTransaction(async (t) => {
     const snap = await t.get(otpRef(phone));
     const c = snap.exists ? snap.data() : null;
-    if (!c || !(Date.now() < c.expiresAt) || c.attempts >= OTP_MAX_ATTEMPTS) return null;
+    if (!c || !notExpired(c.expiresAt) || c.attempts >= OTP_MAX_ATTEMPTS) return null;
     t.update(otpRef(phone), { attempts: c.attempts + 1 });
     return c;
   });
@@ -112,7 +112,7 @@ router.post('/b2b/register', async (req, res) => {
     gstin: gstin.toUpperCase(),
     legalName: gstData?.legalName || companyName || null,
     verifiedAt: FieldValue.serverTimestamp(),
-    expiresAt: Date.now() + OTP_TTL_MS,
+    expiresAt: expiryAt(OTP_TTL_MS),
   });
 
   res.json({ success: true });
@@ -167,7 +167,7 @@ router.post('/:mode(b2b|b2c)/verify-otp', async (req, res) => {
   if (mode === 'b2b') {
     const snap = await col.gstVerifications().doc(phone).get();
     const v = snap.exists ? snap.data() : null;
-    if (v && Date.now() < Number(v.expiresAt || 0)) verifiedGst = v;
+    if (v && notExpired(v.expiresAt)) verifiedGst = v;
   }
   const tier = verifiedGst ? 'b2b' : 'b2c';
 

@@ -12,7 +12,7 @@
 // The new password goes straight to Firebase Auth, which keeps only a salted
 // hash. It is never stored in Firestore, logged, or sent back.
 const router = require('express').Router();
-const { db, admin, writeAuditLog } = require('../services/firestore');
+const { db, admin, writeAuditLog, expiryAt, notExpired } = require('../services/firestore');
 const { getSecret } = require('../services/secretManager');
 const otp = require('../services/messageCentralClient');
 const { ADMIN_FIREBASE_UID } = require('../middleware/adminAuth');
@@ -67,7 +67,7 @@ router.post('/send-otp', authLimiter, recoverySendLimiter, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Pick one of the listed numbers.' });
     }
     const verificationId = await otp.sendOtp(phones[which]);
-    await challengeRef().set({ which, verificationId, attempts: 0, expiresAt: Date.now() + CHALLENGE_TTL_MS });
+    await challengeRef().set({ which, verificationId, attempts: 0, expiresAt: expiryAt(CHALLENGE_TTL_MS) });
     await writeAuditLog({ adminId: 'recovery', action: 'admin_recovery_code_sent', target: maskPhone(phones[which]) });
     // Deliberately reveals nothing about the number, not even masked. The
     // person who owns these handsets knows which one is "Recovery number 1";
@@ -89,7 +89,7 @@ router.post('/reset', authLimiter, async (req, res) => {
     const challenge = await db.runTransaction(async (t) => {
       const snap = await t.get(challengeRef());
       const c = snap.exists ? snap.data() : null;
-      if (!c || c.which !== which || !(Date.now() < c.expiresAt) || c.attempts >= MAX_ATTEMPTS) return null;
+      if (!c || c.which !== which || !notExpired(c.expiresAt) || c.attempts >= MAX_ATTEMPTS) return null;
       t.update(challengeRef(), { attempts: c.attempts + 1 });
       return c;
     });

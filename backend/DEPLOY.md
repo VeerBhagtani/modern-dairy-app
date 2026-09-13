@@ -103,35 +103,68 @@ curl -s https://<service-url>/healthz    # -> {"ok":true}
 
 ## 7. TTL policies — required, and NOT covered by `firebase deploy`
 
-Three collections now store short-lived state with an `expiresAt` field. The
-code treats an expired document as invalid, so nothing insecure happens without
-these policies — but nothing *deletes* the rows either, and they accumulate
-forever. `refresh_tokens` is the one that actually grows: rotation deletes a
-token when it is used, so an abandoned session leaves its document behind for
-good.
+Four collections store short-lived state with an `expiresAt` field. The code
+treats an expired document as invalid, so nothing insecure happens without
+these policies — but nothing *deletes* the rows either. `refresh_tokens` is the
+one that actually grows: rotation deletes a token when it is used, so every
+abandoned session leaves a document behind for good.
 
-Firestore TTL is configured per field on the database, not in `firestore.rules`
-or `firestore.indexes.json`, so `firebase deploy` will not do this for you:
+`expiresAt` is written as a Firestore **Timestamp** (see `expiryAt()` in
+`src/services/firestore.js`), which is what TTL policies require — it used to be
+epoch milliseconds, which the code compared fine but TTL silently ignored.
+`expiryMillis()` still reads the old numeric shape, so documents written before
+that change keep expiring correctly instead of being treated as already-expired.
+
+TTL is configured per field on the database, not in `firestore.rules` or
+`firestore.indexes.json`, so `firebase deploy` will not do it:
 
 ```bash
-gcloud firestore fields ttls update expiresAt \
-  --collection-group=refresh_tokens --enable-ttl --project=modern-dairy-pune
-gcloud firestore fields ttls update expiresAt \
-  --collection-group=otp_challenges --enable-ttl --project=modern-dairy-pune
-gcloud firestore fields ttls update expiresAt \
-  --collection-group=gst_verifications --enable-ttl --project=modern-dairy-pune
+for C in refresh_tokens otp_challenges gst_verifications admin_recovery; do
+  gcloud firestore fields ttls update expiresAt \
+    --collection-group="$C" --enable-ttl --project=modern-dairy-pune
+done
 ```
 
-Note the field must be a **timestamp** for Firestore's TTL to act on it. These
-are currently written as epoch milliseconds (a number), which the application
-compares correctly but Firestore's TTL will ignore — so either switch those
-three writes to `FieldValue.serverTimestamp()`-based expiry before enabling
-TTL, or schedule a small cleanup job instead. Left as an explicit decision
-rather than changed silently, because it alters the stored shape of documents
-the running code reads.
+- [ ] TTL policies enabled for the four collections above.
 
-- [ ] TTL policies enabled (or a cleanup job scheduled) for the three
-      collections above.
+## 8. Move admin identity onto a custom claim
+
+`isAdmin()` in `firestore.rules` accepts either `request.auth.token.admin ==
+true` or one hardcoded uid. The literal is a deploy-safety fallback so that
+shipping the rules cannot lock the current admin out before the claim exists —
+it is not meant to stay.
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+export GCP_PROJECT_ID=modern-dairy-pune
+
+node backend/scripts/set-admin-claim.js --email <the admin>@admin.local
+node backend/scripts/set-admin-claim.js --list      # confirm it took
+```
+
+Then sign in to the admin website again (the script revokes existing sessions so
+the new claim applies immediately), confirm it still works, and only then delete
+the uid literal from `isAdmin()` and redeploy the rules. That last step is what
+actually removes the published single-target uid.
+
+- [ ] `admin: true` set, verified, uid literal removed from the rules.
+
+## 9. Verify the rules before they reach production
+
+`npm run test:rules` boots a local Firestore emulator and exercises the real
+rules — cross-customer reads, forged owners, the priceVerified pin, credit
+holds, delivery enumeration, admin-only collections. 45 assertions.
+
+This is the check that matters: the rest of the suite only asserts that the
+rules FILE contains certain text, and text-level checks have already missed a
+real bypass once. Run it after any rules edit, before deploying.
+
+```bash
+npm run test:rules      # needs Java (the emulator is a JVM process)
+npm run test:all        # everything, including the above
+```
+
+- [ ] `npm run test:rules` green against the rules you are about to deploy.
 
 ## Notes
 

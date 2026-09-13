@@ -38,3 +38,9 @@ firebase-adminsdk*.json
 # Local-only secret overrides for www/ (never committed; CI injects the
 # real values into www/secrets.js at build time from GitHub Secrets).
 www/secrets.local.js
+
+# Firestore emulator artefacts (npm run test:rules)
+firestore-debug.log
+ui-debug.log
+firebase-debug.log
+.firebase/

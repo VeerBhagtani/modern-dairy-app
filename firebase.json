@@ -6,6 +6,11 @@
   "storage": {
     "rules": "backend/storage.rules"
   },
+  "emulators": {
+    "firestore": { "host": "127.0.0.1", "port": 8080 },
+    "ui": { "enabled": false },
+    "singleProjectMode": true
+  },
   "hosting": {
     "public": "legal",
     "ignore": ["firebase.json", "**/.*"],

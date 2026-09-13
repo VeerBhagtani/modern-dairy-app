@@ -48,7 +48,21 @@ function stub(rel, exports) {
   const file = require.resolve(rel);
   require.cache[file] = { id: file, filename: file, loaded: true, exports };
 }
-stub('./src/services/firestore', { db, admin, writeAuditLog: async (e) => { audit.push(e); } });
+/* expiryAt/notExpired are the REAL implementations, not stubs.
+   expiresAt is stored as a Firestore Timestamp so TTL policies can act on it
+   (a plain number is silently ignored by TTL), and notExpired reads either
+   shape so pre-existing documents keep working. Faking these here would mean
+   the challenge-expiry assertions below stopped testing expiry at all — so the
+   mock reproduces the same behaviour, with a minimal Timestamp stand-in. */
+const fakeTimestamp = (ms) => ({ toMillis: () => ms });
+const expiryAt = (ms) => fakeTimestamp(Date.now() + ms);
+const expiryMillis = (v) => (v && typeof v.toMillis === 'function') ? v.toMillis() : Number(v || 0);
+const notExpired = (v) => Date.now() < expiryMillis(v);
+stub('./src/services/firestore', {
+  db, admin,
+  writeAuditLog: async (e) => { audit.push(e); },
+  expiryAt, expiryMillis, notExpired,
+});
 stub('./src/services/secretManager', { getSecret: async (id) => secrets[id] ?? null, KNOWN_SECRETS: {} });
 stub('./src/services/messageCentralClient', {
   sendOtp: async (phone) => { texts.push(phone); return `vid-${++vidSeq}`; },

@@ -34,6 +34,23 @@ const col = {
   refreshTokens: () => db.collection('refresh_tokens'),
 };
 
+/* Short-lived documents (refresh tokens, OTP challenges, GSTIN verifications,
+ * the admin recovery challenge) all carry an `expiresAt`.
+ *
+ * It has to be a Firestore TIMESTAMP, not epoch milliseconds. The code is
+ * happy either way — it just compares numbers — but Firestore's TTL policies
+ * only act on timestamp fields, so storing a number meant nothing was ever
+ * deleted and these collections grew forever. Writing a real Timestamp is what
+ * makes `gcloud firestore fields ttls update expiresAt ...` actually work.
+ *
+ * expiryMillis() reads either shape so documents written before this change
+ * still expire correctly instead of being treated as already-expired (which
+ * would have logged everyone out) or never-expiring.
+ */
+const expiryAt = (ms) => admin.firestore.Timestamp.fromMillis(Date.now() + ms);
+const expiryMillis = (v) => (v && typeof v.toMillis === 'function') ? v.toMillis() : Number(v || 0);
+const notExpired = (v) => Date.now() < expiryMillis(v);
+
 async function writeAuditLog({ adminId, action, target, before, after }) {
   await col.auditLog().add({
     adminId, action, target,
@@ -42,4 +59,8 @@ async function writeAuditLog({ adminId, action, target, before, after }) {
   });
 }
 
-module.exports = { admin, db, col, writeAuditLog, FieldValue: admin.firestore.FieldValue, Timestamp: admin.firestore.Timestamp };
+module.exports = {
+  admin, db, col, writeAuditLog,
+  expiryAt, expiryMillis, notExpired,
+  FieldValue: admin.firestore.FieldValue, Timestamp: admin.firestore.Timestamp,
+};
