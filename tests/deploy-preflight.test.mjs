@@ -176,10 +176,19 @@ ok(/setup-java/.test(ci) && /npm run test:all/.test(ci),
 console.log('\n── cold start ──');
 const appHtml = fs.readFileSync(path.join(ROOT, 'www/index.html'), 'utf8');
 
-const bareBootFetches = [...appHtml.matchAll(/(?<!WithDeadline)\bfetch\(\s*'https:\/\/firestore\.googleapis\.com[^']*'\s*\)/g)];
-ok(bareBootFetches.length === 0,
-  'no un-deadlined fetch to Firestore REST (a dead network must not hold the first paint)',
-  bareBootFetches.map((m) => m[0].slice(0, 70)).join('\n'));
+// Scoped to READS, deliberately. Every Firestore REST read here is on the
+// boot path, where an unbounded request is a blank screen. The one REST
+// WRITE (mirrorOrderViaRest) is intentionally left unbounded: it is the
+// last-resort path for the only durable record of an order, and aborting a
+// POST that may already have committed would orphan the order rather than
+// save the customer any time. So this asserts what it can actually justify.
+const bootReads = [...appHtml.matchAll(/\bfetch\(\s*'(https:\/\/firestore\.googleapis\.com[^']*)'/g)];
+const undeadlinedReads = bootReads.filter((m) => !/documents\/orders'?$/.test(m[1]));
+ok(undeadlinedReads.length === 0,
+  'every Firestore REST read on the boot path has a deadline (a dead network must not hold the first paint)',
+  undeadlinedReads.map((m) => m[1].slice(0, 80)).join('\n'));
+ok(/mirrorOrderViaRest[\s\S]{0,300}?await fetch\(\s*'https:\/\/firestore\.googleapis\.com/.test(appHtml),
+  'the order-mirror write is still the plain unbounded fetch it needs to be');
 ok(/function fetchWithDeadline\([^)]*\)\s*\{[\s\S]{0,400}?AbortController/.test(appHtml),
   'fetchWithDeadline aborts the request rather than just racing it');
 
