@@ -3,10 +3,11 @@
 // of these must be re-checked here since the client can never be trusted.
 
 const PHONE_RE = /^[6-9]\d{9}$/;
-// 4-8 digits: the live provider (Message Central) issues 4-digit codes and
-// Twilio Verify issues 6, so pinning this to exactly 6 would have rejected
-// every real code the moment this backend went live. Still strictly numeric
-// and strictly bounded - nothing else is accepted.
+// 4-8 digits, deliberately a range: Message Central issues 4-digit codes, and
+// the Firebase Phone Auth fallback the app still carries issues 6 (see
+// OTP_LENGTH in www/index.html). Pinning this to either one would reject every
+// real code from the other. Still strictly numeric and strictly bounded -
+// nothing else is accepted.
 const OTP_RE = /^\d{4,8}$/;
 const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/; // Firestore-doc-id-safe, bounded length

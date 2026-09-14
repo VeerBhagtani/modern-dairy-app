@@ -22,9 +22,6 @@ const KNOWN_SECRETS = {
   uber_customer_id: 'uber-direct-customer-id',
   gofrugal_outlet_id: 'gofrugal-outlet-id',
   gofrugal_company_id: 'gofrugal-company-id',
-  twilio_account_sid: 'twilio-account-sid',
-  twilio_auth_token: 'twilio-auth-token',
-  twilio_verify_service_sid: 'twilio-verify-service-sid',
   'jwt-signing-key': 'jwt-signing-key',
 };
 

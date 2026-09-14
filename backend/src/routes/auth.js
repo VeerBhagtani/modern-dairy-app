@@ -5,12 +5,12 @@ const { issueTokens, verifyToken, revokeRefreshToken } = require('../middleware/
 const { authLimiter, otpPhoneLimiter } = require('../middleware/rateLimit');
 const { isValidPhone, isValidOtp, isValidGstin, isBoundedString, isOptionalBoundedString } = require('../middleware/validate');
 const gst = require('../services/gstClient');
-// Message Central, NOT services/smsClient.js (Twilio). This route used to
-// import the Twilio client while the customer app, the admin recovery flow and
-// every configured secret were all Message Central — so the moment this
-// backend went live, customer sign-in would have failed with NOT_CONFIGURED on
-// every single request while admin recovery worked fine. Same provider
-// everywhere now. smsClient.js is kept as a documented swap-in, not wired up.
+// Message Central is the OTP provider — the same one the customer app and the
+// admin recovery flow use, and the only one the configured secrets belong to.
+// This route once imported a second, unconfigured provider instead, which
+// would have failed every customer sign-in with NOT_CONFIGURED the moment the
+// backend went live while admin recovery kept working. One provider, wired in
+// one place.
 const otp = require('../services/messageCentralClient');
 
 function normalisePhone(phone) {
@@ -18,8 +18,8 @@ function normalisePhone(phone) {
 }
 
 // ── OTP challenge state ──────────────────────────────────────────────────
-// Message Central is stateful in a way Twilio Verify is not: sendOtp returns a
-// verificationId that validateOtp needs back. That id has to live somewhere,
+// Message Central is stateful: sendOtp returns a verificationId that
+// validateOtp needs handed back to it. That id has to live somewhere,
 // and "somewhere" is also the natural place to cap guesses — so this doubles as
 // the server-side brute-force limit that the per-IP rate limiter cannot provide
 // on its own (an attacker spreads across addresses; the attempt counter is per

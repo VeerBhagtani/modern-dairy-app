@@ -115,10 +115,13 @@ Firestore's default limits. The two things that matter as volume grows:
 
 ## Left for you to decide/do
 
-- **SMS/OTP provider**: code targets Twilio Verify. Sign up at twilio.com,
-  create a Verify Service, and store `twilio-account-sid`, `twilio-auth-token`,
-  `twilio-verify-service-sid` via the Admin Panel. Swap `src/services/smsClient.js`
-  if you prefer a different provider (MSG91, Gupshup are common India alternatives).
+- **SMS/OTP provider**: Message Central (VerifyNow) — already chosen, already in
+  use by the customer app and the admin recovery flow. Store `otp-customer-id`
+  and `otp-auth-token` in Secret Manager; `src/services/messageCentralClient.js`
+  reads them by raw secret id so a stolen admin session cannot swap the
+  provider out from under the OTP flow. Nothing here targets any other provider:
+  a second, unconfigured SMS client used to sit in this tree and it has been
+  deleted, because an unwired alternative is a trap, not an option.
 - **GST provider**: code targets Masters India's API shape as a reference. Confirm
   this matches whichever GSP you actually sign up with — see
   `src/services/gstClient.js`'s header comment.

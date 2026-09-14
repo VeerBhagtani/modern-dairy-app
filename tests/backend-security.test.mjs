@@ -13,9 +13,10 @@ const ok = (c, m) => { c ? pass++ : fail++; console.log((c ? '  PASS  ' : '  FAI
 // ---------- validate.js ----------
 const v = require('./src/middleware/validate');
 
-// OTP length: must accept the live provider's 4-digit AND Twilio's 6-digit.
+// OTP length: must accept the live provider's 4-digit AND the 6-digit codes
+// the Firebase Phone Auth fallback issues. Pinning to one rejects the other.
 ok(v.isValidOtp('1234'), 'OTP accepts 4 digits (Message Central)');
-ok(v.isValidOtp('123456'), 'OTP accepts 6 digits (Twilio)');
+ok(v.isValidOtp('123456'), 'OTP accepts 6 digits (the Firebase Phone Auth fallback)');
 ok(!v.isValidOtp('12'), 'OTP rejects 2 digits');
 ok(!v.isValidOtp('12a4'), 'OTP rejects non-numeric');
 ok(!v.isValidOtp("1234' OR 1=1"), 'OTP rejects injection payload');

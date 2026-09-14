@@ -41,7 +41,10 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))" \
 # Provider credentials (repeat per key — names must match secretManager.js):
 printf '%s' "<rotated-gst-key>"    | gcloud secrets create gst-api-key       --data-file=- --project modern-dairy-pune
 printf '%s' "<rotated-gst-secret>" | gcloud secrets create gst-api-secret    --data-file=- --project modern-dairy-pune
-# ...and twilio-*, razorpay-*, whatsapp-*, gofrugal-*, uber-* as you enable them.
+# OTP provider (Message Central — the only SMS provider this backend has):
+printf '%s' "<rotated-otp-customer-id>" | gcloud secrets create otp-customer-id --data-file=- --project modern-dairy-pune
+printf '%s' "<rotated-otp-auth-token>"  | gcloud secrets create otp-auth-token  --data-file=- --project modern-dairy-pune
+# ...and razorpay-*, whatsapp-*, gofrugal-*, uber-* as you enable them.
 ```
 (The admin panel's "API keys" screen can also write these once the backend is up.)
 

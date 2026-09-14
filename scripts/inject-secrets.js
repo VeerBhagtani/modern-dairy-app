@@ -12,7 +12,7 @@
  *
  * This does NOT make them server-side. Whatever is written here ships inside
  * the APK and can be recovered by anyone who decompiles it. The permanent fix
- * is backend/src/services/{smsClient,gstClient}.js once Cloud Run is
+ * is backend/src/services/{messageCentralClient,gstClient}.js once Cloud Run is
  * deployed. This step removes the public-internet exposure, nothing more.
  *
  * With no secrets set the build still succeeds and produces a DEMO-mode app

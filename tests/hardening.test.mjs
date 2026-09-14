@@ -195,8 +195,17 @@ ok(/if \(isB2B && subtotal < minOrderValue\)/.test(orders),
   'the minimum order value applies to business accounts only');
 ok(/gstVerifications\(\)/.test(auth) && /const tier = verifiedGst \? 'b2b' : 'b2c'/.test(auth),
   'b2b tier requires a server-held GSTIN verification, never the URL');
-ok(/messageCentralClient/.test(auth) && !/require\('\.\.\/services\/smsClient'\)/.test(auth),
+ok(/messageCentralClient/.test(auth) && !/smsClient/.test(auth),
   'auth uses the same OTP provider as the rest of the system');
+// The second, unconfigured SMS client is gone, not merely unwired. While it
+// existed it had already been imported here once by mistake, and that single
+// wrong import would have failed every customer sign-in with NOT_CONFIGURED
+// the moment the backend went live. A provider with no credentials behind it
+// is not a spare — it is a trap with a plausible-looking name.
+ok(!fs.existsSync(path.join(ROOT, 'backend/src/services/smsClient.js')),
+  'no unconfigured second SMS provider is left lying in the services directory');
+ok(!/twilio/i.test(fs.readFileSync(path.join(ROOT, 'backend/src/services/secretManager.js'), 'utf8')),
+  'no secret ids remain for a provider that has no account behind it');
 
 console.log('\n-- Refresh tokens are revocable --');
 const authMw = read('backend', 'src', 'middleware', 'auth.js');

@@ -44,6 +44,9 @@ const RULES = [
   { name: 'GitHub token',                      re: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/ },
   { name: 'Stripe secret key',                 re: /\bsk_(live|test)_[A-Za-z0-9]{16,}\b/ },
   { name: 'Razorpay key',                      re: /\brzp_(live|test)_[A-Za-z0-9]{10,}\b/ },
+  // Kept even though this project uses Message Central, not Twilio. These
+  // rules match credential SHAPES, and a scanner that only knows the shapes
+  // you currently use catches nothing the day someone pastes in something new.
   { name: 'Twilio account SID',                re: /\bAC[0-9a-f]{32}\b/ },
   // A fully signed JWT (three segments). Two-segment examples in docs are ignored.
   { name: 'hardcoded JWT',                     re: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{20,}/ },
