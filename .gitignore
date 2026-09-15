@@ -7,6 +7,12 @@ android/local.properties
 android/captures/
 *.apk
 *.aab
+# ...except one deliberately published demo build, so there is a download link
+# that needs no Play Console and no CI artifact login. This is the ONLY binary
+# that belongs in git: it carries no credentials (DEMO build, see
+# scripts/preflight.js --built) and is debug-signed, so it can never be
+# mistaken for a release. Real releases go through the Play Console.
+!dist/*.apk
 .idea/
 
 # iOS — the native project is generated on demand (`npx cap add ios`), same
