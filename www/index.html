@@ -907,7 +907,12 @@ window.mirrorOrderToFirestore = async function(order) {
     // A refusal is a decision, not a transport problem — retrying it over
     // plain REST just gets refused again, so don't.
     if (firstKind === 'blocked') {
-      console.warn('Firestore refused the order write (credit hold or failed validation).');
+      // Log the error itself. The rules answer a credit hold and a failed
+      // field validation identically, so this line is the only thing anyone
+      // debugging a refusal has to go on — "refused" alone told them nothing.
+      console.warn('Firestore refused the order write. The rules do not say which rule '
+        + 'said no: this is either a credit hold on this customer, or the order document '
+        + 'failing validation (commonly: deployed rules older than this app). Raw error:', e);
       return { error: 'blocked' };
     }
     console.warn('Firestore SDK write failed, falling back to plain REST:', e);
@@ -3666,9 +3671,9 @@ function scrCheckout(){
       <div style="height:8px;"></div>
     </div>
     <div style="padding:12px 16px calc(12px + var(--safe-b));border-top:1px solid var(--line);background:var(--surface);">
-      ${ORDER_BLOCKED?`<div class="banner bad mb-12">${icon('alert',17)}<div>Your account is on hold for new orders. Please contact us to clear it before placing an order.</div></div>`:''}
+      ${refusalCopy()?`<div class="banner bad mb-12">${icon('alert',17)}<div>${esc(refusalCopy().banner)}</div></div>`:''}
       <button class="btn" id="btn-place" ${ORDER_BLOCKED || (PAY==='credit'&&!enough)?'disabled':''} onclick="placeOrder()">
-        ${ORDER_BLOCKED?`Account on hold`:PAY==='credit'&&!enough?`Insufficient credit`:`Place order · ${money(t.total)}`}</button>
+        ${ORDER_BLOCKED&&refusalCopy()?.button?esc(refusalCopy().button):PAY==='credit'&&!enough?`Insufficient credit`:`Place order · ${money(t.total)}`}</button>
     </div>
   </div>`;
 }
@@ -3680,7 +3685,11 @@ function radio(on){
 let PLACING_ORDER = false;   // re-entry guard: never place the same order twice
 async function placeOrder(){
   if(PLACING_ORDER) return;   // a place is already in flight (double-tap / retry)
-  if(ORDER_BLOCKED){ toast('Your account is on hold for new orders. Please contact us to clear your account before ordering.','alert'); return; }
+  // Only a confirmed hold stops the attempt here. A 'rejected' refusal leaves
+  // ordering open on purpose — see markOrderBlocked().
+  // ORDER_BLOCKED is only ever set alongside a refusal kind, so refusalCopy()
+  // is always present here — no fallback sentence to drift out of step.
+  if(ORDER_BLOCKED){ toast(refusalCopy().toast,'alert'); return; }
   if(APPCFG.ordersDisabled){ toast('Ordering is temporarily paused. Please try again a little later.','alert'); return; }
   if(!S.user?.address){ toast('Add a delivery address before placing your order','alert'); editDeliveryAddressSheet(); return; }
   PLACING_ORDER = true;
@@ -3757,7 +3766,7 @@ function rollBackRefusedOrder(orderNo, cartBackup){
   persist();
   markOrderBlocked();
   renderTabBadge();
-  toast('That order could not be placed — your account is on hold for new orders. Please contact the office.','alert');
+  toast(refusalCopy().toast,'alert');   // markOrderBlocked() just set the kind
   if(S.screen === 'placed') go('cart',{replace:true}); else paint();
 }
 
@@ -5234,13 +5243,51 @@ async function pollLiveState(){
    the customer finds out when they try to order rather than beforehand, which
    is a small UX cost for not publishing the list. */
 let ORDER_BLOCKED = false;
-// Called by the order-placement path when Firestore refuses the write with
-// permission-denied and nothing else about the order was wrong.
+/* WHY the write was refused, which is not the same question as whether it was.
+   Firestore answers both a credit hold and a failed field validation with the
+   same PERMISSION_DENIED — the rules deliberately do not say which rule said
+   no. So the app cannot know, and telling the customer "your account is on
+   hold" was asserting one of two possibilities as fact. When the real cause is
+   a rules/app version mismatch, that message sends a perfectly good customer
+   to ring the office about a debt they do not owe, and sends the office
+   hunting through a hold list that does not contain them.
+
+   'hold'     — this install HAS had an order accepted before, so the rules
+                like this app's document shape. Something about this customer
+                changed. A hold is by far the likeliest explanation.
+   'rejected' — no order from this install has ever been accepted. The shape
+                itself is more likely the problem (deployed rules older than
+                the app, a field the rules do not allow). Do not accuse the
+                customer, and do not bolt the door: let them try again. */
+let ORDER_REFUSAL = null;   // null | 'hold' | 'rejected'
+function everPlacedSuccessfully(){
+  try{ return (DB.orders||[]).some(o => o && o.firestoreId); }catch(_){ return false; }
+}
+// Called by the order-placement path when Firestore refuses the write.
 function markOrderBlocked(){
   const was = ORDER_BLOCKED;
-  ORDER_BLOCKED = true;
+  ORDER_REFUSAL = everPlacedSuccessfully() ? 'hold' : 'rejected';
+  // A 'rejected' order is not a standing block: the next attempt may well
+  // work, so the checkout button stays usable and only the banner explains.
+  ORDER_BLOCKED = ORDER_REFUSAL === 'hold';
   if(!was && (S.screen==='home' || S.screen==='checkout' || S.screen==='cart')) paint();
+  else if(S.screen==='checkout' || S.screen==='cart') paint();
 }
+const REFUSAL_COPY = {
+  hold: {
+    banner: 'Your account is on hold for new orders. Please contact us to clear it before placing an order.',
+    button: 'Account on hold',
+    toast:  'That order could not be placed — your account is on hold for new orders. Please contact the office.',
+  },
+  rejected: {
+    // Says exactly what is known (it was not accepted, nothing was charged,
+    // the cart is safe) and nothing that is not.
+    banner: 'We could not accept that order. Nothing has been charged and your basket is saved. Please try again, or call the office if it keeps happening.',
+    button: null,          // no button override — ordering stays available
+    toast:  'That order was not accepted. Nothing was charged and your basket is saved — please try again or call the office.',
+  },
+};
+function refusalCopy(){ return REFUSAL_COPY[ORDER_REFUSAL] || null; }
 function startMaintenancePolling(){
   if(LIVE_TIMER) return;
   LIVE_TIMER = setInterval(pollLiveState, 20000);
