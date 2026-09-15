@@ -61,6 +61,26 @@
   .status-btns button.on{background:var(--brand);color:#fff;border-color:var(--brand);}
   .empty{text-align:center;padding:40px 20px;color:var(--ink-2);}
   .close-x{background:transparent;font-size:1.4rem;line-height:1;padding:4px 8px;color:var(--ink-2);}
+  /* Command search. Eleven tabs is more than anyone keeps in their head, and
+     the thing you need in a hurry (clearing a customer's hold) is the thing
+     you have least patience to hunt for. Type what you want, press Enter. */
+  .search-wrap{position:relative;flex:1;max-width:340px;margin:0 12px;}
+  .search-in{width:100%;padding:8px 11px;border:1px solid var(--line);border-radius:9px;
+             background:var(--surface);color:var(--ink);font-size:.88rem;}
+  .search-in:focus{outline:none;border-color:var(--brand-2);box-shadow:0 0 0 3px var(--brand-tint);}
+  .search-res{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:60;background:var(--surface);
+              border:1px solid var(--line);border-radius:11px;box-shadow:0 10px 30px rgba(0,0,0,.14);
+              max-height:min(60vh,380px);overflow-y:auto;padding:5px;}
+  .search-hit{display:block;width:100%;text-align:left;background:transparent;color:var(--ink);
+              padding:8px 10px;border-radius:7px;font-size:.88rem;line-height:1.35;}
+  .search-hit:hover,.search-hit.on{background:var(--brand-tint);}
+  .search-hit .w{display:block;color:var(--ink-2);font-size:.76rem;margin-top:1px;}
+  .search-none{padding:10px;color:var(--ink-2);font-size:.85rem;}
+  /* Lands you ON the control, not just the right tab. */
+  @keyframes searchFlash{0%,100%{box-shadow:0 0 0 0 transparent;}
+                         15%,60%{box-shadow:0 0 0 3px var(--brand-tint);border-color:var(--brand-2);}}
+  .search-flash{animation:searchFlash 1.9s ease-in-out;}
+  @media (prefers-reduced-motion:reduce){.search-flash{animation:none;box-shadow:0 0 0 3px var(--brand-tint);}}
   .tabs{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--line);}
   .tab{background:transparent;border-radius:0;padding:10px 4px;margin-right:20px;color:var(--ink-2);border-bottom:2px solid transparent;}
   .tab.on{color:var(--brand);border-bottom-color:var(--brand);}
@@ -227,7 +247,10 @@
   @media (max-width:640px){
     .wrap{padding:14px 10px 48px;}
     .center-wrap{margin:36px auto;}
-    header{margin-bottom:12px;}
+    header{margin-bottom:12px;flex-wrap:wrap;row-gap:10px;}
+    /* Brand and Sign out keep the top row; the search drops to its own full
+       width line rather than squeezing all three onto a phone. */
+    .search-wrap{order:3;flex:1 0 100%;max-width:none;margin:0;}
     .brand{gap:10px;}
     .brand-logo{width:38px;height:38px;}
     h1{font-size:1.12rem;}
@@ -550,6 +573,11 @@ function renderShell(bodyHtml){
             <div class="muted" style="font-size:.8rem;">Super admin panel</div>
           </div>
         </div>
+        <div class="search-wrap">
+          <input class="search-in" id="admin-search" type="search" autocomplete="off" spellcheck="false"
+                 placeholder="Search settings and actions — press /">
+          <div class="search-res" id="search-res" hidden></div>
+        </div>
         <button class="signout" id="btn-signout">Sign out</button>
       </header>
       <div class="tabs">
@@ -571,7 +599,225 @@ function renderShell(bodyHtml){
   document.getElementById('btn-signout').onclick = () => signOut(auth);
   document.querySelectorAll('.tab').forEach(b => b.onclick = () => { tab = b.dataset.tab; render(); });
   document.getElementById('modal-bg').onclick = (e) => { if(e.target.id==='modal-bg') closeModal(); };
+  wireSearch();
 }
+
+/* ═══════════════════════════════════════════════════════════
+   COMMAND SEARCH
+   Eleven tabs, and the settings inside them are not where a first guess puts
+   them: "put a customer on hold" lives under Controls, not Accounts or
+   Settings, so the one thing you need urgently — a customer standing in front
+   of you, blocked, unable to order — is the hardest to find.
+
+   This is a hand-written index, not a text search over the DOM. A DOM search
+   only finds what the tab you are already on has rendered, which is precisely
+   no help. Every entry below names a real control (verified against the tab
+   that renders it); `run` puts the tab into the right state first (a filter,
+   usually) and `at` is text to scroll to and flash once it is drawn, so a
+   result lands you ON the control rather than merely near it.
+
+   Keep this list honest: a search result for something that does not exist is
+   worse than no search at all. If you remove a control, remove its entry.
+   ═══════════════════════════════════════════════════════════ */
+const SEARCH_INDEX = [
+  // ── the one people actually hunt for ──
+  // boost: when several entries match equally well, the one that DOES the
+  // thing should beat the one that merely lists it. Searching "hold" while a
+  // blocked customer waits means "let me clear it", not "let me browse".
+  { label:'Put a customer on hold, or clear a hold', where:'Controls', tab:'controls',
+    at:'Put this customer on hold', boost:12,
+    keys:'hold unhold unblock block blocked ban banned suspend stop supply credit hold on hold clear release freeze barred cannot order account on hold' },
+  { label:'Customers currently on hold', where:'Controls · On hold list', tab:'controls',
+    at:'On hold', keys:'hold list blocked customers who is blocked unblock' },
+  { label:'Supply held or stopped (customer list)', where:'Accounts', tab:'accounts',
+    run:()=>{ acctFilter='hold'; }, keys:'hold stopped supply blocked customers filter' },
+
+  // ── Controls: the kill switches ──
+  { label:'Disable new orders', where:'Controls', tab:'controls', at:'Disable new orders',
+    keys:'orders off stop ordering closed shut pause' },
+  { label:'Disable online payments', where:'Controls', tab:'controls', at:'Disable online payments',
+    keys:'payment upi razorpay card netbanking off' },
+  { label:'Disable credit / wallet purchases', where:'Controls', tab:'controls',
+    at:'Disable credit', keys:'credit wallet balance off disable' },
+  { label:'Disable the personal (B2C) app', where:'Controls', tab:'controls',
+    at:'Disable the customer', keys:'b2c personal customer app off disable' },
+  { label:'Disable the business (B2B) app', where:'Controls', tab:'controls',
+    at:'Disable the business', keys:'b2b business app off disable' },
+  { label:'Put the whole app into maintenance', where:'Controls', tab:'controls',
+    at:'maintenance', keys:'maintenance down offline everyone shut closed' },
+  { label:'OTP login on / off', where:'Controls', tab:'controls', at:'OTP login',
+    keys:'otp login sign in sms code disable customers cannot log in' },
+  { label:'Disable a product', where:'Controls', tab:'controls', at:'Disable a product',
+    keys:'product hide out of stock remove item disable' },
+
+  // ── Settings: business identity ──
+  { label:'Business name', where:'Settings', tab:'settings', at:'Business name', keys:'name company firm legal' },
+  { label:'Your GSTIN', where:'Settings', tab:'settings', at:'Your GSTIN', keys:'gst gstin tax number bill' },
+  { label:'FSSAI licence number', where:'Settings', tab:'settings', at:'FSSAI', keys:'fssai food licence license' },
+  { label:'MSME / Udyam number', where:'Settings', tab:'settings', at:'MSME', keys:'msme udyam registration' },
+  { label:'Address', where:'Settings', tab:'settings', at:'Address', keys:'address location premises' },
+  { label:'Jurisdiction (city)', where:'Settings', tab:'settings', at:'Jurisdiction', keys:'jurisdiction city court legal bill' },
+
+  // ── Settings: money ──
+  { label:'Delivery fee', where:'Settings', tab:'settings', at:'Delivery fee', keys:'delivery fee charge shipping free' },
+  { label:'Platform fee (per order)', where:'Settings', tab:'settings', at:'Platform fee', keys:'platform fee charge per order' },
+  { label:'Minimum order value', where:'Settings', tab:'settings', at:'Minimum order value', keys:'minimum mov min order value b2b' },
+  { label:'Order cutoff time', where:'Settings', tab:'settings', at:'Order cutoff', keys:'cutoff time slot deadline next day 6pm' },
+  { label:'Business hours', where:'Settings', tab:'settings', at:'Business hours', keys:'hours open close timing' },
+  { label:'UPI ID', where:'Settings', tab:'settings', at:'UPI ID', keys:'upi vpa payment collect' },
+  { label:'Bank account number', where:'Settings', tab:'settings', at:'Account number', keys:'bank account ifsc number payment' },
+
+  // ── Settings: contact + app ──
+  { label:'Support phone', where:'Settings', tab:'settings', at:'Support phone', keys:'support phone contact office number call' },
+  { label:'WhatsApp number', where:'Settings', tab:'settings', at:'WhatsApp number', keys:'whatsapp number contact' },
+  { label:'Announcement banner in the app', where:'Settings', tab:'settings', at:'Announcement banner',
+    keys:'announcement banner notice message ticker app' },
+  { label:'Backend URL (Cloud Run)', where:'Settings', tab:'settings', at:'Backend URL',
+    keys:'backend api url cloud run server endpoint' },
+  { label:'Change the admin password', where:'Settings', tab:'settings', at:'Change password',
+    keys:'password change admin login security reset' },
+
+  // ── Settings: what prints on a bill ──
+  { label:'Default HSN / SAC code', where:'Settings', tab:'settings', at:'Default HSN', keys:'hsn sac code tax bill invoice' },
+  { label:'Terms printed on every bill', where:'Settings', tab:'settings', at:'Terms printed', keys:'terms conditions bill invoice print' },
+  { label:'Declaration — condition of goods', where:'Settings', tab:'settings', at:'Declaration', keys:'declaration goods condition bill' },
+  { label:'GST number verification note', where:'Settings', tab:'settings', at:'GST number verification', keys:'gst verification note bill' },
+
+  // ── Orders ──
+  { label:'All orders', where:'Orders', tab:'orders', run:()=>{ orderFilter='all'; }, keys:'orders all list everything' },
+  { label:'Orders placed (awaiting acceptance)', where:'Orders', tab:'orders', run:()=>{ orderFilter='placed'; },
+    keys:'placed new pending awaiting accept confirm' },
+  { label:'Orders accepted', where:'Orders', tab:'orders', run:()=>{ orderFilter='confirmed'; }, keys:'accepted confirmed' },
+  { label:'Out for delivery', where:'Orders', tab:'orders', run:()=>{ orderFilter='out_for_delivery'; },
+    keys:'out delivery rider dispatched on the way' },
+  { label:'Delivered orders', where:'Orders', tab:'orders', run:()=>{ orderFilter='delivered'; }, keys:'delivered done complete' },
+  { label:'Denied orders', where:'Orders', tab:'orders', run:()=>{ orderFilter='denied'; }, keys:'denied rejected refused' },
+  { label:'Cancelled orders', where:'Orders', tab:'orders', run:()=>{ orderFilter='cancelled'; }, keys:'cancelled cancel' },
+
+  // ── Customers ──
+  { label:'All customers', where:'Accounts', tab:'accounts', run:()=>{ acctFilter='all'; }, keys:'customers accounts all people' },
+  { label:'Business (B2B) customers', where:'Accounts', tab:'accounts', run:()=>{ acctFilter='b2b'; }, keys:'b2b business gst customers' },
+  { label:'Personal (B2C) customers', where:'Accounts', tab:'accounts', run:()=>{ acctFilter='b2c'; }, keys:'b2c personal retail customers' },
+
+  // ── The remaining tabs ──
+  { label:'Products, prices and stock', where:'Products', tab:'products',
+    keys:'products price mrp b2b stock variant catalogue item add edit low stock out of stock' },
+  { label:'Bills and invoices', where:'Bills', tab:'bills', keys:'bill invoice print gst tax copy transporter supplier' },
+  { label:'Send a broadcast / notification', where:'Broadcasts', tab:'broadcasts',
+    keys:'broadcast notification push announce message send everyone b2b b2c' },
+  { label:'Riders and deliveries', where:'Drivers', tab:'drivers', keys:'rider driver delivery assign track live' },
+  { label:'Dashboard and sales figures', where:'Dashboard', tab:'dashboard',
+    keys:'dashboard sales revenue totals stats summary today report' },
+  { label:'Maintenance checks and problems found', where:'Maintenance', tab:'maintenance',
+    keys:'maintenance audit problem check health integrity nightly' },
+  { label:'Assistant', where:'Assistant', tab:'assistant', keys:'assistant ai help ask' },
+];
+
+let searchHits = [], searchAt = -1;
+
+function runSearch(q){
+  const s = q.trim().toLowerCase();
+  if(!s) return [];
+  // Score so the obvious match sits at the top: a label that starts with what
+  // you typed beats one that merely contains it, which beats a keyword hit.
+  return SEARCH_INDEX
+    .map(e => {
+      const label = e.label.toLowerCase(), where = (e.where||'').toLowerCase();
+      let score = 0;
+      if(label.startsWith(s)) score = 100;
+      else if(label.includes(s)) score = 70;
+      else if(where.includes(s)) score = 45;
+      else if((e.keys||'').includes(s)) score = 40;
+      else {
+        // Every word you typed appears somewhere — catches "hold customer".
+        const hay = label + ' ' + where + ' ' + (e.keys||'');
+        const words = s.split(/\s+/).filter(Boolean);
+        if(words.length > 1 && words.every(w => hay.includes(w))) score = 30;
+      }
+      return { e, score: score ? score + (e.boost || 0) : 0 };
+    })
+    .filter(r => r.score)
+    .sort((a,b) => b.score - a.score || a.e.label.length - b.e.label.length)
+    .slice(0, 8)
+    .map(r => r.e);
+}
+
+function drawSearch(){
+  const box = document.getElementById('search-res');
+  if(!box) return;
+  if(!searchHits.length){
+    const typed = (document.getElementById('admin-search')?.value || '').trim();
+    box.innerHTML = typed ? '<div class="search-none">Nothing matches that.</div>' : '';
+    box.hidden = !typed;
+    return;
+  }
+  box.innerHTML = searchHits.map((h,i) =>
+    `<button class="search-hit ${i===searchAt?'on':''}" data-i="${i}">${esc(h.label)}<span class="w">${esc(h.where)}</span></button>`
+  ).join('');
+  box.hidden = false;
+  box.querySelectorAll('.search-hit').forEach(b =>
+    b.onclick = () => openSearchHit(searchHits[+b.dataset.i]));
+}
+
+function closeSearch(){
+  const box = document.getElementById('search-res');
+  if(box){ box.hidden = true; box.innerHTML = ''; }
+  searchHits = []; searchAt = -1;
+}
+
+function openSearchHit(hit){
+  if(!hit) return;
+  closeSearch();
+  if(hit.run) hit.run();          // set the filter BEFORE the tab draws
+  tab = hit.tab;
+  render();                        // this rebuilds the shell, search box included
+  if(hit.at) flashSearchTarget(hit.at);
+}
+
+/* Finds the control by its own visible text. Deliberately not by id: it means
+   this works for every section without sprinkling ids through 3000 lines, and
+   a renamed control shows up as a search result that stops scrolling — visible,
+   not silent. */
+function flashSearchTarget(text){
+  const body = document.getElementById('tab-body');
+  if(!body) return;
+  const needle = text.toLowerCase();
+  const hit = [...body.querySelectorAll('div,label,button,h2,h3,span,td,th')]
+    .find(el => !el.querySelector('div,label,button,h2,h3,span,td,th')
+                && (el.textContent||'').trim().toLowerCase().includes(needle));
+  if(!hit) return;
+  const card = hit.closest('.card') || hit;
+  try{ card.scrollIntoView({ block:'center', behavior:'smooth' }); }catch(_){ card.scrollIntoView(); }
+  card.classList.add('search-flash');
+  setTimeout(()=>card.classList.remove('search-flash'), 2000);
+}
+
+function wireSearch(){
+  const input = document.getElementById('admin-search');
+  if(!input) return;
+  input.oninput = () => { searchHits = runSearch(input.value); searchAt = searchHits.length ? 0 : -1; drawSearch(); };
+  input.onkeydown = (e) => {
+    if(e.key === 'Escape'){ input.value = ''; closeSearch(); input.blur(); return; }
+    if(!searchHits.length) return;
+    if(e.key === 'ArrowDown'){ e.preventDefault(); searchAt = (searchAt + 1) % searchHits.length; drawSearch(); }
+    else if(e.key === 'ArrowUp'){ e.preventDefault(); searchAt = (searchAt - 1 + searchHits.length) % searchHits.length; drawSearch(); }
+    else if(e.key === 'Enter'){ e.preventDefault(); openSearchHit(searchHits[searchAt] || searchHits[0]); }
+  };
+  input.onblur = () => setTimeout(closeSearch, 150);   // let a click land first
+}
+
+/* "/" jumps to the search from anywhere — but never while someone is typing
+   into an actual field, or it would eat the slash out of an address. */
+document.addEventListener('keydown', (e) => {
+  if(e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
+  const t = e.target;
+  if(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  const input = document.getElementById('admin-search');
+  if(!input) return;
+  e.preventDefault();
+  input.focus();
+  input.select();
+});
 
 /* ═══════════════════════════════════════════════════════════
    ACCOUNT CENTER
