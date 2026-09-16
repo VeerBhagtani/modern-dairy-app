@@ -1,0 +1,145 @@
+name: Release APK
+
+# Builds a debug APK and publishes it as a GitHub Release, so there is a
+# stable download URL in the shape this project already uses:
+#
+#   https://github.com/<owner>/<repo>/releases/download/v5.20.0-debug/modern-dairy-v5.20.0-debug.apk
+#
+# Before this, releases were made by hand: build somewhere, download the
+# artifact, drag it into the Releases page. That is several minutes of
+# clicking per release and nothing checks the build first. Actions → Run
+# workflow → type a version → done, and the full test suite has to pass or
+# no release is published.
+#
+# Needs no repo secrets to produce a DEMO build. For a build that talks to a
+# real backend, fill in api_base; for real SMS/GST, set OTP_CUSTOMER_ID,
+# OTP_AUTH_TOKEN, GST_API_KEY, GST_API_SECRET as repo secrets.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, without the leading v (e.g. 5.20.0)"
+        required: true
+      api_base:
+        description: "Backend API base URL (blank = DEMO build, the project's state today)"
+        default: ''
+        required: false
+      demo_otp:
+        description: "Accept 0000 as the OTP for any number (testing builds only)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write        # the release itself — nothing else
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Work out the names once
+        id: v
+        run: |
+          V="${{ github.event.inputs.version }}"
+          V="${V#v}"                                  # tolerate someone typing "v5.20.0"
+          if ! printf '%s' "$V" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::version must look like 5.20.0 (got '$V')"; exit 1
+          fi
+          echo "version=$V"                        >> "$GITHUB_OUTPUT"
+          echo "tag=v$V-debug"                     >> "$GITHUB_OUTPUT"
+          echo "apk=modern-dairy-v$V-debug.apk"    >> "$GITHUB_OUTPUT"
+
+      - name: Refuse to reuse a tag
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${{ steps.v.outputs.tag }}" >/dev/null 2>&1; then
+            echo "::error::tag ${{ steps.v.outputs.tag }} already exists — pick a new version."; exit 1
+          fi
+
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          cd backend && npm ci --ignore-scripts
+
+      # No release goes out of a tree that cannot pass its own checks.
+      - name: Preflight
+        run: npm run preflight
+
+      - name: Full test suite (incl. Firestore rules on a real emulator)
+        run: npm run test:all
+
+      - name: Write www/secrets.js
+        env:
+          OTP_CUSTOMER_ID: ${{ secrets.OTP_CUSTOMER_ID }}
+          OTP_AUTH_TOKEN: ${{ secrets.OTP_AUTH_TOKEN }}
+          GST_API_KEY: ${{ secrets.GST_API_KEY }}
+          GST_API_SECRET: ${{ secrets.GST_API_SECRET }}
+          # inject-secrets.js REFUSES to combine this with real credentials, so
+          # a build that can send real SMS can never also accept 0000.
+          DEMO_BUILD: ${{ github.event.inputs.demo_otp }}
+        run: node scripts/inject-secrets.js
+
+      - name: Write www/config.js
+        env:
+          API_BASE: ${{ github.event.inputs.api_base }}
+          RAZORPAY_KEY: ${{ secrets.RAZORPAY_KEY_ID }}
+        run: node scripts/inject-config.js
+
+      - name: Preflight the generated build config
+        run: npm run preflight:built
+
+      - name: Build
+        run: |
+          npx cap sync android
+          chmod +x android/gradlew
+          cd android && ./gradlew assembleDebug --no-daemon
+        env:
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+          ANDROID_VERSION_NAME: ${{ steps.v.outputs.version }}
+
+      - name: Name it and check it
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk "${{ steps.v.outputs.apk }}"
+          sha256sum "${{ steps.v.outputs.apk }}" | tee "${{ steps.v.outputs.apk }}.sha256"
+          "$ANDROID_HOME"/build-tools/*/apksigner verify "${{ steps.v.outputs.apk }}" \
+            || { echo "::error::the APK is not signed"; exit 1; }
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ github.event.inputs.api_base == '' && 'DEMO — talks to no backend' || format('live against {0}', github.event.inputs.api_base) }}
+        run: |
+          cat > notes.md <<EOF
+          Debug build for testing on your own devices. Not a Play Store release.
+
+          **Build:** $MODE
+          **Sign in:** any 10-digit number, OTP \`0000\`.
+          **SHA-256:** \`$(cut -d' ' -f1 "${{ steps.v.outputs.apk }}.sha256")\`
+
+          Built from \`${{ github.sha }}\` with the full test suite green.
+
+          Orders are real — they reach Firestore and the admin panel under the
+          production rules. Wallet, credit, order history and the account are
+          local to the phone until the Cloud Run backend is deployed.
+          EOF
+          gh release create "${{ steps.v.outputs.tag }}" \
+            "${{ steps.v.outputs.apk }}" "${{ steps.v.outputs.apk }}.sha256" \
+            --title "Modern Dairy v${{ steps.v.outputs.version }} (debug)" \
+            --notes-file notes.md \
+            --target "${{ github.sha }}"
+
+      - name: The download URL
+        run: |
+          echo "https://github.com/${{ github.repository }}/releases/download/${{ steps.v.outputs.tag }}/${{ steps.v.outputs.apk }}" \
+            >> "$GITHUB_STEP_SUMMARY"
