@@ -52,6 +52,22 @@ const order = (uid, over = {}) => ({
   ...over,
 });
 
+/* THE REAL buildOrderDoc, lifted out of www/index.html rather than copied.
+ *
+ * The fixture above is a hand-written copy, and a copy only tests the rules
+ * against what someone once believed the app sends. Add a field to
+ * buildOrderDoc and the copy keeps passing while every real order starts
+ * getting refused by hasOnly — which is exactly the failure that sent a
+ * customer the message "your account is on hold". So the shapes below are
+ * built by the app's own function: change it, and these tests change with it. */
+const buildOrderDoc = (() => {
+  const src = fs.readFileSync(path.join(ROOT, 'www', 'index.html'), 'utf8');
+  const fn = src.match(/function buildOrderDoc\(order, uid\) \{[\s\S]*?\n\}/);
+  if (!fn) throw new Error('buildOrderDoc could not be found in www/index.html');
+  // eslint-disable-next-line no-new-func
+  return new Function(`${fn[0]}; return buildOrderDoc;`)();
+})();
+
 await testEnv.clearFirestore();
 await testEnv.withSecurityRulesDisabled(async (ctx) => {
   const db = ctx.firestore();
@@ -65,6 +81,53 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'order_blocks_public/hashes'), { hashes: ['deadbeef'] });
   await setDoc(doc(db, 'products/paneer'), { name: 'Paneer' });
 });
+
+/* Every order the app can actually produce must be acceptable.
+ *
+ * The rules lock the field set with hasOnly, so they and buildOrderDoc are one
+ * contract in two files. When they drift, Firestore answers PERMISSION_DENIED
+ * — the same answer it gives a customer on credit hold — and every order from
+ * every customer is refused for a reason nobody can see. These three are the
+ * shapes real customers generate; if any is refused, ordering is broken for
+ * that whole class of customer. */
+console.log('\n── Every real order shape is accepted ──');
+const REAL = 'real-shape-uid';
+const realDb = testEnv.authenticatedContext(REAL).firestore();
+const shapes = [
+  ['personal customer, saved profile, cash on delivery', {
+    orderNo: 'MD-R1', customerType: 'b2c', payment: 'cod',
+    items: [{ pk: 'milk', vid: 'v1', qty: 2, price: 32, name: 'Toned Milk', label: '500 ml', unit: 'pouch' }],
+    subtotal: 64, gst: 0, delivery: 0, platform: 0, total: 64,
+    name: 'Test Customer', phone: '9000000000', address: 'Camp, Pune' }],
+  ['business customer on credit, several lines, platform fee', {
+    orderNo: 'MD-R2', customerType: 'b2b', payment: 'credit',
+    items: [{ pk: 'paneer', vid: 'v9', qty: 5, price: 310 }, { pk: 'curd', vid: 'v3', qty: 10, price: 48 }],
+    subtotal: 2030, gst: 101.5, delivery: 0, platform: 2, total: 2133.5,
+    company: 'Hotel Example', gstin: '27AAPFM1234A1ZV', name: 'Owner',
+    phone: '9876500001', address: 'FC Road, Pune' }],
+  // The brand-new install with nothing saved yet — every optional field null.
+  // These are the ones that broke when the rules read properties directly
+  // instead of via .get(field, null), because reading an absent property
+  // raises an error and an error denies the write.
+  ['brand-new customer, every optional field empty', {
+    orderNo: 'MD-R3', customerType: 'b2c', payment: 'cod',
+    items: [{ pk: 'milk', vid: 'v1', qty: 1, price: 32 }],
+    subtotal: 32, gst: 0, delivery: 0, total: 32 }],
+];
+for (const [name, o] of shapes) {
+  const d = { ...buildOrderDoc(o, REAL), placedAt: new Date().toISOString() };
+  await allowed(setDoc(doc(realDb, 'orders', o.orderNo), d), name);
+}
+// The same generated shape must still fail the two forgeries it is meant to.
+{
+  const base = buildOrderDoc(shapes[0][1], REAL);
+  await denied(setDoc(doc(realDb, 'orders/MD-R-FORGE1'),
+    { ...base, orderNo: 'MD-R-FORGE1', placedAt: new Date().toISOString(), priceVerified: true }),
+    'and a forged priceVerified:true on that same shape is still refused');
+  await denied(setDoc(doc(realDb, 'orders/MD-R-FORGE2'),
+    { ...base, orderNo: 'MD-R-FORGE2', placedAt: new Date().toISOString(), total: 1 }),
+    'and a ₹1 total on real line items is still refused');
+}
 
 console.log('\n── Orders: ownership ──');
 await allowed(getDoc(doc(alice, 'orders/alice-order')), 'owner reads their own order');
