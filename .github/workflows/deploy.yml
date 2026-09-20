@@ -55,12 +55,18 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
 
+      # The secrets arrive as environment variables, never interpolated into the
+      # script text: the key is multi-line JSON, and pasting it into a bash
+      # condition breaks the script's own syntax before it can test anything.
       - name: Check the prerequisites before touching anything
+        env:
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          SA_KEY: ${{ secrets.GCP_SA_KEY }}
         run: |
           miss=0
-          [ -z "${{ secrets.GCP_PROJECT_ID }}" ] && { echo "::error::GCP_PROJECT_ID is not set."; miss=1; }
-          [ -z "${{ secrets.GCP_SA_KEY }}" ] && { echo "::error::GCP_SA_KEY is not set."; miss=1; }
-          [ "$miss" = "1" ] && exit 1
+          if [ -z "$PROJECT_ID" ]; then echo "::error::GCP_PROJECT_ID is not set."; miss=1; fi
+          if [ -z "$SA_KEY" ]; then echo "::error::GCP_SA_KEY is not set."; miss=1; fi
+          if [ "$miss" = "1" ]; then exit 1; fi
           echo "Prerequisites present."
 
       - id: auth
