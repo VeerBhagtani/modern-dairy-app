@@ -1,0 +1,227 @@
+name: Publish downloadable APK
+
+# Builds the app(s) and attaches the APK — plus the app's index.html — to a
+# GitHub Release, so anyone with access to the repository can download them
+# from a stable link instead of digging through Actions artifacts (which
+# expire and need a login to fetch).
+#
+# Run it from the Actions tab: "Publish downloadable APK" → Run workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: 'Which app to build'
+        type: choice
+        required: true
+        default: 'both'
+        options:
+          - both
+          - modern-dairy      # the customer ordering app (www/, android/)
+          - modern-drivers    # the driver tracking app (driver-app/)
+      tag:
+        description: 'Release tag (e.g. apk-2026-09-20). Leave blank to use the run number.'
+        required: false
+        default: ''
+      prerelease:
+        description: 'Mark the release as a pre-release'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: write        # needed to create the release and upload the assets
+
+jobs:
+  # ── Modern Dairy: the customer ordering app ─────────────────────────────
+  modern-dairy:
+    if: ${{ github.event.inputs.app == 'both' || github.event.inputs.app == 'modern-dairy' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: npm install
+
+      # The OTP and GST credentials are injected at build time from repository
+      # secrets; the committed www/secrets.js stays empty. A build with the
+      # secrets missing still produces a working APK — those features simply
+      # report that they are not configured, which is the honest behaviour.
+      - name: Inject build-time secrets
+        env:
+          OTP_CUSTOMER_ID: ${{ secrets.OTP_CUSTOMER_ID }}
+          OTP_AUTH_TOKEN: ${{ secrets.OTP_AUTH_TOKEN }}
+          GST_API_KEY: ${{ secrets.GST_API_KEY }}
+          GST_API_SECRET: ${{ secrets.GST_API_SECRET }}
+        run: node scripts/inject-secrets.js
+
+      - name: Sync Capacitor project
+        run: npx cap sync android
+
+      - name: Build debug APK
+        run: |
+          chmod +x android/gradlew
+          cd android && ./gradlew assembleDebug --no-daemon
+
+      - name: Stage the downloadable files
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/debug/app-debug.apk out/modern-dairy.apk
+          # The app itself is one HTML file; ship the copy that went into this
+          # build so the APK and the index can never disagree.
+          cp www/index.html out/modern-dairy-index.html
+          ls -lh out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: modern-dairy-build
+          path: out/*
+          if-no-files-found: error
+
+  # ── Modern Drivers: the driver tracking app ─────────────────────────────
+  modern-drivers:
+    if: ${{ github.event.inputs.app == 'both' || github.event.inputs.app == 'modern-drivers' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        working-directory: driver-app
+        run: npm install
+
+      # The driver app refuses to start a ride without a backend address, on
+      # purpose — an APK that silently records nothing would be worse than one
+      # that says it is not configured. If DRIVERS_API_BASE is not set yet, the
+      # build still runs so the app can be installed and looked at, and the
+      # release notes say plainly that it cannot track until it is set.
+      - name: Point the build at the backend
+        id: apibase
+        env:
+          API_BASE: ${{ secrets.DRIVERS_API_BASE }}
+        run: |
+          if [ -z "$API_BASE" ]; then
+            echo "::warning::DRIVERS_API_BASE is not set. The APK will install and open, but it cannot enrol a driver or start a ride until a backend URL is configured and the APK is rebuilt."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            node ../scripts/set-drivers-api-base.js "$API_BASE"
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+        working-directory: driver-app
+
+      - name: Generate the native Android project
+        working-directory: driver-app
+        run: npx cap add android
+
+      - name: Patch the manifest for background location
+        run: node scripts/patch-drivers-manifest.js
+
+      - name: Sync web assets
+        working-directory: driver-app
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: driver-app
+        run: |
+          chmod +x android/gradlew
+          cd android && ./gradlew assembleDebug --no-daemon
+
+      - name: Stage the downloadable files
+        run: |
+          mkdir -p out
+          cp driver-app/android/app/build/outputs/apk/debug/app-debug.apk out/modern-drivers.apk
+          cp driver-app/www/index.html out/modern-drivers-index.html
+          if [ "${{ steps.apibase.outputs.configured }}" = "false" ]; then
+            echo "NOT_CONFIGURED" > out/modern-drivers-NO-BACKEND-CONFIGURED.txt
+          fi
+          ls -lh out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: modern-drivers-build
+          path: out/*
+          if-no-files-found: error
+
+  # ── Publish ─────────────────────────────────────────────────────────────
+  release:
+    needs: [modern-dairy, modern-drivers]
+    # Runs even when one app was not selected, so a single-app build still
+    # publishes. It does NOT run if a selected build actually failed.
+    if: ${{ always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: staged
+
+      - name: Collect the assets
+        id: collect
+        run: |
+          mkdir -p release
+          find staged -type f -exec cp {} release/ \; || true
+          ls -lh release
+          if [ -f release/modern-drivers-NO-BACKEND-CONFIGURED.txt ]; then
+            rm release/modern-drivers-NO-BACKEND-CONFIGURED.txt
+            echo "drivers_note=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -z "$(ls -A release)" ]; then
+            echo "::error::No files were produced — nothing to publish."
+            exit 1
+          fi
+
+      - name: Work out the tag
+        id: tag
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          if [ -z "$TAG" ]; then TAG="apk-$(date +%Y%m%d)-${{ github.run_number }}"; fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Write the release notes
+        run: |
+          {
+            echo "Built from \`${{ github.ref_name }}\` at commit \`${{ github.sha }}\`."
+            echo
+            echo "## Downloads"
+            echo
+            echo "| File | What it is |"
+            echo "|---|---|"
+            [ -f release/modern-dairy.apk ] && echo "| \`modern-dairy.apk\` | The customer ordering app. Debug build — install it by allowing \"install unknown apps\" once. |"
+            [ -f release/modern-dairy-index.html ] && echo "| \`modern-dairy-index.html\` | The ordering app's single-file front end, exactly as built into that APK. |"
+            [ -f release/modern-drivers.apk ] && echo "| \`modern-drivers.apk\` | The Modern Drivers tracking app. Debug build. |"
+            [ -f release/modern-drivers-index.html ] && echo "| \`modern-drivers-index.html\` | The driver app's front end. |"
+            echo
+            echo "## Before you install"
+            echo
+            echo "- These are **debug** builds, signed with the debug keystore. They install side by side with a Play build and are not suitable for the Play Store."
+            echo "- Android will warn about installing outside the Play Store. That warning is correct and expected for a directly distributed APK."
+            if [ "${{ steps.collect.outputs.drivers_note }}" = "true" ]; then
+              echo
+              echo "> **Modern Drivers has no backend address in this build.** It will install and open, but it cannot enrol a driver or start a ride. Set the \`DRIVERS_API_BASE\` repository secret to the deployed Cloud Run URL and run this workflow again."
+            fi
+          } > NOTES.md
+          cat NOTES.md
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          body_path: NOTES.md
+          prerelease: ${{ github.event.inputs.prerelease }}
+          files: release/*
+          fail_on_unmatched_files: true
