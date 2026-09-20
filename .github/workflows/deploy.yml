@@ -27,7 +27,7 @@ on:
     inputs:
       region:
         description: Cloud Run region
-        default: us-central1
+        default: asia-south1
         required: true
       service:
         description: Cloud Run service name
@@ -106,7 +106,7 @@ jobs:
       - name: Ensure the container repository exists
         run: |
           P="${{ steps.cfg.outputs.project }}"
-          R="${{ github.event.inputs.region || 'us-central1' }}"
+          R="${{ github.event.inputs.region || 'asia-south1' }}"
           if gcloud artifacts repositories describe cloud-run-source-deploy \
                --project "$P" --location "$R" >/dev/null 2>&1; then
             echo "Already there."
@@ -134,7 +134,7 @@ jobs:
         id: backend
         run: |
           P="${{ steps.cfg.outputs.project }}"
-          R="${{ github.event.inputs.region || 'us-central1' }}"
+          R="${{ github.event.inputs.region || 'asia-south1' }}"
           S="${{ github.event.inputs.service || 'modern-drivers' }}"
           # The office dashboard is served from GitHub Pages, so that origin is
           # the one the browser will send. The Firebase Hosting origins stay in
@@ -156,7 +156,7 @@ jobs:
           # `status.url` has handed back a legacy one that 404s while the
           # service itself was serving fine on another. So rather than trusting
           # a single field, collect every address gcloud knows and keep the one
-          # that actually answers /healthz. The URL is written into the
+          # that actually answers /health. The URL is written into the
           # dashboard and the APK, so it has to be a working one.
           CANDIDATES=$(
             {
@@ -176,7 +176,7 @@ jobs:
           URL=""
           for attempt in $(seq 1 32); do
             for c in $CANDIDATES; do
-              if curl -fsS --max-time 15 "$c/healthz" >/dev/null 2>&1; then
+              if curl -fsS --max-time 15 "$c/health" >/dev/null 2>&1; then
                 URL="$c"; break
               fi
             done
@@ -188,15 +188,15 @@ jobs:
           if [ -z "$URL" ]; then
             echo "--- what each address actually returns ---"
             for c in $CANDIDATES; do
-              echo "== $c/healthz"
-              curl -sS -i --max-time 20 "$c/healthz" | head -25 || true
+              echo "== $c/health"
+              curl -sS -i --max-time 20 "$c/health" | head -25 || true
               echo
               # An identity token separates "the service refuses anonymous
               # callers" from "the app itself is not answering".
               echo "== same, with an identity token"
               curl -sS -i --max-time 20 \
                 -H "Authorization: Bearer $(gcloud auth print-identity-token 2>/dev/null)" \
-                "$c/healthz" | head -25 || true
+                "$c/health" | head -25 || true
               echo
             done
             echo "--- who may invoke it ---"
@@ -213,7 +213,7 @@ jobs:
               "resource.type=cloud_run_revision AND resource.labels.service_name=$S" \
               --project "$P" --limit 40 --format='value(textPayload)' 2>&1 | head -40 || true
 
-            echo "::error::The service deployed but no reported address answers /healthz. The diagnostics above say why."
+            echo "::error::The service deployed but no reported address answers /health. The diagnostics above say why."
             exit 1
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"

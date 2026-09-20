@@ -93,7 +93,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))" \
   | gcloud secrets create jwt-signing-key --data-file=-
 ```
 
-Health check: `curl http://localhost:8080/healthz`
+Health check: `curl http://localhost:8080/health`
 
 ### Admin dashboard
 

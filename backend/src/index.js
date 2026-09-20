@@ -69,7 +69,20 @@ app.use('/admin/restaurants/import', express.json({ limit: '4mb' }));
 app.use(express.json({ limit: '1mb' }));
 app.use(generalLimiter);
 
-app.get('/healthz', (req, res) => res.json({ ok: true, service: 'modern-drivers-api' }));
+// Two names for one check, and /health is the one to rely on.
+//
+// Google's frontend swallows /healthz on Cloud Run: the request never reaches
+// this process and the caller gets Google's own 404 page, while every other
+// path on the same service arrives here normally. That is worth a comment
+// because a genuinely broken service and a service whose health endpoint is
+// being intercepted look identical from outside — the giveaway was that "/"
+// came back with this app's own headers while "/healthz" did not.
+//
+// /healthz stays for anything already pointed at it; it works locally and
+// anywhere that is not behind Google's frontend.
+const health = (req, res) => res.json({ ok: true, service: 'modern-drivers-api' });
+app.get('/health', health);
+app.get('/healthz', health);
 
 // The office signs in here and gets a short-lived admin token. This service has
 // no Firebase Auth dependency of its own — one fewer thing to set up, and one
