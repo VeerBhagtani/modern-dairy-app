@@ -144,8 +144,8 @@ router.get('/list', requireRole('viewer'), async (req, res) => {
   res.json({ success: true, data: await repo.listDrivers({ includeInactive: req.query.all === '1' }) });
 });
 
-// Drivers are not created here — they register themselves in the app with
-// their name and phone number, and appear in this list the moment they do.
+// Drivers are not created here — they register themselves in the app by
+// typing their name, and appear in this list the moment they do.
 // The office's job is to check the list and deactivate anyone who should not
 // be on it, which is one action instead of forty.
 
@@ -701,4 +701,4 @@ router.post('/maintenance/run', requireRole('admin'), writeLimiter, async (req, 
   res.json({ success: true, data: out });
 });
 
-module.exports = { router, processOne, requireRole, roleOf };
+module.exports = { router, processOne, requireRole };
