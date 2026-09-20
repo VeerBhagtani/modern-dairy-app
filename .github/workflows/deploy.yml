@@ -108,9 +108,13 @@ jobs:
           # the list in case the dashboard is ever served from there too.
           OWNER="${GITHUB_REPOSITORY%%/*}"
           ORIGINS="https://${OWNER,,}.github.io,https://${P}.web.app,https://${P}.firebaseapp.com"
+          # ALLOWED_ORIGINS is itself a comma-separated list, and --set-env-vars
+          # splits on commas — so the list has to be passed with gcloud's
+          # alternate delimiter syntax, "^@^", which makes @ the separator
+          # between variables and leaves the commas inside one value alone.
           gcloud run deploy "$S" --project "$P" --region "$R" --source backend \
             --allow-unauthenticated --port 8080 --quiet \
-            --set-env-vars "GCP_PROJECT_ID=${P},NODE_ENV=production,ALLOWED_ORIGINS=${ORIGINS}"
+            --set-env-vars "^@^GCP_PROJECT_ID=${P}@NODE_ENV=production@ALLOWED_ORIGINS=${ORIGINS}"
           URL=$(gcloud run services describe "$S" --project "$P" --region "$R" --format 'value(status.url)')
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "API live at $URL"
