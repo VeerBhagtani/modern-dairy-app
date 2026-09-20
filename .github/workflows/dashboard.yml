@@ -42,21 +42,31 @@ jobs:
             echo "server address on its sign-in screen instead."
           fi
 
+      # The APK is published to this same branch by the app build, so this
+      # updates the site in place rather than replacing the branch.
       - name: Publish
         run: |
           set -euo pipefail
-          rm -rf out && mkdir out
-          cp -R dashboard/. out/
-          touch out/.nojekyll          # keep Pages from running Jekyll over it
-          cd out
-          git init -q -b gh-pages
+          URL="https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git"
+          rm -rf site
+          git clone -q --depth 1 --branch gh-pages "$URL" site 2>/dev/null \
+            || { mkdir site && git -C site init -q -b gh-pages; }
+
+          find site -mindepth 1 -maxdepth 1 \
+            ! -name .git ! -name 'modern-drivers.apk' -exec rm -rf {} +
+          cp -R dashboard/. site/
+          touch site/.nojekyll        # keep Pages from running Jekyll over it
+
+          cd site
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -q -m "Publish the office dashboard from ${GITHUB_SHA::7}"
-          git push -q -f \
-            "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" \
-            gh-pages
+          if git diff --cached --quiet; then
+            echo "The published site already matches this commit."
+          else
+            git commit -q -m "Publish the office dashboard from ${GITHUB_SHA::7}"
+            git push -q "$URL" gh-pages
+          fi
 
       # Switching Pages on for the first time is the one thing the workflow's
       # own token is not allowed to do (GitHub refuses `POST /pages` with a

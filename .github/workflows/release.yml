@@ -75,7 +75,46 @@ jobs:
           chmod +x android/gradlew
           cd android && ./gradlew assembleDebug --no-daemon
 
-      - name: Publish
+      # The APK goes into the gh-pages branch first, because that is a plain
+      # file in a public repository: a link anyone can tap on a phone, with no
+      # GitHub login, no settings to switch on, and nothing that can expire.
+      # The Release below is a nicer landing page on top of that, and it is
+      # allowed to fail — GitHub's Releases API is not always open to a
+      # workflow's own token, and an APK that cannot be downloaded is a worse
+      # outcome than a missing Release page.
+      - name: Publish the APK to the download branch
+        id: apk
+        run: |
+          set -euo pipefail
+          URL="https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git"
+          rm -rf site
+          git clone -q --depth 1 --branch gh-pages "$URL" site 2>/dev/null \
+            || { mkdir site && git -C site init -q -b gh-pages; }
+          cp app/android/app/build/outputs/apk/debug/app-debug.apk site/modern-drivers.apk
+          cd site
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "The published APK already matches this build."
+          else
+            git commit -q -m "Publish the driver app from ${GITHUB_SHA::7}"
+            git push -q "$URL" gh-pages
+          fi
+          echo "url=https://github.com/${GITHUB_REPOSITORY}/raw/gh-pages/modern-drivers.apk" >> "$GITHUB_OUTPUT"
+
+      - name: Say where it is
+        run: |
+          {
+            echo "## Download the app"
+            echo
+            echo "${{ steps.apk.outputs.url }}"
+            echo
+            echo "Open that on the phone, in Chrome."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Also make a Release page, if GitHub allows it
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

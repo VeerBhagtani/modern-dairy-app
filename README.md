@@ -134,8 +134,12 @@ Roles: `viewer` (read only), `manager` (+ stop rides, review journeys),
 ### 5. Build the app
 
 Add a repository secret `DRIVERS_API_BASE` with the API URL the deploy printed,
-then Actions → **Build and publish the app**. The APK lands on a Release page
-you can open on a phone.
+then Actions → **Build and publish the app**. The APK is published as a plain
+file in the repository, so it downloads on any phone with no GitHub login:
+
+```
+https://github.com/<you>/<repo>/raw/gh-pages/modern-drivers.apk
+```
 
 **The app works before any of this.** With no server configured it records the
 route on the phone, draws it live on the map, and says plainly that nothing has
