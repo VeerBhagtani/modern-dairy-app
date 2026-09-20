@@ -1,0 +1,235 @@
+name: Deploy everything
+
+# One run puts the whole platform live:
+#
+#   1. makes sure the JWT signing key exists in Secret Manager
+#   2. deploys the backend to Cloud Run with the right environment
+#   3. deploys the Firestore rules and indexes
+#   4. writes the live backend URL into the dashboard config and commits it
+#   5. deploys Firebase Hosting (admin site + drivers dashboard + privacy policy)
+#   6. prints exactly what is left to do by hand
+#
+# Every step checks its prerequisites and fails with a plain message rather
+# than half-deploying. It is safe to re-run: nothing here is destructive, and
+# an existing signing key is never replaced.
+#
+# ── ONE-TIME SETUP ───────────────────────────────────────────────────────
+# Two repository secrets (Settings → Secrets and variables → Actions):
+#
+#   GCP_PROJECT_ID   modern-dairy-pune
+#   GCP_SA_KEY       the JSON key of a service account holding these roles:
+#                      Cloud Run Admin            (deploy the API)
+#                      Cloud Build Editor         (build the container)
+#                      Artifact Registry Writer   (store the container)
+#                      Service Account User       (run as the runtime account)
+#                      Secret Manager Admin       (create the signing key)
+#                      Firebase Rules Admin       (Firestore rules)
+#                      Firebase Hosting Admin     (the websites)
+#                      Cloud Datastore Index Admin (Firestore indexes)
+#
+# Billing (the Blaze plan) must be on, or Cloud Run and Firestore will refuse.
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: Cloud Run region
+        default: asia-south1
+        required: true
+      service:
+        description: Cloud Run service name
+        default: modern-dairy-api
+        required: true
+      deploy_hosting:
+        description: 'Also deploy the websites (admin + drivers dashboard)'
+        type: boolean
+        default: true
+      deploy_rules:
+        description: 'Also deploy Firestore rules and indexes'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write     # to commit the resolved backend URL into the config
+
+concurrency:
+  group: deploy-everything
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A full-history checkout so the config commit in step 4 can be pushed.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check the prerequisites before touching anything
+        run: |
+          missing=0
+          if [ -z "${{ secrets.GCP_PROJECT_ID }}" ]; then
+            echo "::error::GCP_PROJECT_ID is not set. Add it under Settings → Secrets and variables → Actions."
+            missing=1
+          fi
+          if [ -z "${{ secrets.GCP_SA_KEY }}" ]; then
+            echo "::error::GCP_SA_KEY is not set. Add the service-account JSON key — the roles it needs are listed at the top of this workflow file."
+            missing=1
+          fi
+          [ "$missing" = "1" ] && exit 1
+          echo "Prerequisites look present."
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # ── 1. signing key ───────────────────────────────────────────────────
+      # Every driver and admin token is signed with this. Created once, never
+      # replaced — rotating it would sign every driver out of their phone, so
+      # that is a deliberate act, not a side effect of a deploy.
+      - name: Ensure the JWT signing key exists
+        run: |
+          PROJECT="${{ secrets.GCP_PROJECT_ID }}"
+          if gcloud secrets describe jwt-signing-key --project "$PROJECT" >/dev/null 2>&1; then
+            echo "jwt-signing-key already exists — left untouched."
+          else
+            echo "Creating jwt-signing-key..."
+            node -e "console.log(require('crypto').randomBytes(48).toString('hex'))" \
+              | gcloud secrets create jwt-signing-key --project "$PROJECT" --data-file=- --replication-policy=automatic
+            echo "Created."
+          fi
+
+      # ── 2. backend ───────────────────────────────────────────────────────
+      - name: Deploy the backend to Cloud Run
+        id: backend
+        run: |
+          PROJECT="${{ secrets.GCP_PROJECT_ID }}"
+          REGION="${{ github.event.inputs.region }}"
+          SERVICE="${{ github.event.inputs.service }}"
+
+          # The dashboard's browser origin must be allowed or every request
+          # from it fails CORS. Firebase Hosting serves both of this project's
+          # default domains, so allow both.
+          ORIGINS="https://${PROJECT}.web.app,https://${PROJECT}.firebaseapp.com"
+
+          gcloud run deploy "$SERVICE" \
+            --project "$PROJECT" \
+            --region "$REGION" \
+            --source backend \
+            --allow-unauthenticated \
+            --set-env-vars "GCP_PROJECT_ID=${PROJECT},NODE_ENV=production,ALLOWED_ORIGINS=${ORIGINS}" \
+            --port 8080 \
+            --quiet
+
+          URL=$(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format 'value(status.url)')
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Backend is live at $URL"
+
+      - name: Check the backend is actually answering
+        run: |
+          URL="${{ steps.backend.outputs.url }}"
+          for i in 1 2 3 4 5; do
+            if curl -fsS "$URL/healthz" >/dev/null; then
+              echo "Health check passed."
+              exit 0
+            fi
+            echo "Not ready yet (attempt $i) — waiting..."
+            sleep 10
+          done
+          echo "::error::The backend deployed but $URL/healthz is not answering. Check the Cloud Run logs before going further."
+          exit 1
+
+      # ── 3. Firestore ─────────────────────────────────────────────────────
+      - name: Deploy the Firestore rules and indexes
+        if: ${{ github.event.inputs.deploy_rules == 'true' }}
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+        run: |
+          npx --yes firebase-tools@13 deploy \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --only firestore:rules,firestore:indexes \
+            --non-interactive
+
+      # ── 4. point the dashboard at the live backend ───────────────────────
+      # The dashboard ships with an empty API_BASE so no environment URL is
+      # ever committed by hand. The deploy knows the real URL, so it writes it
+      # in and commits — which also means the next hosting deploy from anyone's
+      # machine already has the right value.
+      - name: Write the backend URL into the dashboard config
+        id: config
+        run: |
+          URL="${{ steps.backend.outputs.url }}"
+          FILE=legal/drivers/config.js
+          node -e "
+            const fs = require('fs');
+            const f = '$FILE';
+            const src = fs.readFileSync(f, 'utf8');
+            const out = src.replace(/API_BASE:\s*'[^']*'/, \"API_BASE: '$URL'\");
+            if (out === src) { console.error('Could not find API_BASE in ' + f); process.exit(1); }
+            fs.writeFileSync(f, out);
+          "
+          if git diff --quiet -- "$FILE"; then
+            echo "Config already pointed at $URL — nothing to commit."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add "$FILE"
+            git commit -m "Point the drivers dashboard at $URL [skip ci]"
+            git push origin HEAD:"${{ github.ref_name }}"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── 5. websites ──────────────────────────────────────────────────────
+      - name: Deploy the websites
+        if: ${{ github.event.inputs.deploy_hosting == 'true' }}
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+        run: |
+          npx --yes firebase-tools@13 deploy \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --only hosting \
+            --non-interactive
+
+      # ── 6. what is left ──────────────────────────────────────────────────
+      - name: Summary
+        run: |
+          PROJECT="${{ secrets.GCP_PROJECT_ID }}"
+          URL="${{ steps.backend.outputs.url }}"
+          {
+            echo "# Deployed"
+            echo
+            echo "| Thing | Where |"
+            echo "|---|---|"
+            echo "| Backend API | \`$URL\` |"
+            echo "| Admin website (ordering) | https://${PROJECT}.web.app/admin/ |"
+            echo "| Drivers dashboard | https://${PROJECT}.web.app/drivers/ |"
+            echo "| Privacy policy | https://${PROJECT}.web.app/privacy-policy.html |"
+            echo
+            echo "## Two things only you can do"
+            echo
+            echo "**1. Make the driver APK able to connect.** Add a repository secret:"
+            echo
+            echo "\`\`\`"
+            echo "Name:  DRIVERS_API_BASE"
+            echo "Value: $URL"
+            echo "\`\`\`"
+            echo
+            echo "then run **Publish downloadable APK**. Until you do, the driver APK installs but cannot start a ride."
+            echo
+            echo "**2. Add your real data** in the drivers dashboard, in this order — nothing classifies correctly without the first one:"
+            echo
+            echo "1. **Locations → Modern Dairy facilities** — add each depot with its coordinates."
+            echo "2. **Locations → Restaurants** — add them, or import a CSV."
+            echo "3. **Drivers** — add each driver; hand them the enrolment code it shows (shown once)."
+            echo "4. **Deliveries → Import orders** — optional, but this is what turns *likely* kilometres into *verified* ones."
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$GITHUB_STEP_SUMMARY"
