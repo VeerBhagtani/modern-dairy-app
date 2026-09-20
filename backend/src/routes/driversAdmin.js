@@ -18,7 +18,7 @@ const {
 } = require('../middleware/validate');
 const { processRideData, aggregateRides } = require('../drivers/pipeline');
 const { SEGMENT_TYPE } = require('../drivers/classification');
-const { evaluateRideAlerts, evaluateResultAlerts, diffAlerts } = require('../drivers/alerts');
+const { evaluateResultAlerts } = require('../drivers/alerts');
 const reports = require('../drivers/reports');
 const orderSource = require('../services/orderSource');
 const manual = require('../services/orderSource/manual');
@@ -412,6 +412,7 @@ router.post('/rides/:rideId/segments/:segmentId/review', requireRole('manager'),
     rideId, segmentId,
     fromType: seg.type, toType,
     distanceM: seg.distanceM,
+    segStartTs: seg.startTs, segEndTs: seg.endTs,
     note, reviewerId: `admin:${req.adminId}`,
   });
   const result = await processOne(rideId);

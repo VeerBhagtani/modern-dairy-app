@@ -14,6 +14,11 @@ const { classifySegments, SEGMENT_TYPE, CONFIDENCE } = require('./classification
 const { summariseDistance, distancePerVisit } = require('./distance');
 const { matchDeliveries } = require('./matching');
 
+// How many excluded fixes the processing document lists individually. Firestore
+// caps a document at 1 MiB; a day of very poor GPS could otherwise exceed it and
+// lose the entire result, which would be far worse than a truncated grey trail.
+const MAX_EXCLUDED_LISTED = 2000;
+
 /**
  * @param {object} input
  *   points        raw GPS documents for the ride (any order)
@@ -49,6 +54,9 @@ function processRideData(input) {
   const quality = trackQuality(track.totals, config);
 
   const needsReview = segments.filter((s) => s.needsReview);
+  const excluded = track.points
+    .filter((p) => !p.countDistance)
+    .map((p) => ({ clientPointId: p.clientPointId, idx: p.idx, quality: p.quality, detail: p.qualityDetail || null }));
 
   return {
     calcVersion: CALC_VERSION,
@@ -66,9 +74,15 @@ function processRideData(input) {
       // Every point that was NOT counted, with the reason. The replay map draws
       // these in grey: a reviewer has to be able to see what was excluded and
       // why, otherwise "we filtered the bad fixes" is an unfalsifiable claim.
-      excludedPoints: track.points
-        .filter((p) => !p.countDistance)
-        .map((p) => ({ clientPointId: p.clientPointId, idx: p.idx, quality: p.quality, detail: p.qualityDetail || null })),
+      //
+      // Capped, because this document has a 1 MiB limit and a day of terrible
+      // GPS could otherwise blow past it and lose the whole result. The count
+      // is always exact even when the list is truncated, and the raw points
+      // themselves are untouched, so nothing is actually lost — re-running the
+      // pipeline reproduces the full list.
+      excludedPoints: excluded.slice(0, MAX_EXCLUDED_LISTED),
+      excludedPointCount: excluded.length,
+      excludedPointsTruncated: excluded.length > MAX_EXCLUDED_LISTED,
     },
     // Segments, stripped of the bulky internals the API does not need. The raw
     // points stay where they are; nothing here replaces them.

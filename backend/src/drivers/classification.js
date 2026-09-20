@@ -284,9 +284,33 @@ function classifySegments(segments, points, ctx, cfg) {
   // ---- pass 3: manual reviews -----------------------------------------
   // A review never rewrites history: the machine verdict stays on the segment
   // as originalType/originalConfidence and the decision is layered on top.
+  //
+  // Segment ids are POSITIONAL (seg_0007), so a reprocess that changes the
+  // segmentation — a threshold edit, or late points arriving from a phone that
+  // was offline — could otherwise silently re-attach a decision to a different
+  // stretch of road. Each review therefore carries the time window it was made
+  // against, and a review whose window no longer matches is NOT applied: the
+  // segment goes back for review with the mismatch on the record.
+  const REVIEW_WINDOW_TOLERANCE_MS = 60000;
   for (const seg of out) {
     const review = (ctx.reviews || []).find((r) => r.segmentId === seg.id && !r.reverted);
     if (!review) { seg.needsReview = !!seg.needsReview; continue; }
+
+    const pinned = Number.isFinite(review.segStartTs);
+    const moved = pinned && (
+      Math.abs((seg.startTs ?? 0) - review.segStartTs) > REVIEW_WINDOW_TOLERANCE_MS
+      || (Number.isFinite(review.segEndTs) && Math.abs((seg.endTs ?? 0) - review.segEndTs) > REVIEW_WINDOW_TOLERANCE_MS)
+    );
+    if (moved) {
+      seg.needsReview = true;
+      seg.staleReviewId = review.id || null;
+      seg.evidence = [
+        ...(seg.evidence || []),
+        ev('stale_review', `an earlier decision (${review.toType} by ${review.reviewerId}) was made against a different time window for this segment id and has NOT been applied — please review again`, { reviewId: review.id || null }),
+      ];
+      continue;
+    }
+
     seg.originalType = seg.type;
     seg.originalConfidence = seg.confidence;
     seg.type = review.toType;

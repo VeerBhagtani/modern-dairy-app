@@ -175,6 +175,37 @@ test('an admin review overrides the machine and keeps the original on the record
   assert.ok(after.evidence.some((e) => e.code === 'admin_review'));
 });
 
+test('a review pinned to a different time window is NOT applied', () => {
+  // Segment ids are positional. If a reprocess changes the segmentation — a
+  // threshold edit, or late points arriving — a decision must not silently
+  // re-attach itself to a different stretch of the day.
+  const points = track([{ at: PLACES.DAIRY }, { at: PLACES.PERSONAL_1 }]);
+  const plain = classify(points);
+  const target = plain.segments.find((s) => s.type === SEGMENT_TYPE.UNKNOWN);
+
+  const matching = classify(points, {
+    reviews: [{ id: 'r1', segmentId: target.id, toType: SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS, reviewerId: 'admin:owner', at: T0, segStartTs: target.startTs, segEndTs: target.endTs }],
+  }).segments.find((s) => s.id === target.id);
+  assert.equal(matching.type, SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS, 'a review whose window still matches must apply');
+
+  const stale = classify(points, {
+    reviews: [{ id: 'r1', segmentId: target.id, toType: SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS, reviewerId: 'admin:owner', at: T0, segStartTs: target.startTs + 7200000, segEndTs: target.endTs + 7200000 }],
+  }).segments.find((s) => s.id === target.id);
+  assert.equal(stale.type, SEGMENT_TYPE.UNKNOWN, 'a review from a different window must not be applied');
+  assert.equal(stale.needsReview, true);
+  assert.equal(stale.staleReviewId, 'r1');
+  assert.ok(stale.evidence.some((e) => e.code === 'stale_review'));
+});
+
+test('an older review with no pinned window still applies, for backward compatibility', () => {
+  const points = track([{ at: PLACES.DAIRY }, { at: PLACES.PERSONAL_1 }]);
+  const target = classify(points).segments.find((s) => s.type === SEGMENT_TYPE.UNKNOWN);
+  const after = classify(points, {
+    reviews: [{ id: 'old', segmentId: target.id, toType: SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS, reviewerId: 'admin:owner', at: T0 }],
+  }).segments.find((s) => s.id === target.id);
+  assert.equal(after.type, SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS);
+});
+
 test('the buckets always reconcile with the measured total', () => {
   const { track: t, segments } = classify(track([
     { at: PLACES.DAIRY }, { at: PLACES.RESTAURANT_A }, { at: PLACES.RESTAURANT_B },

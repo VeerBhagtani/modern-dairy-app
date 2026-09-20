@@ -211,7 +211,15 @@ function pickSafe(driver) {
 }
 
 // Find the driver whose enrolment code this is. Every candidate is bcrypt-
-// compared so the work done is the same whether or not the code is real.
+// compared so the work done is the same whether or not the code is real — an
+// early return on a match would leak, by timing, whether a guessed code
+// belongs to an early or a late driver.
+//
+// Cost: one bcrypt comparison per active driver, so ~4 s at 40 drivers. That is
+// fine for an operation each driver performs once, and it is rate-limited to
+// 10 attempts per 15 minutes. If the fleet ever reaches the high hundreds, add
+// a short non-secret prefix to the code and index on it, rather than returning
+// early on the first match.
 async function redeemEnrolmentCode(code, deviceId) {
   const snap = await C.drivers().where('status', '==', 'active').get();
   const now = Date.now();
@@ -340,9 +348,12 @@ async function listRides({ driverId, from, to, status, limit = 200 }) {
 // ---------------------------------------------------------------------------
 
 // Points are written with the client's own point id as the document id, so a
-// replayed batch overwrites itself instead of double-counting. `create` would
-// throw on a retry; a plain set with identical content is idempotent and the
-// document's serverTs is preserved by merging only when absent.
+// replayed batch overwrites itself instead of double-counting the kilometres.
+// `create` would throw on a retry and turn a normal network retry into an
+// error; a plain set of identical content is idempotent. The only field that
+// changes on a replay is serverTs, which is exactly right: it records when the
+// server last received the point, and the device time — the one the
+// calculation uses — is unchanged.
 async function ingestPoints(rideId, driverId, points) {
   if (!points.length) return { written: 0 };
   const writer = db.bulkWriter();
@@ -449,13 +460,18 @@ async function reviewsForRide(rideId) {
 // Reviews are append-only. Superseding an earlier decision marks the earlier
 // row `superseded`; it is never edited away, so the chain of who decided what,
 // when and why survives intact.
-async function addReview({ rideId, segmentId, fromType, toType, distanceM, note, reviewerId }) {
+async function addReview({ rideId, segmentId, fromType, toType, distanceM, note, reviewerId, segStartTs, segEndTs }) {
   const prior = await C.reviews().where('rideId', '==', rideId).where('segmentId', '==', segmentId).where('reverted', '==', false).get();
   const batch = db.batch();
   for (const doc of prior.docs) batch.update(doc.ref, { superseded: true });
   const ref = C.reviews().doc();
   batch.set(ref, {
     rideId, segmentId, fromType, toType, distanceM: distanceM ?? null,
+    // The time window this decision was made against. Segment ids are
+    // positional, so without this a reprocess could re-attach the decision to a
+    // different stretch of the day. classification.js refuses to apply a review
+    // whose window no longer matches.
+    segStartTs: segStartTs ?? null, segEndTs: segEndTs ?? null,
     note: note || null, reviewerId, at: Date.now(), reverted: false, superseded: false,
   });
   await batch.commit();
