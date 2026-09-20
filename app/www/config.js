@@ -8,7 +8,7 @@
  * is real GPS held locally, not a demo — no coordinate is ever invented.
  */
 window.APP_CONFIG = {
-  API_BASE: '',
+  API_BASE: 'https://modern-drivers-795895369854.asia-south1.run.app',
 
   // Free, open map tiles: no API key, no billing account, no per-view charge.
   // This is the only line in the app that knows who the map provider is.
