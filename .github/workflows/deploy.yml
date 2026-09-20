@@ -31,7 +31,7 @@ on:
         required: true
       service:
         description: Cloud Run service name
-        default: modern-drivers-api
+        default: modern-drivers
         required: true
   # GitHub only shows the "Run workflow" button for workflows on the default
   # branch, and this project lives on its own branch. Touching this marker file
@@ -135,7 +135,7 @@ jobs:
         run: |
           P="${{ steps.cfg.outputs.project }}"
           R="${{ github.event.inputs.region || 'asia-south1' }}"
-          S="${{ github.event.inputs.service || 'modern-drivers-api' }}"
+          S="${{ github.event.inputs.service || 'modern-drivers' }}"
           # The office dashboard is served from GitHub Pages, so that origin is
           # the one the browser will send. The Firebase Hosting origins stay in
           # the list in case the dashboard is ever served from there too.
