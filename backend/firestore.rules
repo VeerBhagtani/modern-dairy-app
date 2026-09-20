@@ -1,0 +1,34 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Modern Drivers holds live location data for around forty employees. It is
+    // the most sensitive thing this company stores, so the rule is the simplest
+    // one that can be stated and the easiest to audit:
+    //
+    //   NO CLIENT READS ANYTHING. NO CLIENT WRITES ANYTHING. EVER.
+    //
+    // Every read and write goes through the Cloud Run backend under a service
+    // account, which bypasses these rules and applies its own authentication,
+    // role checks, rate limits and audit logging. Nothing else needs access:
+    //
+    //   - The Android app holds a backend JWT and speaks only to the API.
+    //     It has no Firebase identity at all.
+    //   - The office dashboard signs in to the backend with a username and
+    //     password and speaks only to the API. It has no Firebase identity
+    //     either.
+    //
+    // So a deny-all default is not a restriction that costs anything here — it
+    // is the whole access-control model, and any future rule that grants a
+    // client read access to a location collection should be treated as a
+    // serious change and not a convenience.
+    //
+    // Deploying this file to a project that ALSO serves another product would
+    // replace that product's rules. This project exists only for Modern
+    // Drivers, which is why that cannot happen.
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

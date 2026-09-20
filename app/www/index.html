@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' gap: https://ssl.gstatic.com; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self' https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Modern Drivers</title>
+<style>
+  :root{
+    --brand:#1B2A6B; --brand-dark:#101B49; --accent:#D7262F;
+    --ok:#1a7a4c; --ok-tint:#e2f3e9; --warn:#8a5f14; --warn-tint:#faf1de;
+    --bad:#b3261e; --bad-tint:#fbe4e2;
+    --bg:#f1f2ee; --surface:#fff; --line:#dee1db; --ink:#161b22; --ink-2:#4b5768;
+    --r:14px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       background:var(--bg);color:var(--ink);
+       padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);}
+  .wrap{max-width:520px;margin:0 auto;padding:16px 16px 40px;}
+  header{display:flex;align-items:center;gap:12px;padding:8px 0 16px;}
+  header img{width:44px;height:44px;object-fit:contain;border-radius:10px;background:#fff;}
+  header h1{font-size:1.15rem;margin:0;line-height:1.2;}
+  header p{margin:2px 0 0;font-size:.8rem;color:var(--ink-2);}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:12px;}
+  .card h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2);margin:0 0 10px;}
+  label{display:block;font-size:.85rem;font-weight:600;margin:0 0 6px;}
+  input{width:100%;padding:13px 12px;border:1px solid var(--line);border-radius:10px;font-size:1.05rem;font-family:inherit;margin-bottom:14px;background:#fff;color:var(--ink);}
+  input[inputmode="text"]{letter-spacing:.12em;text-transform:uppercase;font-weight:700;}
+  button{cursor:pointer;font-family:inherit;font-size:1rem;font-weight:700;border:none;border-radius:12px;padding:14px 16px;width:100%;}
+  .btn-primary{background:var(--brand);color:#fff;}
+  .btn-primary:disabled{opacity:.5;}
+  .btn-quiet{background:transparent;color:var(--brand);font-weight:600;font-size:.9rem;padding:10px;}
+  .btn-outline{background:#fff;color:var(--brand);border:1.5px solid var(--brand);}
+
+  /* The one button that matters. Big, unmistakable, hard to miss with gloves on. */
+  .start-btn{background:var(--brand);color:#fff;font-size:1.5rem;padding:34px 16px;border-radius:20px;letter-spacing:.02em;}
+  .start-btn:disabled{background:#9aa3bd;}
+
+  .status{border-radius:20px;padding:22px 18px;text-align:center;margin-bottom:12px;border:1px solid var(--line);background:var(--surface);}
+  .status .dot{width:14px;height:14px;border-radius:50%;display:inline-block;margin-right:8px;vertical-align:-1px;}
+  .status .big{font-size:1.25rem;font-weight:800;margin:0 0 6px;}
+  .status .sub{font-size:.9rem;color:var(--ink-2);margin:0;}
+  .status.on{background:var(--ok-tint);border-color:#bfe3cd;}
+  .status.on .dot{background:var(--ok);}
+  .status.warn{background:var(--warn-tint);border-color:#ecd9ac;}
+  .status.warn .dot{background:var(--warn);}
+  .status.off{background:#fff;}
+  .status.off .dot{background:#9aa3bd;}
+  .status.bad{background:var(--bad-tint);border-color:#f0c4c0;}
+  .status.bad .dot{background:var(--bad);}
+
+  .row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;font-size:.92rem;border-bottom:1px solid var(--line);}
+  .row:last-child{border-bottom:none;}
+  .row b{font-weight:600;color:var(--ink-2);}
+  .row span{text-align:right;}
+  .pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:.75rem;font-weight:700;}
+  .pill.ok{background:var(--ok-tint);color:var(--ok);}
+  .pill.warn{background:var(--warn-tint);color:var(--warn);}
+  .pill.bad{background:var(--bad-tint);color:var(--bad);}
+  .note{font-size:.85rem;color:var(--ink-2);line-height:1.5;}
+  .note ul{margin:8px 0 0;padding-left:18px;}
+  .note li{margin-bottom:6px;}
+  .err{color:var(--bad);font-size:.88rem;margin:-6px 0 12px;font-weight:600;}
+  .ok-msg{color:var(--ok);font-size:.88rem;margin:-6px 0 12px;font-weight:600;}
+  .banner{background:var(--brand-dark);color:#fff;border-radius:12px;padding:12px 14px;font-size:.85rem;line-height:1.5;margin-bottom:12px;}
+  .banner b{color:#fff;}
+  [hidden]{display:none!important;}
+  .center{text-align:center;}
+  .muted{color:var(--ink-2);font-size:.8rem;}
+  .sheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:flex-end;z-index:20;}
+  .sheet-bg.on{display:flex;}
+  .sheet{background:#fff;border-radius:18px 18px 0 0;width:100%;max-height:85vh;overflow:auto;padding:20px 18px calc(20px + env(safe-area-inset-bottom));}
+  .sheet h3{margin:0 0 10px;font-size:1.05rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <img id="brandLogo" src="logo.png" alt="">
+    <div>
+      <h1 id="brandName">Modern Drivers</h1>
+      <p id="brandCompany">Modern Dairy, Pune</p>
+    </div>
+  </header>
+
+  <!-- ── Sign in: name and phone number, and nothing else ──────────── -->
+  <section id="screenEnrol" hidden>
+    <div class="card">
+      <h2>Your details</h2>
+      <label for="inName">Your name</label>
+      <input id="inName" type="text" autocomplete="name" placeholder="e.g. Ramesh Patil"
+             style="letter-spacing:normal;text-transform:none;font-weight:400">
+      <label for="inPhone">Your mobile number</label>
+      <input id="inPhone" type="tel" inputmode="numeric" autocomplete="tel" maxlength="10"
+             placeholder="10 digits"
+             style="letter-spacing:.08em;text-transform:none;font-weight:600">
+      <p id="enrolErr" class="err" hidden></p>
+      <button id="btnEnrol" class="btn-primary">Start using the app</button>
+      <p class="muted center" style="margin-top:14px">
+        That is all. No password, nothing to remember.
+      </p>
+    </div>
+    <div class="card">
+      <h2>Before you start</h2>
+      <div class="note" id="enrolNotice"></div>
+    </div>
+  </section>
+
+  <!-- ── Main ──────────────────────────────────────────────────────── -->
+  <section id="screenMain" hidden>
+
+    <div id="statusCard" class="status off">
+      <p class="big"><span class="dot"></span><span id="statusText">Not tracking</span></p>
+      <p class="sub" id="statusSub">Press Start Ride when you leave Modern Dairy.</p>
+    </div>
+
+    <div id="stoppedBanner" class="banner" hidden></div>
+
+    <button id="btnStart" class="start-btn">Start Ride</button>
+    <p id="startErr" class="err center" style="margin-top:10px" hidden></p>
+
+    <div id="activeBox" hidden>
+      <div class="card" style="margin-top:12px">
+        <h2>This ride</h2>
+        <div class="row"><b>Started</b><span id="rideStarted">—</span></div>
+        <div class="row"><b>Running for</b><span id="rideFor">—</span></div>
+        <div class="row"><b>Points sent</b><span id="ridePoints">—</span></div>
+        <div class="row"><b>Waiting to send</b><span id="rideQueued">0</span></div>
+        <div class="row"><b>Last position</b><span id="rideLast">—</span></div>
+      </div>
+
+      <div class="card">
+        <h2>Personal trip</h2>
+        <p class="note" id="personalState">Mark the stretch you are doing your own Porter work, so it is not counted as Modern Dairy kilometres.</p>
+        <button id="btnPersonal" class="btn-outline" style="margin-top:10px">Start a personal stretch</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Phone health</h2>
+      <div class="row"><b>Location permission</b><span id="hPerm">—</span></div>
+      <div class="row"><b>GPS</b><span id="hGps">—</span></div>
+      <div class="row"><b>Network</b><span id="hNet">—</span></div>
+      <div class="row"><b>Last sent to office</b><span id="hSync">—</span></div>
+      <button id="btnFix" class="btn-quiet" hidden>Fix location permission</button>
+    </div>
+
+    <div class="card">
+      <h2>Account</h2>
+      <div class="row"><b>Name</b><span id="accName">—</span></div>
+      <div class="row"><b>Driver ID</b><span id="accCode">—</span></div>
+      <div class="row"><b>Mobile</b><span id="accPhone">—</span></div>
+      <button id="btnNotice" class="btn-quiet">Why is my location tracked?</button>
+    </div>
+
+    <p class="muted center" id="stopRule">Only the Modern Dairy office can stop a ride.</p>
+  </section>
+
+  <section id="screenLoading" class="center" style="padding-top:60px">
+    <p class="muted">Loading…</p>
+  </section>
+</div>
+
+<div class="sheet-bg" id="sheetBg">
+  <div class="sheet">
+    <h3 id="sheetTitle"></h3>
+    <div id="sheetBody" class="note"></div>
+    <div id="sheetActions" style="margin-top:16px"></div>
+    <button class="btn-quiet" id="sheetClose" style="margin-top:6px">Close</button>
+  </div>
+</div>
+
+<script src="branding.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

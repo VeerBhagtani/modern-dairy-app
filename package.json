@@ -1,0 +1,11 @@
+{
+  "name": "modern-drivers",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Modern Drivers — driver tracking and delivery-intelligence platform for Modern Dairy, Pune",
+  "scripts": {
+    "test": "node --test \"tests/*.test.mjs\"",
+    "apk": "cd app && npm install && npx cap add android && node ../scripts/patch-manifest.js && npx @capacitor/assets generate --android && npx cap sync android && cd android && ./gradlew assembleDebug",
+    "icon": "python3 scripts/make-icon.py"
+  }
+}

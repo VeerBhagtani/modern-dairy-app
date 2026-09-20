@@ -1,0 +1,120 @@
+const rateLimit = require('express-rate-limit');
+
+// In-memory store — accurate for a single Cloud Run instance. If this service
+// is ever scaled to multiple concurrent instances, each instance enforces its
+// own counter, so the *effective* limit becomes limit × instance count. Swap
+// the `store` option for a shared backend (Redis, Firestore) before scaling
+// past one instance if these limits need to hold exactly.
+
+const FIFTEEN_MIN = 15 * 60 * 1000;
+
+function jsonHandler(message) {
+  return (req, res) => {
+    res.status(429).json({ success: false, message: message || 'Too many requests. Please try again later.' });
+  };
+}
+
+// Auth-sensitive endpoints (login, OTP send/verify, GST lookup, register,
+// refresh): 5 attempts per 15 minutes per IP. Applies uniformly whether the
+// account/phone exists or not, so the response never leaks existence.
+const authLimiter = rateLimit({
+  windowMs: FIFTEEN_MIN,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: jsonHandler('Too many attempts. Please wait 15 minutes and try again.'),
+});
+
+// Same budget, but keyed by the target phone number (when present in the
+// body) instead of the caller's IP — stops an attacker from spreading an SMS
+// bombing / OTP-spam attack against one victim number across many source IPs,
+// which a pure per-IP limiter above would not catch.
+const otpPhoneLimiter = rateLimit({
+  windowMs: FIFTEEN_MIN,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const phone = String(req.body?.phone || '').replace(/\D/g, '');
+    return phone || req.ip; // no phone in body -> fall back to IP-only limiting
+  },
+  skip: (req) => !req.body?.phone,
+  handler: jsonHandler('Too many attempts for this phone number. Please wait 15 minutes and try again.'),
+});
+
+// Admin login: same 5/15min budget, keyed by IP + attempted username so a
+// distributed attacker can't spread guesses across IPs against one admin
+// account while a single IP is still capped even against many usernames.
+const adminLoginLimiter = rateLimit({
+  windowMs: FIFTEEN_MIN,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `${req.ip}:${String(req.body?.username || '').toLowerCase().slice(0, 100)}`,
+  handler: jsonHandler('Too many sign-in attempts. Please wait 15 minutes and try again.'),
+});
+
+// Authenticated write endpoints (place order, wallet top-up request, admin
+// writes): generous enough for real usage, tight enough to stop abuse/DoS
+// against Firestore writes and third-party API calls that cost money.
+const writeLimiter = rateLimit({
+  windowMs: FIFTEEN_MIN,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.userId || req.adminId || req.ip,
+  handler: jsonHandler('Too many requests. Please slow down and try again shortly.'),
+});
+
+// General baseline for everything else (reads, config, health) — a backstop
+// against scraping/DoS, loose enough not to bother normal app usage.
+const generalLimiter = rateLimit({
+  windowMs: FIFTEEN_MIN,
+  limit: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: jsonHandler('Too many requests. Please try again shortly.'),
+});
+
+// Admin password-recovery texts: ONE budget for the whole service rather than
+// per IP. The targets are two fixed numbers, so a per-IP limit would still let
+// many machines together ring the owner's phones all night.
+const recoverySendLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: () => 'admin-recovery',
+  handler: jsonHandler('Too many codes have been requested. Please wait an hour and try again.'),
+});
+
+// GPS upload. A driver sampling every 30 s and uploading in small batches makes
+// ~30 requests per 15 minutes; a phone catching up after an hour offline makes a
+// burst of them. 240/15min per DRIVER leaves ample headroom for the catch-up
+// case while still capping a compromised token, and keying on the driver id
+// means one driver on a bad network cannot exhaust the budget for the fleet.
+const gpsIngestLimiter = rateLimit({
+  windowMs: FIFTEEN_MIN,
+  limit: 240,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.driverId || req.ip,
+  handler: jsonHandler('Too many location uploads. The app will retry automatically.'),
+});
+
+// Driver registration. A driver legitimately hits this after installing, after
+// reinstalling, and when they change handset, so it cannot be miserly — but it
+// is also the one endpoint that creates accounts, so it is capped per IP to
+// stop anyone enumerating or mass-creating drivers.
+const registerLimiter = rateLimit({
+  windowMs: FIFTEEN_MIN,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: jsonHandler('Too many attempts. Please wait 15 minutes and try again.'),
+});
+
+module.exports = {
+  authLimiter, otpPhoneLimiter, adminLoginLimiter, writeLimiter, generalLimiter,
+  gpsIngestLimiter, registerLimiter,
+};

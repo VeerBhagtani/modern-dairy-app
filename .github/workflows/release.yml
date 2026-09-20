@@ -1,0 +1,116 @@
+name: Build and publish the app
+
+# Builds the driver APK and puts it on a Release page, so it can be downloaded
+# from a plain link with no GitHub login and no expiry.
+
+on:
+  push:
+    branches: [main, master]
+    paths: ['app/**', 'scripts/**', '.github/workflows/release.yml']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (blank = auto)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm install
+
+      # The app refuses to start a ride without a server address, on purpose —
+      # an APK that silently records nothing is worse than one that says it is
+      # not set up. Without the secret it still builds so the screens can be
+      # seen, and the release notes say plainly what it cannot do.
+      - name: Point the build at the backend
+        id: apibase
+        working-directory: app
+        env:
+          API_BASE: ${{ secrets.DRIVERS_API_BASE }}
+        run: |
+          if [ -z "$API_BASE" ]; then
+            echo "::warning::DRIVERS_API_BASE is not set — this APK cannot register a driver or start a ride."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            node ../scripts/set-api-base.js "$API_BASE" www/config.js
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate the native project
+        working-directory: app
+        run: npx cap add android
+
+      - name: Patch the manifest for background location
+        run: node scripts/patch-manifest.js app/android/app/src/main/AndroidManifest.xml
+
+      - name: Generate the launcher icon and splash
+        working-directory: app
+        run: npx --yes @capacitor/assets@3 generate --android
+
+      - name: Sync web assets
+        working-directory: app
+        run: npx cap sync android
+
+      - name: Build the APK
+        working-directory: app
+        run: |
+          chmod +x android/gradlew
+          cd android && ./gradlew assembleDebug --no-daemon
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p release
+          cp app/android/app/build/outputs/apk/debug/app-debug.apk release/modern-drivers.apk
+
+          TAG="${{ github.event.inputs.tag }}"
+          [ -z "$TAG" ] && TAG="v$(date +%Y%m%d)-${{ github.run_number }}"
+
+          {
+            echo "## Modern Drivers — driver app"
+            echo
+            echo "Download **modern-drivers.apk** below, under Assets."
+            echo
+            echo "### Installing it on a phone"
+            echo
+            echo "1. Open this page in Chrome **on the phone**."
+            echo "2. Tap \`modern-drivers.apk\`. Chrome warns about APK files — that happens for anything not from the Play Store. Tap **Download anyway**."
+            echo "3. Tap the downloaded file, allow installing from Chrome once, install."
+            echo
+            echo "### Using it"
+            echo
+            echo "The driver enters their **name and mobile number**, once. No password, no code, nothing to remember. Then Start Ride each morning."
+            echo
+            echo "Only the office can stop a ride."
+            if [ "${{ steps.apibase.outputs.configured }}" = "false" ]; then
+              echo
+              echo "> ⚠️ **This build has no server address, so it cannot record anything yet.** It installs and opens, but it will not register a driver or start a ride — it refuses rather than pretending to track. Deploy the backend, set the \`DRIVERS_API_BASE\` repository secret, and this page rebuilds with a working APK."
+            fi
+            echo
+            echo "---"
+            echo "Built from \`${{ github.sha }}\`."
+          } > NOTES.md
+
+          gh release create "$TAG" --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" --title "Modern Drivers $TAG" \
+            --notes-file NOTES.md release/*
+          echo "Published: $(gh release view "$TAG" --repo "${{ github.repository }}" --json url -q .url)" >> "$GITHUB_STEP_SUMMARY"

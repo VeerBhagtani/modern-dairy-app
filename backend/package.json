@@ -1,0 +1,26 @@
+{
+  "name": "modern-drivers-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Modern Drivers — driver tracking API (Cloud Run + Firestore + Secret Manager)",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "check": "node --check src/index.js",
+    "create-admin": "node scripts/create-admin.js",
+    "maintenance": "node scripts/maintenance.js"
+  },
+  "dependencies": {
+    "@google-cloud/secret-manager": "^5.6.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.5.1",
+    "firebase-admin": "^12.7.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2"
+  }
+}

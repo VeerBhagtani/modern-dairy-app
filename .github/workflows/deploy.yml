@@ -1,0 +1,148 @@
+name: Deploy
+
+# One run puts the whole thing live: the API, the database rules, and the
+# office dashboard. Safe to re-run; every step checks its prerequisites and
+# fails with a plain message rather than half-deploying.
+#
+# ── ONE-TIME SETUP ──────────────────────────────────────────────────────
+# Two repository secrets (Settings → Secrets and variables → Actions):
+#
+#   GCP_PROJECT_ID   the Google Cloud project for THIS product
+#   GCP_SA_KEY       a service-account JSON key holding:
+#                      Cloud Run Admin, Cloud Build Editor,
+#                      Artifact Registry Writer, Service Account User,
+#                      Secret Manager Admin, Storage Admin,
+#                      Firebase Rules Admin, Firebase Hosting Admin,
+#                      Cloud Datastore Index Admin
+#
+# Billing must be on, or Cloud Run and Firestore refuse.
+#
+# IMPORTANT: use a project dedicated to Modern Drivers. Deploying the rules in
+# this repo to a project that also serves another product would replace that
+# product's rules with this one's deny-all.
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: Cloud Run region
+        default: asia-south1
+        required: true
+      service:
+        description: Cloud Run service name
+        default: modern-drivers-api
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+
+      - name: Check the prerequisites before touching anything
+        run: |
+          miss=0
+          [ -z "${{ secrets.GCP_PROJECT_ID }}" ] && { echo "::error::GCP_PROJECT_ID is not set."; miss=1; }
+          [ -z "${{ secrets.GCP_SA_KEY }}" ] && { echo "::error::GCP_SA_KEY is not set."; miss=1; }
+          [ "$miss" = "1" ] && exit 1
+          echo "Prerequisites present."
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # Every driver and office token is signed with this. Created once, never
+      # replaced — rotating it signs every driver out of their phone, so that is
+      # a deliberate act, not a side effect of a deploy.
+      - name: Ensure the signing key exists
+        run: |
+          P="${{ secrets.GCP_PROJECT_ID }}"
+          if gcloud secrets describe jwt-signing-key --project "$P" >/dev/null 2>&1; then
+            echo "jwt-signing-key already exists — untouched."
+          else
+            node -e "console.log(require('crypto').randomBytes(48).toString('hex'))" \
+              | gcloud secrets create jwt-signing-key --project "$P" --data-file=- --replication-policy=automatic
+            echo "Created jwt-signing-key."
+          fi
+
+      - name: Deploy the API
+        id: backend
+        run: |
+          P="${{ secrets.GCP_PROJECT_ID }}"
+          R="${{ github.event.inputs.region || 'asia-south1' }}"
+          S="${{ github.event.inputs.service || 'modern-drivers-api' }}"
+          ORIGINS="https://${P}.web.app,https://${P}.firebaseapp.com"
+          gcloud run deploy "$S" --project "$P" --region "$R" --source backend \
+            --allow-unauthenticated --port 8080 --quiet \
+            --set-env-vars "GCP_PROJECT_ID=${P},NODE_ENV=production,ALLOWED_ORIGINS=${ORIGINS}"
+          URL=$(gcloud run services describe "$S" --project "$P" --region "$R" --format 'value(status.url)')
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "API live at $URL"
+
+      - name: Check it is answering
+        run: |
+          for i in 1 2 3 4 5; do
+            curl -fsS "${{ steps.backend.outputs.url }}/healthz" >/dev/null && { echo "Healthy."; exit 0; }
+            echo "Not ready (attempt $i)…"; sleep 10
+          done
+          echo "::error::Deployed but /healthz is not answering. Check the Cloud Run logs."
+          exit 1
+
+      - name: Deploy the database rules and indexes
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+        run: npx --yes firebase-tools@13 deploy --project "${{ secrets.GCP_PROJECT_ID }}" --only firestore:rules,firestore:indexes --non-interactive
+
+      # The dashboard ships with an empty API_BASE so no environment URL is ever
+      # committed by hand. The deploy knows the real one, so it writes it in.
+      - name: Point the dashboard at the API
+        run: |
+          node scripts/set-api-base.js "${{ steps.backend.outputs.url }}" dashboard/config.js
+          if ! git diff --quiet -- dashboard/config.js; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add dashboard/config.js
+            git commit -m "Point the dashboard at ${{ steps.backend.outputs.url }} [skip ci]"
+            git push origin HEAD:"${{ github.ref_name }}"
+          fi
+
+      - name: Deploy the dashboard
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+        run: npx --yes firebase-tools@13 deploy --project "${{ secrets.GCP_PROJECT_ID }}" --only hosting --non-interactive
+
+      - name: What is left
+        run: |
+          P="${{ secrets.GCP_PROJECT_ID }}"
+          {
+            echo "# Live"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| API | \`${{ steps.backend.outputs.url }}\` |"
+            echo "| Office dashboard | https://${P}.web.app |"
+            echo
+            echo "## Two things left"
+            echo
+            echo "**1. Create your office login.** Nobody can sign in to the dashboard yet. In Cloud Shell:"
+            echo '```'
+            echo "git clone https://github.com/${{ github.repository }} && cd modern-drivers/backend"
+            echo "npm install && GCP_PROJECT_ID=$P npm run create-admin -- --user veer --name \"Veer\" --role admin"
+            echo '```'
+            echo
+            echo "**2. Make the APK able to connect.** Add a repository secret \`DRIVERS_API_BASE\` = \`${{ steps.backend.outputs.url }}\`, then run **Build and publish the app**."
+            echo
+            echo "After that: add your Modern Dairy depots and restaurants under Locations, and drivers register themselves from the app."
+          } >> "$GITHUB_STEP_SUMMARY"
