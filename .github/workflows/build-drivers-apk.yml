@@ -1,0 +1,88 @@
+name: Build Modern Drivers APK
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'driver-app/**'
+      - 'scripts/patch-drivers-manifest.js'
+      - '.github/workflows/build-drivers-apk.yml'
+  workflow_dispatch:
+    inputs:
+      api_base:
+        description: 'Backend base URL to build against (leave empty to use the DRIVERS_API_BASE secret)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: driver-app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: npm install
+
+      # The server address is the one build-time value this app has. It is
+      # written here from a repository secret rather than committed, so a
+      # staging APK and a production APK come from the same source tree.
+      # It is NOT a credential — the app authenticates with an enrolment code —
+      # but it is environment-specific and does not belong in git.
+      - name: Write www/config.js for this environment
+        env:
+          API_BASE: ${{ github.event.inputs.api_base || secrets.DRIVERS_API_BASE }}
+        run: |
+          if [ -z "$API_BASE" ]; then
+            echo "::error::No API base URL. Set the DRIVERS_API_BASE repository secret, or pass api_base when running this workflow manually. An APK with no server address cannot start a ride."
+            exit 1
+          fi
+          node ../scripts/set-drivers-api-base.js "$API_BASE"
+
+      - name: Generate the native Android project
+        run: npx cap add android
+
+      # cap add produces a manifest with only INTERNET; a foreground location
+      # service needs several more permissions and, on Android 14, a declared
+      # foregroundServiceType.
+      - name: Patch the Android manifest for background location
+        run: node ../scripts/patch-drivers-manifest.js
+
+      # cap add android generates the stock Capacitor icon. Both apps live on the
+      # same phone, so the driver app gets its own artwork — same brand mark,
+      # inverted palette — or the launcher shows a generic developer-sample icon
+      # next to the real Modern Dairy one.
+      #
+      # @capacitor/assets is deliberately NOT a dependency of this repo (its
+      # sharp/uuid advisories were the reason it was removed), so it is invoked
+      # through npx here: it runs on a CI runner over files from this repo and
+      # nothing it pulls in ever ships inside the APK.
+      - name: Generate the launcher icon and splash
+        run: npx --yes @capacitor/assets@3 generate --android
+
+      - name: Sync web assets into the native project
+        run: npx cap sync android
+
+      - name: Build debug APK
+        run: |
+          chmod +x android/gradlew
+          cd android && ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: modern-drivers-debug-apk
+          path: driver-app/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

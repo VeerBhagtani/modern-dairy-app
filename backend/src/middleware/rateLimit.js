@@ -88,4 +88,33 @@ const recoverySendLimiter = rateLimit({
   handler: jsonHandler('Too many codes have been requested. Please wait an hour and try again.'),
 });
 
-module.exports = { authLimiter, otpPhoneLimiter, adminLoginLimiter, writeLimiter, generalLimiter, recoverySendLimiter };
+// GPS upload. A driver sampling every 30 s and uploading in small batches makes
+// ~30 requests per 15 minutes; a phone catching up after an hour offline makes a
+// burst of them. 240/15min per DRIVER leaves ample headroom for the catch-up
+// case while still capping a compromised token, and keying on the driver id
+// means one driver on a bad network cannot exhaust the budget for the fleet.
+const gpsIngestLimiter = rateLimit({
+  windowMs: FIFTEEN_MIN,
+  limit: 240,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.driverId || req.ip,
+  handler: jsonHandler('Too many location uploads. The app will retry automatically.'),
+});
+
+// Driver enrolment: an enrolment code is 8 characters from a 31-symbol
+// alphabet, so brute force is hopeless anyway — but 10/15min per IP makes it
+// hopeless *and* slow, and it protects the bcrypt comparisons this endpoint
+// performs against every active driver.
+const enrolLimiter = rateLimit({
+  windowMs: FIFTEEN_MIN,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: jsonHandler('Too many attempts. Please wait 15 minutes and ask the office to check your code.'),
+});
+
+module.exports = {
+  authLimiter, otpPhoneLimiter, adminLoginLimiter, writeLimiter, generalLimiter,
+  recoverySendLimiter, gpsIngestLimiter, enrolLimiter,
+};

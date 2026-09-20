@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Modern Drivers — Admin</title>
+<link rel="stylesheet" href="/vendor/maplibre/maplibre-gl.css">
+<script src="/vendor/maplibre/maplibre-gl-csp.js" defer></script>
+<style>
+  :root{
+    --brand:#1B2A6B;--brand-2:#2c3f8f;--brand-tint:#e6eaf7;--accent:#D7262F;
+    --bg:#f1f2ee;--surface:#fff;--line:#dee1db;--ink:#161b22;--ink-2:#4b5768;
+    --ok:#1a7a4c;--ok-tint:#e2f3e9;--warn:#8a5f14;--warn-tint:#faf1de;--bad:#b3261e;--bad-tint:#fbe4e2;
+    --r:12px;
+  }
+  *{box-sizing:border-box;}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);margin:0;min-height:100vh;}
+  a{color:var(--brand-2);}
+  .topbar{background:var(--brand);color:#fff;padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;position:sticky;top:0;z-index:5;}
+  .topbar img{width:32px;height:32px;object-fit:contain;background:#fff;border-radius:7px;}
+  .topbar h1{font-size:1rem;margin:0;font-weight:700;}
+  .topbar .sp{flex:1;}
+  .topbar button{background:rgba(255,255,255,.14);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.85rem;cursor:pointer;font-family:inherit;}
+  .tabs{display:flex;gap:2px;overflow-x:auto;background:var(--brand);padding:0 10px 8px;position:sticky;top:52px;z-index:5;}
+  .tabs button{background:transparent;color:#c8d0ee;border:none;border-bottom:3px solid transparent;padding:8px 12px;font-size:.88rem;cursor:pointer;white-space:nowrap;font-family:inherit;font-weight:600;}
+  .tabs button.on{color:#fff;border-bottom-color:#fff;}
+  .wrap{max-width:1280px;margin:0 auto;padding:16px;}
+  .center-wrap{max-width:360px;margin:70px auto;padding:0 16px;}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:14px;}
+  .card h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2);margin:0 0 12px;}
+  .grid{display:grid;gap:12px;}
+  .metrics{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));}
+  .metric{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;}
+  .metric .v{font-size:1.6rem;font-weight:800;line-height:1.1;}
+  .metric .l{font-size:.78rem;color:var(--ink-2);margin-top:4px;}
+  .metric.warn .v{color:var(--warn);} .metric.bad .v{color:var(--bad);} .metric.ok .v{color:var(--ok);}
+  .split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:14px;align-items:start;}
+  @media(max-width:900px){.split{grid-template-columns:1fr;}}
+  table{width:100%;border-collapse:collapse;}
+  th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line);font-size:.87rem;vertical-align:top;}
+  th{color:var(--ink-2);font-weight:700;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;cursor:pointer;}
+  tbody tr:hover{background:var(--bg);}
+  tbody tr.click{cursor:pointer;}
+  .pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:.72rem;font-weight:700;white-space:nowrap;}
+  .pill.live{background:var(--ok-tint);color:var(--ok);}
+  .pill.stale{background:var(--warn-tint);color:var(--warn);}
+  .pill.unavailable,.pill.idle{background:var(--bg);color:var(--ink-2);}
+  .pill.active{background:var(--ok-tint);color:var(--ok);}
+  .pill.no_signal,.pill.bad{background:var(--bad-tint);color:var(--bad);}
+  .pill.degraded,.pill.warn{background:var(--warn-tint);color:var(--warn);}
+  .pill.HIGH{background:var(--ok-tint);color:var(--ok);}
+  .pill.MEDIUM{background:var(--warn-tint);color:var(--warn);}
+  .pill.LOW,.pill.UNKNOWN{background:var(--bad-tint);color:var(--bad);}
+  .pill.MATCHED{background:var(--ok-tint);color:var(--ok);}
+  .pill.POSSIBLE,.pill.NEEDS_REVIEW{background:var(--warn-tint);color:var(--warn);}
+  .pill.UNMATCHED_VISIT,.pill.UNMATCHED_DELIVERY{background:var(--bad-tint);color:var(--bad);}
+  #map,#replayMap{width:100%;height:520px;border-radius:var(--r);border:1px solid var(--line);background:#dfe3dd;}
+  #replayMap{height:380px;}
+  .marker{width:16px;height:16px;border-radius:50%;border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:pointer;}
+  .marker.live{background:var(--ok);} .marker.stale{background:var(--warn);} .marker.unavailable{background:#98a2b3;}
+  input,select,textarea{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;font-size:.92rem;font-family:inherit;background:#fff;color:var(--ink);}
+  label{display:block;font-size:.78rem;font-weight:700;color:var(--ink-2);margin:0 0 5px;text-transform:uppercase;letter-spacing:.03em;}
+  .field{margin-bottom:12px;}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+  button{cursor:pointer;font-family:inherit;font-size:.92rem;font-weight:600;border:none;border-radius:8px;padding:10px 14px;}
+  .btn-primary{background:var(--brand);color:#fff;}
+  .btn-danger{background:var(--bad);color:#fff;}
+  .btn-outline{background:#fff;color:var(--brand);border:1.5px solid var(--brand);}
+  .btn-sm{font-size:.8rem;padding:6px 10px;}
+  button:disabled{opacity:.55;cursor:default;}
+  .err{color:var(--bad);font-size:.85rem;font-weight:600;margin:8px 0;}
+  .ok-msg{color:var(--ok);font-size:.85rem;font-weight:600;margin:8px 0;}
+  .muted{color:var(--ink-2);font-size:.85rem;line-height:1.5;}
+  .tiny{font-size:.75rem;color:var(--ink-2);}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;}
+  .bar>div{min-width:130px;}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:16px;z-index:20;}
+  .modal-bg.on{display:flex;}
+  .modal{background:#fff;border-radius:14px;max-width:640px;width:100%;max-height:88vh;overflow:auto;padding:20px;}
+  .evidence{background:var(--bg);border-radius:8px;padding:10px;margin:8px 0;font-size:.82rem;line-height:1.6;}
+  .evidence code{background:#fff;padding:1px 5px;border-radius:4px;font-size:.78rem;}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.78rem;color:var(--ink-2);margin-top:8px;}
+  .legend i{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px;}
+  .banner{background:var(--warn-tint);border:1px solid #ecd9ac;color:var(--warn);border-radius:10px;padding:10px 12px;font-size:.85rem;margin-bottom:12px;font-weight:600;}
+  .banner.info{background:var(--brand-tint);border-color:#c6d0ee;color:var(--brand);}
+  [hidden]{display:none!important;}
+</style>
+</head>
+<body>
+
+<div id="login" class="center-wrap" hidden>
+  <div class="card">
+    <img src="/admin/logo.png" alt="" style="width:70px;height:70px;object-fit:contain;display:block;margin:0 auto 14px">
+    <h2 style="text-align:center">Modern Drivers — Admin</h2>
+    <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="username"></div>
+    <div class="field"><label for="password">Password</label><input id="password" type="password" autocomplete="current-password"></div>
+    <p id="loginErr" class="err" hidden></p>
+    <button id="btnLogin" class="btn-primary" style="width:100%">Sign in</button>
+  </div>
+</div>
+
+<div id="app" hidden>
+  <div class="topbar">
+    <img src="/admin/logo.png" alt="">
+    <h1>Modern Drivers</h1>
+    <span class="sp"></span>
+    <span id="clock" class="tiny" style="color:#c8d0ee"></span>
+    <button id="btnSignout">Sign out</button>
+  </div>
+  <div class="tabs" id="tabs"></div>
+  <div class="wrap" id="view"></div>
+</div>
+
+<div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
+
+<script src="config.js"></script>
+<script src="api.js"></script>
+<script src="map.js"></script>
+<script src="views.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
