@@ -57,15 +57,32 @@ for (const perm of PERMISSIONS) {
   );
 }
 
-// The plugin's service must declare its foreground type on Android 14+.
-if (!xml.includes('com.equimaps.capacitor_background_geolocation.BackgroundGeolocationService')) {
+// Android 14 requires a location foreground service to declare its type, and
+// the plugin's own manifest may predate that requirement.
+//
+// The plugin ALREADY declares this service, so a second full declaration here
+// is a manifest-merger conflict, not an addition — the first version of this
+// script declared android:exported="false" against the plugin's "true" and the
+// build failed outright. So: merge into the existing declaration
+// (tools:node="merge"), set only the one attribute we care about, and say
+// explicitly that ours wins (tools:replace). Every other attribute — exported
+// included — is left to the plugin.
+if (!xml.includes('BackgroundGeolocationService')) {
+  // tools: attributes need the namespace on the root element; a generated
+  // Capacitor manifest usually has it, but do not rely on that.
+  if (!xml.includes('xmlns:tools=')) {
+    xml = xml.replace(
+      /<manifest([^>]*)>/,
+      '<manifest$1\n    xmlns:tools="http://schemas.android.com/tools">',
+    );
+  }
   xml = xml.replace(
     /<\/application>/,
     '        <service\n'
     + '            android:name="com.equimaps.capacitor_background_geolocation.BackgroundGeolocationService"\n'
     + '            android:foregroundServiceType="location"\n'
-    + '            android:enabled="true"\n'
-    + '            android:exported="false" />\n'
+    + '            tools:node="merge"\n'
+    + '            tools:replace="android:foregroundServiceType" />\n'
     + '    </application>',
   );
 }

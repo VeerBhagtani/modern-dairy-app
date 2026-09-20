@@ -177,9 +177,10 @@ jobs:
   # ── Publish one download page ───────────────────────────────────────────
   release:
     needs: [modern-dairy, modern-drivers]
-    # Publishes whatever built. Skipped jobs are fine (a single-app run still
-    # publishes); a genuine failure is not.
-    if: ${{ always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    # Publishes whatever actually built. One app failing must not deny anyone
+    # the other — a broken driver build should not take the ordering APK and
+    # the admin site down with it. The notes below say what is missing and why.
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -233,6 +234,14 @@ jobs:
               echo "**It installs and opens, but it cannot track anything yet.** The tracking backend is not deployed, so the app has no server to talk to — it will not enrol a driver or start a ride. It refuses rather than pretending to record, which is deliberate."
               echo
               echo "To make it work: deploy the backend to Cloud Run, add a repository secret \`DRIVERS_API_BASE\` with that URL, and this page will rebuild with a working APK."
+            fi
+            if [ ! -f release/modern-dairy.apk ] && [ "${{ needs.modern-dairy.result }}" = "failure" ]; then
+              echo
+              echo "> ⚠️ The **ordering app** build failed, so its APK is missing from this release. [See the run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+            fi
+            if [ ! -f release/modern-drivers.apk ] && [ "${{ needs.modern-drivers.result }}" = "failure" ]; then
+              echo
+              echo "> ⚠️ The **driver app** build failed, so its APK is missing from this release. [See the run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
             fi
             echo
             echo "---"
