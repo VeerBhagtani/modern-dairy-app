@@ -63,6 +63,12 @@ function processRideData(input) {
       totals: track.totals,
       gaps: track.gaps,
       quality,
+      // Every point that was NOT counted, with the reason. The replay map draws
+      // these in grey: a reviewer has to be able to see what was excluded and
+      // why, otherwise "we filtered the bad fixes" is an unfalsifiable claim.
+      excludedPoints: track.points
+        .filter((p) => !p.countDistance)
+        .map((p) => ({ clientPointId: p.clientPointId, idx: p.idx, quality: p.quality, detail: p.qualityDetail || null })),
     },
     // Segments, stripped of the bulky internals the API does not need. The raw
     // points stay where they are; nothing here replaces them.

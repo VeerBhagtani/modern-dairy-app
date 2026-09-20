@@ -59,7 +59,7 @@ Every design decision below follows from one rule:
 | Backend API | **Node 20 + Express**, on **Cloud Run** | Already the backend for this repo (same auth middleware, rate limiter, validators, Secret Manager, deploy workflow). Cloud Run scales to zero — 40 drivers is a rounding error of traffic, so the bill stays near the free tier. |
 | Database | **Firestore (native mode)** | Already the datastore. Serverless, no instance to patch, per-document security rules, and a real-time listener API that gives the admin map live updates with no websocket server to run. Its weakness — no spatial index — does not bite here (see §4.4). |
 | Distance/geo maths | **Own code**, `backend/src/drivers/geo.js` | Haversine plus filtering is ~100 lines and must be *auditable and reproducible*. A dependency here would be a liability, not a convenience. |
-| Map | **MapLibre GL** (vendored in the repo) + **OpenFreeMap** tiles | Free, no API key, no per-view billing, open licence. The tile URL is one constant (`TILE_STYLE` in `legal/drivers/config.js`) so swapping to Mapbox/Google later is a one-line change. |
+| Map | **MapLibre GL** (vendored in the repo) + **OpenFreeMap** tiles | Free, no API key, no per-view billing, open licence. The tile URL is one constant (`MAP_STYLE` in `legal/drivers/config.js`) so swapping to Mapbox/Google later is a one-line change. |
 | Real-time | **Firestore snapshot listeners** on `driver_live/*` and `rides/*` | Sub-second updates to the dashboard with zero extra infrastructure. Reconnection, backoff and offline caching are handled by the SDK. |
 | Auth | **Enrolment code → JWT** for drivers; existing **Firebase Auth admin uid + admin JWT** for staff | Drivers get no password to forget and no SMS bill. See §3. |
 | Road-distance | **None (straight-line + dense sampling)** | A routing/map-matching API (Google Roads, Valhalla) would improve accuracy but costs money per request and introduces a provider that can silently change its answers. The interface `distanceProvider` in `track.js` is where one plugs in later. |
@@ -82,11 +82,11 @@ Every design decision below follows from one rule:
 ## 3. Identity, roles and the ride-stop rule
 
 ```
-Driver           enrolment code (one-time, admin-issued)  →  driver JWT (access 15 m / refresh 30 d)
+Driver           enrolment code (one-time, admin-issued)  →  driver JWT (access 30 m / refresh 90 d)
 Admin / Manager  Firebase Auth uid  or  admin JWT          →  admin scope
 ```
 
-* A driver token carries `type:'driver'` and `sub:<driverId>`. **Every**
+* A driver token carries `type:'driver_access'`, `sub:<driverId>` and the device id. **Every**
   driver-facing route re-reads the driver document and refuses if the driver is
   deactivated — a valid token on a disabled account is worthless.
 * A driver can only ever address their **own** `driverId`; the id is taken from
@@ -99,7 +99,7 @@ Admin / Manager  Firebase Auth uid  or  admin JWT          →  admin scope
   `POST /admin/drivers/rides/:rideId/stop`, behind `requireAdmin`, and it demands
   a reason.
 * Roles: `admin` (everything), `manager` (view + review + stop rides),
-  `viewer` (read-only). Enforced server-side in `requireDriversRole()`.
+  `viewer` (read-only). Enforced server-side by `requireRole()` in `routes/driversAdmin.js`, on top of the existing `requireAdmin()` gate.
 * Rides cannot run forever: `autoStopAfterHours` (default 16) closes a forgotten
   ride, and the closure is written as `status:'auto_closed'` with
   `stoppedBy:'system:timeout'` and the configured threshold recorded on the ride.
@@ -394,7 +394,7 @@ Four independent layers, all in `tests/drivers/`:
    legs are never auto-classified business, unknown stays visible, the verified
    total excludes uncertain kilometres, nothing is double-counted, review works,
    and the raw points are unchanged afterwards.
-4. **Field validation (manual, documented in `docs/modern-drivers/RUNBOOK.md`).**
+4. **Field validation (manual, documented in [`TESTING.md`](TESTING.md) §4).**
    Before trusting the numbers operationally, run one vehicle for a week with
    its odometer read at start and end of each day and compare. Expect the GPS
    total to read a few percent low. Record the ratio; do **not** "correct" the

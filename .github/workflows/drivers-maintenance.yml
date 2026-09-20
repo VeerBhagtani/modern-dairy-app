@@ -1,0 +1,77 @@
+name: Modern Drivers maintenance
+
+# Keeps the driver-tracking subsystem honest between deploys:
+#   1. auto-closes rides nobody stopped (audited, never silent)
+#   2. raises and resolves live tracking alerts
+#   3. processes finished rides that have no calculated result yet
+#   4. reports what the raw-GPS retention policy would delete
+#
+# RETENTION DELETION IS OFF HERE ON PURPOSE. The scheduled run is a dry run: it
+# prints what is past its retention window without removing anything. Deleting
+# location history is irreversible, so it is a deliberate act — run this
+# workflow manually with delete_expired = true, or run the Cloud Run job with
+# --delete-expired, once the retention policy has actually been agreed.
+#
+# Setup: FCM_SERVICE_ACCOUNT_JSON (already configured for the nightly audit) is
+# reused as the Firestore credential, and GCP_PROJECT_ID names the project.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # every 15 minutes
+  workflow_dispatch:
+    inputs:
+      delete_expired:
+        description: 'Actually delete raw GPS past its retention window (irreversible)'
+        type: boolean
+        required: false
+        default: false
+
+# Read-only: this workflow touches Firestore, never the repository.
+permissions:
+  contents: read
+
+concurrency:
+  # Two maintenance passes at once would race on ride auto-closure.
+  group: drivers-maintenance
+  cancel-in-progress: false
+
+jobs:
+  maintain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci --omit=dev || npm install --omit=dev
+
+      - name: Write the service-account credential
+        env:
+          FCM_SERVICE_ACCOUNT_JSON: ${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$FCM_SERVICE_ACCOUNT_JSON" ]; then
+            echo "::error::FCM_SERVICE_ACCOUNT_JSON is not set — maintenance cannot reach Firestore."
+            exit 1
+          fi
+          printf '%s' "$FCM_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/sa.json"
+
+      - name: Run maintenance
+        working-directory: backend
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          if [ "${{ github.event.inputs.delete_expired }}" = "true" ]; then
+            node scripts/drivers-maintenance.js --delete-expired
+          else
+            node scripts/drivers-maintenance.js
+          fi
+
+      - name: Remove the credential
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sa.json"

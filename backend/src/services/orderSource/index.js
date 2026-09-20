@@ -22,8 +22,12 @@
 //   2. Never guess a customerId. An order whose customer cannot be resolved is
 //      imported UNRESOLVED and reported, not quietly attached to a nearby one.
 
-const { C, writeAudit } = require('../driversRepo');
-const { db } = require('../firestore');
+// Firestore is required lazily, inside the functions that persist. Keeping it
+// out of the module's top level means the adapter registry, the normalised
+// order contract and validateOrder() can be loaded and tested without a
+// database or a service account — which is also what stops this layer from
+// quietly growing a dependency on one.
+function repo() { return require('../driversRepo'); }
 
 const adapters = new Map();
 
@@ -46,7 +50,7 @@ function validateOrder(o) {
 }
 
 async function logIntegration({ source, op, ok, count, error, detail }) {
-  await C.integrationLogs().add({
+  await repo().C.integrationLogs().add({
     source, op, ok, count: count ?? null,
     error: error ? String(error).slice(0, 1000) : null,
     detail: detail ?? null,
@@ -86,9 +90,10 @@ async function syncOrders(sourceName, params, adminId) {
     accepted.push(o);
   }
 
+  const { db } = require('../firestore');
   const writer = db.bulkWriter();
   for (const o of accepted) {
-    writer.set(C.orders().doc(`${sourceName}_${o.externalId}`), {
+    writer.set(repo().C.orders().doc(`${sourceName}_${o.externalId}`), {
       ...o,
       source: sourceName,
       importedAt: Date.now(),
@@ -100,7 +105,7 @@ async function syncOrders(sourceName, params, adminId) {
     source: sourceName, op: 'sync', ok: true, count: accepted.length,
     detail: { rejected: rejected.length, params: params || null },
   });
-  if (adminId) await writeAudit({ adminId, action: 'orders.sync', target: sourceName, after: { imported: accepted.length, rejected: rejected.length } });
+  if (adminId) await repo().writeAudit({ adminId, action: 'orders.sync', target: sourceName, after: { imported: accepted.length, rejected: rejected.length } });
 
   // Rejected rows are returned, not swallowed: an import that silently drops a
   // third of the orders looks identical to one that worked.

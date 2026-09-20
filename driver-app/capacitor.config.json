@@ -1,0 +1,18 @@
+{
+  "appId": "in.moderndairy.drivers",
+  "appName": "Modern Drivers",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": false,
+    "webContentsDebuggingEnabled": false
+  },
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "BackgroundGeolocation": {
+      "_comment": "The plugin owns the Android foreground-service notification; its text is set per-watcher in www/app.js so it can name the ride."
+    }
+  }
+}

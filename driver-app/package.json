@@ -1,0 +1,25 @@
+{
+  "name": "modern-drivers-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Modern Drivers — Android driver tracking app for Modern Dairy, Pune (Capacitor)",
+  "scripts": {
+    "add:android": "cap add android",
+    "sync": "cap sync android",
+    "open:android": "cap open android",
+    "build:debug": "cap sync android && cd android && ./gradlew assembleDebug",
+    "check:config": "node ../scripts/check-drivers-app-config.js"
+  },
+  "dependencies": {
+    "@capacitor-community/background-geolocation": "^1.2.26",
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/app": "^6.0.1",
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/network": "^6.0.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2"
+  },
+  "_comment_native_project": "The android/ project is GENERATED at build time with `npx cap add android`, not committed. The Modern Drivers app has no hand-written native code, so a committed native tree would only be 200+ files of generated Gradle config to keep in sync with the Capacitor version. The workflow .github/workflows/build-drivers-apk.yml generates it, patches the manifest for the background-location permissions the plugin needs, and builds the APK. Run `npm run add:android` locally to get the same tree.",
+  "_comment_permissions": "ACCESS_BACKGROUND_LOCATION and FOREGROUND_SERVICE_LOCATION are added by scripts/patch-drivers-manifest.js after `cap add android`. Google Play requires a written justification for background location — see docs/modern-drivers/PLAY_BACKGROUND_LOCATION.md before submitting."
+}

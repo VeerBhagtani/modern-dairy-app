@@ -14,7 +14,9 @@
 // returns false and `syncOrders` refuses with NOT_CONFIGURED, which is the
 // honest state of this integration today.
 
-const { getSecret } = require('../secretManager');
+// Secret Manager is required lazily so this adapter can be loaded — and its
+// response mapping tested — without a GCP client library or credentials.
+function getSecret(alias) { return require('../secretManager').getSecret(alias); }
 
 const BASE_URL = process.env.GOFRUGAL_API_BASE_URL || 'https://api.gofrugal.com/rayapi/v1';
 const ORDERS_ENDPOINT = process.env.GOFRUGAL_ORDERS_ENDPOINT || '/salesOrders';
