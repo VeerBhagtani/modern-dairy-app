@@ -98,6 +98,33 @@ jobs:
             echo "Created jwt-signing-key."
           fi
 
+      # Cloud Run's source deploy creates this repository implicitly on the very
+      # first run, which is the one moment the deploy needs a permission it
+      # never needs again — and a freshly granted IAM role can take a couple of
+      # minutes to take effect. Creating it here, with a few retries, turns a
+      # confusing PERMISSION_DENIED mid-deploy into a step that simply waits.
+      - name: Ensure the container repository exists
+        run: |
+          P="${{ steps.cfg.outputs.project }}"
+          R="${{ github.event.inputs.region || 'asia-south1' }}"
+          if gcloud artifacts repositories describe cloud-run-source-deploy \
+               --project "$P" --location "$R" >/dev/null 2>&1; then
+            echo "Already there."
+            exit 0
+          fi
+          for i in 1 2 3 4 5; do
+            if gcloud artifacts repositories create cloud-run-source-deploy \
+                 --project "$P" --location "$R" --repository-format=docker \
+                 --description="Built by the Modern Drivers deploy" --quiet; then
+              echo "Created."
+              exit 0
+            fi
+            echo "Not yet — an IAM grant may still be propagating (attempt $i)."
+            sleep 30
+          done
+          echo "::error::Could not create the Artifact Registry repository. The deploy account needs roles/artifactregistry.admin."
+          exit 1
+
       - name: Deploy the API
         id: backend
         run: |
