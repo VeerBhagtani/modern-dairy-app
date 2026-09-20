@@ -158,15 +158,22 @@ jobs:
           )
           echo "Addresses gcloud reports:"; echo "$CANDIDATES"
 
+          # A brand-new Cloud Run service is Ready, and serving, several minutes
+          # before its hostname is routable from outside: until Google's edge
+          # learns the name, the request never reaches the service and comes
+          # back as a plain Google 404. That looks exactly like a broken app, so
+          # the wait here is generous on purpose — eight minutes, once, on the
+          # first deploy of a project. Later deploys answer on the first try.
           URL=""
-          for attempt in 1 2 3 4 5 6; do
+          for attempt in $(seq 1 32); do
             for c in $CANDIDATES; do
               if curl -fsS --max-time 15 "$c/healthz" >/dev/null 2>&1; then
                 URL="$c"; break
               fi
             done
             [ -n "$URL" ] && break
-            echo "None answering yet (attempt $attempt)…"; sleep 10
+            echo "Not routable yet (attempt $attempt of 32) — this is normal on a first deploy."
+            sleep 15
           done
 
           if [ -z "$URL" ]; then
