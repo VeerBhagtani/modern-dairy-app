@@ -147,6 +147,19 @@ jobs:
       - name: Patch the manifest for background location
         run: node scripts/patch-drivers-manifest.js
 
+      # cap add android generates the stock Capacitor icon. Both apps live on the
+      # same phone, so the driver app gets its own artwork — same brand mark,
+      # inverted palette — or the launcher shows a generic developer-sample icon
+      # next to the real Modern Dairy one.
+      #
+      # @capacitor/assets is deliberately NOT a dependency of this repo (its
+      # sharp/uuid advisories were the reason it was removed), so it is invoked
+      # through npx here: it runs on a CI runner over files from this repo and
+      # nothing it pulls in ever ships inside the APK.
+      - name: Generate the launcher icon and splash
+        working-directory: driver-app
+        run: npx --yes @capacitor/assets@3 generate --android
+
       - name: Sync web assets
         working-directory: driver-app
         run: npx cap sync android
@@ -211,13 +224,26 @@ jobs:
           {
             echo "**Download the files below.** Scroll to the bottom of this page — they are under **Assets**."
             echo
-            echo "| File | What it is | How to use it |"
-            echo "|---|---|---|"
-            [ -f release/modern-dairy.apk ] && echo "| \`modern-dairy.apk\` | The Modern Dairy ordering app for Android | Open this link on an Android phone, tap the file, allow \"install unknown apps\" once, install. Works straight away. |"
-            [ -f release/admin-website.html ] && echo "| \`admin-website.html\` | The admin website, one self-contained file | Download and open it in Chrome. It is the same page as modern-dairy-pune.web.app/admin. |"
-            [ -f release/modern-dairy-app.html ] && echo "| \`modern-dairy-app.html\` | The ordering app's screens as one HTML file | For reference — the exact front end inside that APK. |"
-            [ -f release/modern-drivers.apk ] && echo "| \`modern-drivers.apk\` | The Modern Drivers tracking app for Android | Install the same way. **See the warning below before handing it to a driver.** |"
-            [ -f release/drivers-dashboard.html ] && echo "| \`drivers-dashboard.html\` | The driver tracking dashboard page | For reference. It needs the other files in \`legal/drivers/\` to run. |"
+            echo "These are **two separate apps**. They install side by side on the same phone — different names, different icons, different app IDs. Neither replaces the other."
+            echo
+            echo "## 1. Modern Dairy — the ordering app"
+            echo
+            echo "For customers. White icon, red mark. App ID \`in.moderndairy.app\`."
+            echo
+            echo "| File | What it is |"
+            echo "|---|---|"
+            [ -f release/modern-dairy.apk ] && echo "| \`modern-dairy.apk\` | The app. Works straight away, no setup. |"
+            [ -f release/admin-website.html ] && echo "| \`admin-website.html\` | The admin website, one self-contained file — open it in Chrome. |"
+            [ -f release/modern-dairy-app.html ] && echo "| \`modern-dairy-app.html\` | The app's screens as one HTML file, for reference. |"
+            echo
+            echo "## 2. Modern Drivers — the driver tracking app"
+            echo
+            echo "For delivery drivers. **Navy icon**, white mark with a route line. App ID \`in.moderndairy.drivers\`."
+            echo
+            echo "| File | What it is |"
+            echo "|---|---|"
+            [ -f release/modern-drivers.apk ] && echo "| \`modern-drivers.apk\` | The driver app. **See the note below before handing it to a driver.** |"
+            [ -f release/drivers-dashboard.html ] && echo "| \`drivers-dashboard.html\` | The tracking dashboard page, for reference. |"
             echo
             echo "## Installing an APK on Android"
             echo

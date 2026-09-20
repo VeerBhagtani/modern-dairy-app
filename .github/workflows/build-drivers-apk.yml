@@ -60,6 +60,18 @@ jobs:
       - name: Patch the Android manifest for background location
         run: node ../scripts/patch-drivers-manifest.js
 
+      # cap add android generates the stock Capacitor icon. Both apps live on the
+      # same phone, so the driver app gets its own artwork — same brand mark,
+      # inverted palette — or the launcher shows a generic developer-sample icon
+      # next to the real Modern Dairy one.
+      #
+      # @capacitor/assets is deliberately NOT a dependency of this repo (its
+      # sharp/uuid advisories were the reason it was removed), so it is invoked
+      # through npx here: it runs on a CI runner over files from this repo and
+      # nothing it pulls in ever ships inside the APK.
+      - name: Generate the launcher icon and splash
+        run: npx --yes @capacitor/assets@3 generate --android
+
       - name: Sync web assets into the native project
         run: npx cap sync android
 
