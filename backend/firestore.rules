@@ -298,6 +298,76 @@ service cloud.firestore {
       allow list, delete: if isAdmin();
     }
 
+    // ── Modern Drivers (driver tracking platform) ───────────────────────
+    // Location data is the most sensitive thing in this database. Every write
+    // in this subsystem goes through the Cloud Run backend under a service
+    // account, which bypasses these rules and enforces its own role checks and
+    // audit logging — so no client, admin included, needs write access here.
+    //
+    // Drivers are deliberately NOT a Firestore identity: the Android app holds
+    // a backend JWT and never touches Firestore directly. These blocks are
+    // therefore a hard deny for every client identity that exists today except
+    // the owner's.
+    //
+    // ONE HONEST CAVEAT: Firestore grants access if ANY matching rule allows
+    // it, and the catch-all at the bottom of this file still says
+    // `allow read, write: if isAdmin()`. So the owner's uid keeps full access
+    // to these collections through that rule, and the `if false` blocks below
+    // do NOT revoke it — they deny every other identity and they document the
+    // intent. Closing that gap means narrowing the catch-all itself, which
+    // touches the whole customer-ordering side of this file and belongs in its
+    // own change. The practical exposure is limited: the admin site never
+    // writes any collection below, and admins are permitted to READ location
+    // data by design.
+    //
+    // Reads the live map genuinely needs (driver_live, rides) are spelled out
+    // explicitly so they survive that future narrowing. Everything else the
+    // dashboard needs, it fetches over the authenticated REST API.
+    //
+    // NOTE ON BRACE DEPTH: every `match` below must sit at brace depth 2. A
+    // block that drifts inside another match silently stops applying — that
+    // exact bug shipped once in this file already.
+
+    // Live map: last known position per driver, and ride status.
+    match /driver_live/{driverId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+    match /rides/{rideId} {
+      allow read: if isAdmin();
+      allow write: if false;
+      // Raw GPS is immutable evidence. Nothing client-side may read or touch
+      // it; the dashboard gets it through the API, which logs the access.
+      match /gps_raw/{pointId} {
+        allow read, write: if false;
+      }
+    }
+
+    // Driver records carry the enrolment code hash — no client read at all.
+    match /drivers/{driverId} { allow read, write: if false; }
+    match /drivers_codes/{code} { allow read, write: if false; }
+
+    // Processed results, classifications, reviews, matches, places, orders,
+    // health events, alerts, integration logs, config and the drivers audit
+    // log: backend-only in both directions.
+    match /ride_processing/{rideId} {
+      allow read, write: if false;
+      match /segments/{segmentId} { allow read, write: if false; }
+    }
+    match /segment_reviews/{reviewId} { allow read, write: if false; }
+    match /trip_declarations/{declarationId} { allow read, write: if false; }
+    match /restaurants/{placeId} { allow read, write: if false; }
+    match /facilities/{placeId} { allow read, write: if false; }
+    match /vehicles/{vehicleId} { allow read, write: if false; }
+    match /delivery_orders/{orderId} { allow read, write: if false; }
+    match /delivery_matches/{matchId} { allow read, write: if false; }
+    match /tracking_events/{eventId} { allow read, write: if false; }
+    match /drivers_alerts/{alertId} { allow read, write: if false; }
+    match /integration_logs/{logId} { allow read, write: if false; }
+    match /drivers_audit_log/{entryId} { allow read, write: if false; }
+    match /drivers_admins/{adminId} { allow read, write: if false; }
+    match /drivers_config/{docId} { allow read, write: if false; }
+
     // Everything else (customers, wallet ledgers, admin audit log, OTP
     // challenges) holds personal/financial data — admin-only, no exceptions.
     match /{document=**} {

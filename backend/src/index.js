@@ -8,6 +8,11 @@ const ordersRoutes = require('./routes/orders');
 const walletRoutes = require('./routes/wallet');
 const adminRoutes = require('./routes/admin');
 const adminRecoveryRoutes = require('./routes/adminRecovery');
+// Modern Drivers — driver tracking subsystem. Self-contained under
+// /driver (the Android app) and /admin/drivers (the dashboard).
+const { router: driverRoutes } = require('./routes/driver');
+const { router: driversAdminRoutes } = require('./routes/driversAdmin');
+const { requireAdmin } = require('./middleware/adminAuth');
 const { generalLimiter } = require('./middleware/rateLimit');
 
 const app = express();
@@ -57,6 +62,12 @@ app.use(cors({
   },
 }));
 
+// CSV imports (restaurant locations, order records) arrive as one JSON body and
+// legitimately exceed the 1 MB default. Mounted first and path-scoped; the
+// global parser below then no-ops for these two routes. Everything else stays
+// capped at 1 MB.
+app.use('/admin/drivers/orders/import', express.json({ limit: '8mb' }));
+app.use('/admin/drivers/restaurants/import', express.json({ limit: '4mb' }));
 app.use(express.json({ limit: '1mb' }));
 app.use(generalLimiter);
 
@@ -66,8 +77,12 @@ app.use('/config', configRoutes);
 app.use('/auth', authRoutes);
 app.use('/orders', ordersRoutes);
 app.use('/wallet', walletRoutes);
+// Mounted BEFORE /admin so the drivers subsystem owns /admin/drivers outright
+// rather than falling through the ordering panel's own admin gate first.
+app.use('/admin/drivers', requireAdmin(), driversAdminRoutes);
 app.use('/admin', adminRoutes);
 app.use('/admin-recovery', adminRecoveryRoutes);
+app.use('/driver', driverRoutes);
 
 app.use((req, res) => res.status(404).json({ success: false, message: 'Not found' }));
 
