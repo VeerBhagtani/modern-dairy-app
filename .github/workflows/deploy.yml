@@ -140,8 +140,12 @@ jobs:
           # splits on commas — so the list has to be passed with gcloud's
           # alternate delimiter syntax, "^@^", which makes @ the separator
           # between variables and leaves the commas inside one value alone.
+          # --ingress=all is explicit rather than assumed: a service restricted
+          # to internal traffic answers an outside caller with a plain Google
+          # 404, not a 403, which is indistinguishable from a broken app. The
+          # office dashboard and forty phones all reach this over the internet.
           gcloud run deploy "$S" --project "$P" --region "$R" --source backend \
-            --allow-unauthenticated --port 8080 --quiet \
+            --allow-unauthenticated --ingress=all --port 8080 --quiet \
             --set-env-vars "^@^GCP_PROJECT_ID=${P}@NODE_ENV=production@ALLOWED_ORIGINS=${ORIGINS}"
           # Cloud Run can hold more than one address for a service, and
           # `status.url` has handed back a legacy one that 404s while the
@@ -192,6 +196,9 @@ jobs:
             done
             echo "--- who may invoke it ---"
             gcloud run services get-iam-policy "$S" --project "$P" --region "$R" 2>&1 | head -30 || true
+            echo "--- ingress and URL settings ---"
+            gcloud run services describe "$S" --project "$P" --region "$R" \
+              --format='yaml(metadata.annotations,spec.template.metadata.annotations,status.url)' 2>&1 | head -40 || true
             echo "--- revision state ---"
             gcloud run revisions list --service "$S" --project "$P" --region "$R" 2>&1 | head -20 || true
             gcloud run services describe "$S" --project "$P" --region "$R" \
