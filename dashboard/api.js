@@ -6,11 +6,33 @@
 window.DRIVERS_API = (function () {
   'use strict';
   var CFG = window.DRIVERS_CONFIG || {};
-  var BASE = String(CFG.API_BASE || '').replace(/\/+$/, '');
+
+  // Where the backend lives can be baked in at deploy time, or typed in once on
+  // the sign-in screen and remembered in this browser. The second path matters:
+  // the dashboard is one static site the office bookmarks, and it should start
+  // working the moment the API is switched on, without anyone rebuilding and
+  // republishing it.
+  var STORE = 'md_api_base';
+  function remembered() {
+    try { return String(localStorage.getItem(STORE) || '').replace(/\/+$/, ''); } catch (e) { return ''; }
+  }
+  var BASE = String(CFG.API_BASE || '').replace(/\/+$/, '') || remembered();
+
+  function setBase(url) {
+    var v = String(url || '').trim().replace(/\/+$/, '');
+    // https only: driver positions must never cross the network in the clear.
+    if (v && !/^https:\/\/[A-Za-z0-9.-]+(:\d+)?(\/.*)?$/.test(v)) {
+      throw new Error('That does not look like an https:// address.');
+    }
+    BASE = v;
+    api.base = v;
+    try { if (v) localStorage.setItem(STORE, v); else localStorage.removeItem(STORE); } catch (e) { /* private window */ }
+    return v;
+  }
 
   function noBase() {
     return Promise.reject(new Error(
-      'This dashboard has no backend address configured. Set API_BASE in legal/drivers/config.js and redeploy hosting.',
+      'This dashboard does not know the server address yet. Enter it on the sign-in screen.',
     ));
   }
 
@@ -74,8 +96,9 @@ window.DRIVERS_API = (function () {
   }
 
   var D = '/admin';
-  return {
+  var api = {
     base: BASE,
+    setBase: setBase,
     request: request,
     qs: qs,
     download: download,
@@ -116,4 +139,5 @@ window.DRIVERS_API = (function () {
     saveConfig: function (overrides) { return request(D + '/config', { method: 'PUT', body: { overrides: overrides } }); },
     runMaintenance: function (dryRunRetention) { return request(D + '/maintenance/run', { method: 'POST', body: { dryRunRetention: dryRunRetention !== false } }); },
   };
+  return api;
 })();

@@ -82,9 +82,8 @@ jobs:
           mkdir -p release
           cp app/android/app/build/outputs/apk/debug/app-debug.apk release/modern-drivers.apk
 
-          # The office website, zipped. It is five files plus the map library,
-          # not one page, so a zip is the only form that actually runs.
-          (cd dashboard && zip -qr ../release/admin-website.zip .)
+          OWNER="${GITHUB_REPOSITORY%%/*}"; NAME="${GITHUB_REPOSITORY##*/}"
+          SITE="https://${OWNER,,}.github.io/${NAME}/"
 
           TAG="${{ github.event.inputs.tag }}"
           [ -z "$TAG" ] && TAG="v$(date +%Y%m%d)-${{ github.run_number }}"
@@ -102,16 +101,18 @@ jobs:
             echo
             echo "### Using it"
             echo
-            echo "The driver enters their **name and mobile number**, once. No password, no code, nothing to remember. Then Start Ride each morning."
+            echo "The driver types their **name**, once. No password, no code, nothing to remember. The app asks for location straight away and shows them on the map. Then Start Ride each morning."
             echo
             echo "Only the office can stop a ride."
             echo
-            echo "### admin-website.zip — the office dashboard"
+            echo "### The office dashboard"
             echo
-            echo "Unzip it and open \`index.html\` in Chrome to see the sign-in screen. It cannot show any drivers until the backend is deployed — there is nowhere for it to read them from yet — so this is for looking at, not using."
+            echo "$SITE"
+            echo
+            echo "A website, not a download. Open it on the office PC and sign in."
             if [ "${{ steps.apibase.outputs.configured }}" = "false" ]; then
               echo
-              echo "> ⚠️ **This build has no server address, so it cannot record anything yet.** It installs and opens, but it will not register a driver or start a ride — it refuses rather than pretending to track. Deploy the backend, set the \`DRIVERS_API_BASE\` repository secret, and this page rebuilds with a working APK."
+              echo "> ⚠️ **The backend is not deployed yet.** This APK records the route on the phone and draws it live on the map — real GPS, kept locally — and says plainly that nothing has reached the office. Nothing is invented. The dashboard has no drivers to show until the backend is up. Deploy it, set the \`DRIVERS_API_BASE\` repository secret, and this page rebuilds with an APK that syncs."
             fi
             echo
             echo "---"

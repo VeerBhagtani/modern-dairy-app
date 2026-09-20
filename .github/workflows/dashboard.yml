@@ -1,0 +1,82 @@
+name: Publish the office dashboard
+
+# The office website is static — HTML, CSS and JavaScript that talk to the API
+# over HTTPS — so GitHub Pages can host it for nothing. That gives the office a
+# real address to bookmark instead of a zip file someone has to unpack, and it
+# updates itself every time the dashboard changes.
+#
+# It publishes to a generated `gh-pages` branch rather than through the Pages
+# deployment environment, because that environment only accepts deployments
+# from the default branch and this project lives on its own branch.
+
+on:
+  push:
+    branches: [modern-drivers-standalone]
+    paths:
+      - 'dashboard/**'
+      - '.github/workflows/dashboard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+
+concurrency:
+  group: modern-drivers-dashboard
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Point it at the API, if we know the address yet
+        env:
+          API_BASE: ${{ secrets.DRIVERS_API_BASE }}
+        run: |
+          if [ -n "$API_BASE" ]; then
+            node scripts/set-api-base.js "$API_BASE" dashboard/config.js
+          else
+            echo "No DRIVERS_API_BASE secret. The dashboard will ask for the"
+            echo "server address on its sign-in screen instead."
+          fi
+
+      - name: Publish
+        run: |
+          set -euo pipefail
+          rm -rf out && mkdir out
+          cp -R dashboard/. out/
+          touch out/.nojekyll          # keep Pages from running Jekyll over it
+          cd out
+          git init -q -b gh-pages
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Publish the office dashboard from ${GITHUB_SHA::7}"
+          git push -q -f \
+            "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" \
+            gh-pages
+
+      - name: Switch GitHub Pages on, the first time only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/pages" >/dev/null 2>&1; then
+            echo "Pages is already on."
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/pages" \
+              -f "source[branch]=gh-pages" -f "source[path]=/"
+          fi
+
+      - name: Where it is
+        run: |
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          NAME="${GITHUB_REPOSITORY##*/}"
+          {
+            echo "## The office dashboard is live"
+            echo
+            echo "https://${OWNER,,}.github.io/${NAME}/"
+            echo
+            echo "It can take a couple of minutes to appear the very first time."
+          } >> "$GITHUB_STEP_SUMMARY"

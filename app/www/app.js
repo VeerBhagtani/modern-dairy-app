@@ -50,7 +50,6 @@
     rideId: LS.get('rideId', null),
     rideStartedAt: LS.get('rideStartedAt', null),
     localRide: LS.get('localRide', null),      // a ride running with no server
-    personalFrom: LS.get('personalFrom', null),
     notice: LS.get('notice', null),
     tracking: { sampleIntervalSec: CFG.SAMPLE_INTERVAL_SEC || 30, maxBatchPoints: CFG.MAX_BATCH_POINTS || 200 },
     watcherId: null,
@@ -192,7 +191,7 @@
   // MapLibre GL with OpenFreeMap tiles: open data, no API key, no billing
   // account, no per-view charge. The style URL below is the only line that
   // knows which map provider this is.
-  var map = null, marker = null, markerArrow = null, mapReady = false, followMap = true;
+  var map = null, marker = null, markerArrow = null, mapReady = false, followMap = true, mapShown = false;
 
   function initMap() {
     if (map || !window.maplibregl) return;
@@ -292,7 +291,11 @@
 
   function drawRoute() {
     if (!map || !mapReady) return;
-    var last = state.route[state.route.length - 1];
+    // Before a ride there is no route, but there is a position — the marker
+    // follows the latest fix either way, so the driver sees themself on the map
+    // the moment the app opens.
+    var last = state.route[state.route.length - 1]
+      || (state.lastFix ? [state.lastFix.lng, state.lastFix.lat] : null);
 
     var routeSrc = map.getSource('route');
     if (routeSrc) routeSrc.setData(lineFC(state.route));
@@ -330,6 +333,70 @@
     }
 
     if (followMap) map.easeTo({ center: last, duration: 700 });
+  }
+
+  // ── location on open ───────────────────────────────────────────────────
+  // The app asks for location the moment it opens. Two reasons: the Android
+  // dialog is dealt with in the office rather than at the wheel, and the driver
+  // sees themself on the map before pressing anything.
+  //
+  // This uses the plain Geolocation plugin, not the background one. That
+  // matters: the background plugin would also start the foreground service and
+  // begin recording, and nothing may be recorded outside a ride. Here a single
+  // fix is read to draw the map with, and it is never queued — onLocation's
+  // `if (!riding())` guard is what keeps that true for the watcher too.
+  var GEO = null;
+  function geoPlugin() {
+    if (!GEO && window.Capacitor && window.Capacitor.registerPlugin) {
+      GEO = window.Capacitor.registerPlugin('Geolocation');
+    }
+    return GEO;
+  }
+
+  function readOneFix() {
+    var p = geoPlugin();
+    if (p) {
+      return p.getCurrentPosition({ enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 })
+        .then(function (pos) {
+          return { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy };
+        });
+    }
+    // Plain browser, for testing the page outside the app.
+    if (!navigator.geolocation) return Promise.reject(new Error('no geolocation'));
+    return new Promise(function (res, rej) {
+      navigator.geolocation.getCurrentPosition(function (pos) {
+        res({ lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy });
+      }, rej, { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 });
+    });
+  }
+
+  var primed = false;
+  function primeLocation() {
+    if (primed) return Promise.resolve();
+    primed = true;
+    var p = geoPlugin();
+    var ask = p ? p.requestPermissions({ permissions: ['location'] }) : Promise.resolve(null);
+    return ask.catch(function () { return null; }).then(function (res) {
+      if (res && res.location === 'denied') {
+        state.permission = 'denied';
+        text('mapEmptyText', 'Location is blocked. Allow location for this app in Android settings.');
+        render();
+        return null;
+      }
+      return readOneFix().then(function (f) {
+        state.permission = 'granted';
+        state.lastFix = { lat: f.lat, lng: f.lng };
+        state.lastFixAt = Date.now();
+        state.lastAccuracyM = f.acc == null ? null : f.acc;
+        render();                       // shows the map container first…
+        initMap();                      // …so MapLibre measures a real height
+        if (map) map.setCenter([f.lng, f.lat]);
+        drawRoute();
+      });
+    }).catch(function () {
+      text('mapEmptyText', 'Could not get a position yet. Move somewhere with a clear view of the sky.');
+      render();
+    });
   }
 
   // ── tracking ───────────────────────────────────────────────────────────
@@ -472,6 +539,7 @@
       state.driver = { name: name, driverCode: null };
       LS.set('driver', state.driver);
       render();
+      primeLocation();
       return;
     }
 
@@ -498,6 +566,7 @@
         $('btnName').disabled = false;
         $('btnName').textContent = 'Continue';
         render();
+        primeLocation();
       });
   }
 
@@ -554,28 +623,9 @@
       }
       state.rideId = null;
       LS.del('rideId');
-      state.personalFrom = null; LS.del('personalFrom');
       return stopWatcher();
     }).catch(function () {})
       .then(render);
-  }
-
-  function togglePersonal() {
-    if (!riding()) return;
-    if (!state.personalFrom) {
-      state.personalFrom = Date.now();
-      LS.set('personalFrom', state.personalFrom);
-      render();
-      return;
-    }
-    var from = state.personalFrom, to = Date.now();
-    state.personalFrom = null; LS.del('personalFrom');
-    render();
-    if (HAS_SERVER && state.rideId) {
-      apiFetch('/driver/rides/' + state.rideId + '/declare', {
-        method: 'POST', body: { kind: 'personal', fromTs: from, toTs: to },
-      }).catch(function () {});
-    }
   }
 
   // ── rendering ──────────────────────────────────────────────────────────
@@ -616,8 +666,17 @@
     $('btnStart').textContent = state.starting ? 'Starting…' : 'Start Ride';
     show($('rideBtns'), riding());
     show($('statsBox'), riding());
-    show($('map'), riding());
-    show($('mapEmpty'), !riding());
+
+    // The map is up as soon as there is anything true to draw on it.
+    var wantMap = riding() || !!state.lastFix;
+    show($('map'), wantMap);
+    show($('mapEmpty'), !wantMap);
+    if (wantMap && !mapShown) {
+      mapShown = true;
+      if (map) setTimeout(function () { map.resize(); drawRoute(); }, 0);
+    } else if (!wantMap) {
+      mapShown = false;
+    }
 
     text('stKm', (state.distanceM / 1000).toFixed(1));
     text('stTime', state.rideStartedAt ? fmtDur(Date.now() - state.rideStartedAt) : '0m');
@@ -626,10 +685,6 @@
     var err = $('startErr');
     err.hidden = !state.startError;
     err.textContent = state.startError || '';
-
-    var pb = $('btnPersonal');
-    if (state.personalFrom) { pb.className = 'on'; pb.textContent = 'End personal trip'; }
-    else { pb.className = ''; pb.textContent = 'Personal trip'; }
 
     var n = $('notice');
     if (state.stoppedInfo && !riding()) {
@@ -657,7 +712,6 @@
       'It is not recorded before you start, and not after the office stops it.',
       'Only Modern Dairy office staff can see it.',
       'Android shows a permanent notification the whole time it is on.',
-      'You can mark part of your day as a personal trip. Those kilometres are kept out of Modern Dairy business distance.',
       'Only the office can stop a ride. If you need it stopped, call the office.',
     ];
     return '<ul>' + pts.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul>';
@@ -684,7 +738,6 @@
   $('btnName').addEventListener('click', saveName);
   $('inName').addEventListener('keydown', function (e) { if (e.key === 'Enter') saveName(); });
   $('btnStart').addEventListener('click', startRide);
-  $('btnPersonal').addEventListener('click', togglePersonal);
   $('btnCentre').addEventListener('click', function () { followMap = true; drawRoute(); });
   $('btnWhy').addEventListener('click', openSheet);
   $('btnWhy2').addEventListener('click', openSheet);
@@ -704,7 +757,7 @@
   document.addEventListener('visibilitychange', function () { if (!document.hidden) resume(); });
 
   render();
-  if (state.name) resume();
+  if (state.name) { resume(); primeLocation(); }
 
   if (HAS_SERVER) {
     setInterval(sync, (CFG.SYNC_INTERVAL_SEC || 45) * 1000);

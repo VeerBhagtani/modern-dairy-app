@@ -61,17 +61,17 @@ tunnel gap and a 4 km multipath spike. It asserts:
 Do these on a real phone on a real network. An emulator will not reproduce the
 OEM battery-manager behaviour that causes most real gaps.
 
-### Enrolment
-1. Fresh install → the enrolment screen shows, with the tracking notice. **No tracking is possible before enrolment.**
-2. Enter a wrong code → "That code is not valid." Try an expired one → the *same* message (no oracle).
-3. Enter the real code and a name → the main screen appears with the driver's name and ID.
-4. Re-enter the same code on a *second* phone → refused; the first phone keeps working.
-5. Admin issues a new code → the first phone is signed out on its next request.
+### Signing in
+1. Fresh install → one screen asking for a name, with the tracking notice behind a link. There is no code and no password.
+2. Enter a name and continue → the main screen appears and Android asks for location **straight away**, before any ride.
+3. Allow it → the map appears with the driver's own marker on it. **No ride is running and nothing is stored** — check the dashboard shows no ride and no points.
+4. Deny it → the map area says location is blocked and how to fix it. The app does not pretend to know where the phone is.
+5. Close and reopen → the name is remembered, the map comes back, and it is still not tracking.
 
 ### Start Ride
-6. Press Start Ride → Android asks for location permission; the reason is shown before the prompt.
+6. Press Start Ride → the **persistent notification** appears and the status turns green.
 7. Grant "While using the app" only → the app keeps working and says tracking may stop in the background.
-8. Grant "Allow all the time" → status turns green, and the **persistent notification** appears.
+8. Grant "Allow all the time" → tracking survives the screen going off.
 9. Press Start Ride twice quickly → one ride, not two. Check the dashboard shows one.
 10. Force-stop the app, reopen → it re-attaches to the same ride and resumes tracking.
 11. Reboot the phone, reopen the app → it re-attaches. (It does **not** resume by itself before being opened — Android does not guarantee that, and the app does not claim it does.)
@@ -92,16 +92,16 @@ OEM battery-manager behaviour that causes most real gaps.
 22. With the same token, `POST /driver/rides/<someone-else's-ride>/points` → **403**, and a `cross_driver_upload_blocked` event.
 23. With the same token, `POST /admin/drivers/rides/<id>/stop` → 401/403.
 
-### Personal trips
-24. Start a personal stretch, drive, end it → the dashboard shows those kilometres as personal, not business, and the day total is unchanged.
+### Personal kilometres
+24. The app has **no** personal-trip button — a driver cannot label their own day. In the dashboard, review a stretch as personal → those kilometres move to the personal column, business drops by the same amount, and the day total is unchanged.
 
 ---
 
 ## 3. Manual — admin dashboard
 
 ### Access
-25. Sign in with a non-admin Firebase account → refused, signed out.
-26. Close the tab and reopen → signed out (in-memory persistence).
+25. Sign in with a wrong password → "Wrong username or password" — the same message as an unknown username, so it gives nothing away.
+26. Close the tab and reopen → signed out (the token lives in sessionStorage).
 27. With a `viewer` role, try to stop a ride → 403 "This action needs the manager role."
 
 ### Live map

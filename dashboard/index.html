@@ -111,6 +111,8 @@
   .banner{background:var(--warn-tint);border:1px solid #efdcb2;color:var(--warn);border-radius:10px;
           padding:11px 14px;font-size:.86rem;margin-bottom:14px;font-weight:600;}
   .banner.info{background:var(--navy-tint);border-color:#ccd4ee;color:var(--navy);}
+  .link-sm{background:none;border:none;color:var(--navy);font-size:.75rem;font-weight:700;
+           text-decoration:underline;padding:4px 0;}
   [hidden]{display:none!important;}
 </style>
 </head>
@@ -121,6 +123,12 @@
     <img src="logo.png" alt="">
     <h1>Modern Drivers</h1>
     <p class="sub">Office dashboard</p>
+    <div class="field" id="serverField" hidden>
+      <label for="apiBase">Server address</label>
+      <input id="apiBase" type="url" inputmode="url" autocapitalize="none" spellcheck="false"
+             placeholder="https://modern-drivers-api-xxxxx.a.run.app">
+      <p class="tiny" style="margin:6px 0 0">The address the deploy printed. Asked once, then remembered on this computer.</p>
+    </div>
     <div class="field"><label for="username">Username</label>
       <input id="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
     <div class="field"><label for="password">Password</label>
@@ -128,7 +136,8 @@
     <p id="loginErr" class="err" hidden></p>
     <button id="btnLogin" class="btn-primary">Sign in</button>
     <p class="tiny" style="text-align:center;margin-top:18px">
-      Closing this tab signs you out.
+      Closing this tab signs you out.<br>
+      <button id="btnServer" class="link-sm" hidden>Change server address</button>
     </p>
   </div>
 </div>

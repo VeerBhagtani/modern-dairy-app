@@ -44,7 +44,13 @@
     var err = el('loginErr');
     err.hidden = !message;
     err.textContent = message || '';
-    var u = el('username');
+    // The server address is asked for only when the dashboard does not already
+    // know one, so day to day this is a two-field sign-in.
+    var known = !!window.DRIVERS_API.base;
+    el('serverField').hidden = known;
+    el('btnServer').hidden = !known;
+    if (known) el('apiBase').value = window.DRIVERS_API.base;
+    var u = el(known ? 'username' : 'apiBase');
     if (u) u.focus();
   }
 
@@ -58,7 +64,7 @@
     if (!window.DRIVERS_API.base) {
       el('tabs').innerHTML = '';
       el('view').innerHTML = '<div class="card"><p class="err">This dashboard has no server address yet.</p>'
-        + '<p class="muted">Set <code>API_BASE</code> in <code>dashboard/config.js</code> and deploy again. '
+        + '<p class="muted">Sign out and enter it on the sign-in screen. '
         + 'Nothing will load until then — the dashboard will not invent numbers to fill the screen.</p></div>';
       return;
     }
@@ -80,10 +86,21 @@
     btn.disabled = true;
     btn.textContent = 'Signing in…';
 
-    var base = String((window.DRIVERS_CONFIG || {}).API_BASE || '').replace(/\/+$/, '');
-    if (!base) {
-      err.textContent = 'This dashboard has no server address configured yet.';
+    var base;
+    try {
+      base = window.DRIVERS_API.setBase(el('apiBase').value || window.DRIVERS_API.base);
+    } catch (e) {
+      err.textContent = e.message;
       err.hidden = false;
+      btn.disabled = false;
+      btn.textContent = 'Sign in';
+      return;
+    }
+    if (!base) {
+      err.textContent = 'Enter the server address first.';
+      err.hidden = false;
+      el('serverField').hidden = false;
+      el('apiBase').focus();
       btn.disabled = false;
       btn.textContent = 'Sign in';
       return;
@@ -115,6 +132,12 @@
   }
 
   el('btnLogin').addEventListener('click', signIn);
+  el('btnServer').addEventListener('click', function () {
+    el('serverField').hidden = false;
+    el('btnServer').hidden = true;
+    el('apiBase').focus();
+  });
+  el('apiBase').addEventListener('keydown', function (e) { if (e.key === 'Enter') el('username').focus(); });
   el('password').addEventListener('keydown', function (e) { if (e.key === 'Enter') signIn(); });
   el('username').addEventListener('keydown', function (e) { if (e.key === 'Enter') el('password').focus(); });
   el('btnSignout').addEventListener('click', signOut);

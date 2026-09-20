@@ -19,11 +19,12 @@ Three parts:
 
 ## How it works, in one page
 
-**The driver** installs the app, types their **name** once, and presses
-**Start Ride** at the beginning of the day. No password, no code,
-nothing to remember. Their phone records the journey until the office stops it
-— a driver cannot stop their own ride, and the server enforces that, so a
-modified app changes nothing.
+**The driver** installs the app and types their **name** once. The app asks for
+location there and then, shows them on the map, and waits. At the start of the
+day they press **Start Ride**. No password, no code, nothing to remember, and
+nothing recorded until that button is pressed. Their phone then records the
+journey until the office stops it — a driver cannot stop their own ride, and
+the server enforces that, so a modified app changes nothing.
 
 **The office** opens the dashboard and sees every driver on a map, with the age
 of each position shown honestly: a fix from four minutes ago is labelled *last
@@ -33,7 +34,7 @@ known*, never *live*.
 
 - **Verified business** — Modern Dairy travel it can prove
 - **Likely business** — probably, but unproven
-- **Personal** — the driver's own Porter work
+- **Personal** — the driver's own Porter work, marked by the office in review
 - **Unknown** — it genuinely cannot tell
 - **GPS gap** — the phone went dark; the distance is an estimate, labelled as one
 
@@ -45,7 +46,7 @@ It sits in its own column until a person decides.
 
 - GPS cannot prove a delivery happened. A geofence hit is evidence of presence.
 - GPS cannot identify a personal trip. Nothing is auto-labelled personal from
-  geometry — only a driver saying so, or the office reviewing it.
+  geometry — only the office deciding so in review.
 - Without order records, most restaurant visits cap at **MEDIUM** confidence.
   That is the honest ceiling, not a bug. Importing real orders is the single
   biggest accuracy improvement available.
@@ -94,13 +95,29 @@ Add two repository secrets under **Settings → Secrets and variables → Action
 | `GCP_PROJECT_ID` | your project id |
 | `GCP_SA_KEY` | the contents of `key.json` |
 
-### 2. Deploy
+### 2. Put the office dashboard online
+
+Actions → **Publish the office dashboard** → Run workflow. It publishes the site
+to GitHub Pages — free, no server — at:
+
+```
+https://<your-github-username>.github.io/<repo>/
+```
+
+The first run switches Pages on and can take a couple of minutes to appear. It
+re-publishes itself whenever `dashboard/` changes.
+
+The site asks for the **server address** on its sign-in screen the first time
+and remembers it, so it works as soon as the API below is deployed, with no
+rebuild. (Set a `DRIVERS_API_BASE` secret and it is baked in instead.)
+
+### 3. Deploy the API
 
 Actions → **Deploy** → Run workflow. It creates the signing key, deploys the
 API, checks it answers, deploys the database rules, points the dashboard at the
 API and deploys it. Re-runnable, and it stops rather than half-deploying.
 
-### 3. Create your office login
+### 4. Create your office login
 
 Nobody can sign in until you make an account:
 
@@ -113,7 +130,7 @@ GCP_PROJECT_ID=<your-project-id> npm run create-admin -- --user veer --name "Vee
 Roles: `viewer` (read only), `manager` (+ stop rides, review journeys),
 `admin` (+ thresholds and driver accounts).
 
-### 4. Build the app
+### 5. Build the app
 
 Add a repository secret `DRIVERS_API_BASE` with the API URL the deploy printed,
 then Actions → **Build and publish the app**. The APK lands on a Release page
@@ -125,7 +142,7 @@ reached the office yet. Real GPS, held locally — not a demo, and no coordinate
 is ever invented. Once `DRIVERS_API_BASE` is set and the APK rebuilt, it sends
 everything it has saved.
 
-### 5. Add your locations
+### 6. Add your locations
 
 In the dashboard, under **Locations**:
 
