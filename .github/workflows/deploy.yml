@@ -32,6 +32,12 @@ on:
         description: Cloud Run service name
         default: modern-drivers-api
         required: true
+  # GitHub only shows the "Run workflow" button for workflows on the default
+  # branch, and this project lives on its own branch. Touching this marker file
+  # is the way to ask for a deploy from here.
+  push:
+    branches: [modern-drivers-standalone]
+    paths: ['.github/deploy-now']
 
 permissions:
   contents: write
@@ -83,7 +89,11 @@ jobs:
           P="${{ secrets.GCP_PROJECT_ID }}"
           R="${{ github.event.inputs.region || 'asia-south1' }}"
           S="${{ github.event.inputs.service || 'modern-drivers-api' }}"
-          ORIGINS="https://${P}.web.app,https://${P}.firebaseapp.com"
+          # The office dashboard is served from GitHub Pages, so that origin is
+          # the one the browser will send. The Firebase Hosting origins stay in
+          # the list in case the dashboard is ever served from there too.
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          ORIGINS="https://${OWNER,,}.github.io,https://${P}.web.app,https://${P}.firebaseapp.com"
           gcloud run deploy "$S" --project "$P" --region "$R" --source backend \
             --allow-unauthenticated --port 8080 --quiet \
             --set-env-vars "GCP_PROJECT_ID=${P},NODE_ENV=production,ALLOWED_ORIGINS=${ORIGINS}"
@@ -118,10 +128,30 @@ jobs:
             git push origin HEAD:"${{ github.ref_name }}"
           fi
 
-      - name: Deploy the dashboard
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
-        run: npx --yes firebase-tools@13 deploy --project "${{ secrets.GCP_PROJECT_ID }}" --only hosting --non-interactive
+      # Republished here rather than left to the dashboard workflow: a push made
+      # with the workflow's own token does not start another workflow, so
+      # nothing else would pick the new address up.
+      - name: Republish the dashboard with the address baked in
+        run: |
+          set -euo pipefail
+          URL="https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git"
+          rm -rf site
+          git clone -q --depth 1 --branch gh-pages "$URL" site 2>/dev/null \
+            || { mkdir site && git -C site init -q -b gh-pages; }
+          find site -mindepth 1 -maxdepth 1 \
+            ! -name .git ! -name 'modern-drivers.apk' -exec rm -rf {} +
+          cp -R dashboard/. site/
+          touch site/.nojekyll
+          cd site
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "The published dashboard already carries this address."
+          else
+            git commit -q -m "Point the published dashboard at the API"
+            git push -q "$URL" gh-pages
+          fi
 
       - name: What is left
         run: |
@@ -131,8 +161,9 @@ jobs:
             echo
             echo "| | |"
             echo "|---|---|"
+            OWNER="${GITHUB_REPOSITORY%%/*}"; NAME="${GITHUB_REPOSITORY##*/}"
             echo "| API | \`${{ steps.backend.outputs.url }}\` |"
-            echo "| Office dashboard | https://${P}.web.app |"
+            echo "| Office dashboard | https://${OWNER,,}.github.io/${NAME}/ |"
             echo
             echo "## Two things left"
             echo
