@@ -27,7 +27,7 @@ on:
     inputs:
       region:
         description: Cloud Run region
-        default: asia-south1
+        default: us-central1
         required: true
       service:
         description: Cloud Run service name
@@ -106,7 +106,7 @@ jobs:
       - name: Ensure the container repository exists
         run: |
           P="${{ steps.cfg.outputs.project }}"
-          R="${{ github.event.inputs.region || 'asia-south1' }}"
+          R="${{ github.event.inputs.region || 'us-central1' }}"
           if gcloud artifacts repositories describe cloud-run-source-deploy \
                --project "$P" --location "$R" >/dev/null 2>&1; then
             echo "Already there."
@@ -134,7 +134,7 @@ jobs:
         id: backend
         run: |
           P="${{ steps.cfg.outputs.project }}"
-          R="${{ github.event.inputs.region || 'asia-south1' }}"
+          R="${{ github.event.inputs.region || 'us-central1' }}"
           S="${{ github.event.inputs.service || 'modern-drivers' }}"
           # The office dashboard is served from GitHub Pages, so that origin is
           # the one the browser will send. The Firebase Hosting origins stay in
