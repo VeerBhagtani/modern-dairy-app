@@ -8,7 +8,7 @@
  * MAP_STYLE is the single map-provider reference in the whole dashboard.
  */
 window.DRIVERS_CONFIG = {
-  API_BASE: '',   // e.g. 'https://modern-drivers-api-xxxxx.a.run.app' — set at deploy time
+  API_BASE: 'https://modern-drivers-795895369854.asia-south1.run.app',   // e.g. 'https://modern-drivers-api-xxxxx.a.run.app' — set at deploy time
 
   MAP_STYLE: 'https://tiles.openfreemap.org/styles/liberty',
   MAP_WORKER: 'vendor/maplibre/maplibre-gl-csp-worker.js',
