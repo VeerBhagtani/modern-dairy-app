@@ -59,6 +59,7 @@ jobs:
       # script text: the key is multi-line JSON, and pasting it into a bash
       # condition breaks the script's own syntax before it can test anything.
       - name: Check the prerequisites before touching anything
+        id: cfg
         env:
           PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
           SA_KEY: ${{ secrets.GCP_SA_KEY }}
@@ -67,6 +68,13 @@ jobs:
           if [ -z "$PROJECT_ID" ]; then echo "::error::GCP_PROJECT_ID is not set."; miss=1; fi
           if [ -z "$SA_KEY" ]; then echo "::error::GCP_SA_KEY is not set."; miss=1; fi
           if [ "$miss" = "1" ]; then exit 1; fi
+
+          # A secret pasted into a web form picks up stray whitespace more often
+          # than not, and gcloud rejects " my-project" as "a project name, not a
+          # project ID" — a confusing message for an invisible character. Trim it
+          # once here and use the trimmed value everywhere below.
+          CLEAN=$(printf '%s' "$PROJECT_ID" | tr -d '[:space:]')
+          echo "project=$CLEAN" >> "$GITHUB_OUTPUT"
           echo "Prerequisites present."
 
       - id: auth
@@ -80,7 +88,7 @@ jobs:
       # a deliberate act, not a side effect of a deploy.
       - name: Ensure the signing key exists
         run: |
-          P="${{ secrets.GCP_PROJECT_ID }}"
+          P="${{ steps.cfg.outputs.project }}"
           if gcloud secrets describe jwt-signing-key --project "$P" >/dev/null 2>&1; then
             echo "jwt-signing-key already exists — untouched."
           else
@@ -92,7 +100,7 @@ jobs:
       - name: Deploy the API
         id: backend
         run: |
-          P="${{ secrets.GCP_PROJECT_ID }}"
+          P="${{ steps.cfg.outputs.project }}"
           R="${{ github.event.inputs.region || 'asia-south1' }}"
           S="${{ github.event.inputs.service || 'modern-drivers-api' }}"
           # The office dashboard is served from GitHub Pages, so that origin is
@@ -119,7 +127,7 @@ jobs:
       - name: Deploy the database rules and indexes
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
-        run: npx --yes firebase-tools@13 deploy --project "${{ secrets.GCP_PROJECT_ID }}" --only firestore:rules,firestore:indexes --non-interactive
+        run: npx --yes firebase-tools@13 deploy --project "${{ steps.cfg.outputs.project }}" --only firestore:rules,firestore:indexes --non-interactive
 
       # The dashboard ships with an empty API_BASE so no environment URL is ever
       # committed by hand. The deploy knows the real one, so it writes it in.
@@ -161,7 +169,7 @@ jobs:
 
       - name: What is left
         run: |
-          P="${{ secrets.GCP_PROJECT_ID }}"
+          P="${{ steps.cfg.outputs.project }}"
           {
             echo "# Live"
             echo
