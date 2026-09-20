@@ -143,18 +143,38 @@ jobs:
           gcloud run deploy "$S" --project "$P" --region "$R" --source backend \
             --allow-unauthenticated --port 8080 --quiet \
             --set-env-vars "^@^GCP_PROJECT_ID=${P}@NODE_ENV=production@ALLOWED_ORIGINS=${ORIGINS}"
-          URL=$(gcloud run services describe "$S" --project "$P" --region "$R" --format 'value(status.url)')
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
-          echo "API live at $URL"
+          # Cloud Run can hold more than one address for a service, and
+          # `status.url` has handed back a legacy one that 404s while the
+          # service itself was serving fine on another. So rather than trusting
+          # a single field, collect every address gcloud knows and keep the one
+          # that actually answers /healthz. The URL is written into the
+          # dashboard and the APK, so it has to be a working one.
+          CANDIDATES=$(
+            {
+              gcloud run services describe "$S" --project "$P" --region "$R" --format='value(urls)' 2>/dev/null | tr ';,' '\n\n'
+              gcloud run services describe "$S" --project "$P" --region "$R" --format='value(status.url)' 2>/dev/null
+              gcloud run services describe "$S" --project "$P" --region "$R" --format='value(status.address.url)' 2>/dev/null
+            } | tr -d ' ' | awk 'NF' | awk '!seen[$0]++'
+          )
+          echo "Addresses gcloud reports:"; echo "$CANDIDATES"
 
-      - name: Check it is answering
-        run: |
-          for i in 1 2 3 4 5; do
-            curl -fsS "${{ steps.backend.outputs.url }}/healthz" >/dev/null && { echo "Healthy."; exit 0; }
-            echo "Not ready (attempt $i)…"; sleep 10
+          URL=""
+          for attempt in 1 2 3 4 5 6; do
+            for c in $CANDIDATES; do
+              if curl -fsS --max-time 15 "$c/healthz" >/dev/null 2>&1; then
+                URL="$c"; break
+              fi
+            done
+            [ -n "$URL" ] && break
+            echo "None answering yet (attempt $attempt)…"; sleep 10
           done
-          echo "::error::Deployed but /healthz is not answering. Check the Cloud Run logs."
-          exit 1
+
+          if [ -z "$URL" ]; then
+            echo "::error::The service deployed but no reported address answers /healthz. Check the Cloud Run logs."
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "API live and answering at $URL"
 
       - name: Deploy the database rules and indexes
         env:
