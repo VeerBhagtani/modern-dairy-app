@@ -10,10 +10,11 @@ name: Deploy
 #   GCP_PROJECT_ID   the Google Cloud project for THIS product
 #   GCP_SA_KEY       a service-account JSON key holding:
 #                      Cloud Run Admin, Cloud Build Editor,
-#                      Artifact Registry Writer, Service Account User,
+#                      Artifact Registry Admin (writer cannot create the
+#                        container repository on a first deploy),
+#                      Service Account User,
 #                      Secret Manager Admin, Storage Admin,
-#                      Firebase Rules Admin, Firebase Hosting Admin,
-#                      Cloud Datastore Index Admin
+#                      Firebase Rules Admin, Cloud Datastore Index Admin
 #
 # Billing must be on, or Cloud Run and Firestore refuse.
 #

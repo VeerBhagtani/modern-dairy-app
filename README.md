@@ -77,9 +77,11 @@ gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
 
 gcloud iam service-accounts create github-deployer --display-name="GitHub deployer"
 sleep 20
-for R in run.admin cloudbuild.builds.editor artifactregistry.writer \
+# artifactregistry.admin, not .writer: a first deploy has to CREATE the
+# container repository, which writer cannot do.
+for R in run.admin cloudbuild.builds.editor artifactregistry.admin \
          iam.serviceAccountUser secretmanager.admin storage.admin \
-         firebaserules.admin firebasehosting.admin datastore.indexAdmin; do
+         firebaserules.admin datastore.indexAdmin; do
   gcloud projects add-iam-policy-binding $PROJECT \
     --member="serviceAccount:$SA" --role="roles/$R" --quiet >/dev/null && echo "ok: $R"
 done
