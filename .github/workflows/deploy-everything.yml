@@ -30,6 +30,15 @@ name: Deploy everything
 # Billing (the Blaze plan) must be on, or Cloud Run and Firestore will refuse.
 
 on:
+  # Bumping .github/deploy-now runs a deploy. That exists because a
+  # workflow_dispatch button only appears once the file is on the default
+  # branch, and this work is still on a feature branch — a push trigger runs
+  # from the branch being pushed, so the deploy does not have to wait for a
+  # merge. The path is a dedicated marker file and nothing else, so no ordinary
+  # commit can deploy by accident.
+  push:
+    paths:
+      - '.github/deploy-now'
   workflow_dispatch:
     inputs:
       region:
@@ -112,8 +121,8 @@ jobs:
         id: backend
         run: |
           PROJECT="${{ secrets.GCP_PROJECT_ID }}"
-          REGION="${{ github.event.inputs.region }}"
-          SERVICE="${{ github.event.inputs.service }}"
+          REGION="${{ github.event.inputs.region || 'asia-south1' }}"
+          SERVICE="${{ github.event.inputs.service || 'modern-dairy-api' }}"
 
           # The dashboard's browser origin must be allowed or every request
           # from it fails CORS. Firebase Hosting serves both of this project's
@@ -149,7 +158,7 @@ jobs:
 
       # ── 3. Firestore ─────────────────────────────────────────────────────
       - name: Deploy the Firestore rules and indexes
-        if: ${{ github.event.inputs.deploy_rules == 'true' }}
+        if: ${{ github.event.inputs.deploy_rules != 'false' }}
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
         run: |
@@ -190,7 +199,7 @@ jobs:
 
       # ── 5. websites ──────────────────────────────────────────────────────
       - name: Deploy the websites
-        if: ${{ github.event.inputs.deploy_hosting == 'true' }}
+        if: ${{ github.event.inputs.deploy_hosting != 'false' }}
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
         run: |

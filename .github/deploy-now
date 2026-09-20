@@ -1,0 +1,5 @@
+# Bump the number below and push to run the "Deploy everything" workflow.
+# It deploys the backend to Cloud Run, the Firestore rules and indexes, and
+# the websites. It refuses to start unless the GCP_PROJECT_ID and GCP_SA_KEY
+# repository secrets exist.
+deploy-run: 0
