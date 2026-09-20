@@ -125,6 +125,11 @@ jobs:
           echo "::error::Could not create the Artifact Registry repository. The deploy account needs roles/artifactregistry.admin."
           exit 1
 
+      - name: Deploy the database rules and indexes
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+        run: npx --yes firebase-tools@13 deploy --project "${{ steps.cfg.outputs.project }}" --only firestore:rules,firestore:indexes --non-interactive
+
       - name: Deploy the API
         id: backend
         run: |
@@ -213,11 +218,6 @@ jobs:
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "API live and answering at $URL"
-
-      - name: Deploy the database rules and indexes
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
-        run: npx --yes firebase-tools@13 deploy --project "${{ steps.cfg.outputs.project }}" --only firestore:rules,firestore:indexes --non-interactive
 
       # The dashboard ships with an empty API_BASE so no environment URL is ever
       # committed by hand. The deploy knows the real one, so it writes it in.
