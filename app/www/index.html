@@ -3,172 +3,173 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self' gap: https://ssl.gstatic.com; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self' https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self' blob:; img-src 'self' data: blob: https:; connect-src 'self' https:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>Modern Drivers</title>
+<link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css">
+<script src="vendor/maplibre/maplibre-gl-csp.js" defer></script>
 <style>
   :root{
-    --brand:#1B2A6B; --brand-dark:#101B49; --accent:#D7262F;
-    --ok:#1a7a4c; --ok-tint:#e2f3e9; --warn:#8a5f14; --warn-tint:#faf1de;
-    --bad:#b3261e; --bad-tint:#fbe4e2;
-    --bg:#f1f2ee; --surface:#fff; --line:#dee1db; --ink:#161b22; --ink-2:#4b5768;
-    --r:14px;
+    --navy:#1B2A6B; --navy-deep:#101B49; --accent:#D7262F;
+    --ok:#1a7a4c; --ok-tint:#e4f4eb; --warn:#8a5f14; --warn-tint:#fdf3df;
+    --bad:#b3261e; --bad-tint:#fceceb;
+    --bg:#f4f5f9; --surface:#fff; --line:#e0e3ec; --ink:#141824; --ink-2:#5a6478;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
        background:var(--bg);color:var(--ink);
-       padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);}
-  .wrap{max-width:520px;margin:0 auto;padding:16px 16px 40px;}
-  header{display:flex;align-items:center;gap:12px;padding:8px 0 16px;}
-  header img{width:44px;height:44px;object-fit:contain;border-radius:10px;background:#fff;}
-  header h1{font-size:1.15rem;margin:0;line-height:1.2;}
-  header p{margin:2px 0 0;font-size:.8rem;color:var(--ink-2);}
-  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:12px;}
-  .card h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2);margin:0 0 10px;}
-  label{display:block;font-size:.85rem;font-weight:600;margin:0 0 6px;}
-  input{width:100%;padding:13px 12px;border:1px solid var(--line);border-radius:10px;font-size:1.05rem;font-family:inherit;margin-bottom:14px;background:#fff;color:var(--ink);}
-  input[inputmode="text"]{letter-spacing:.12em;text-transform:uppercase;font-weight:700;}
-  button{cursor:pointer;font-family:inherit;font-size:1rem;font-weight:700;border:none;border-radius:12px;padding:14px 16px;width:100%;}
-  .btn-primary{background:var(--brand);color:#fff;}
-  .btn-primary:disabled{opacity:.5;}
-  .btn-quiet{background:transparent;color:var(--brand);font-weight:600;font-size:.9rem;padding:10px;}
-  .btn-outline{background:#fff;color:var(--brand);border:1.5px solid var(--brand);}
+       padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+       -webkit-font-smoothing:antialiased;}
 
-  /* The one button that matters. Big, unmistakable, hard to miss with gloves on. */
-  .start-btn{background:var(--brand);color:#fff;font-size:1.5rem;padding:34px 16px;border-radius:20px;letter-spacing:.02em;}
-  .start-btn:disabled{background:#9aa3bd;}
+  /* ── name screen ──────────────────────────────────────────────────── */
+  .intro{min-height:100vh;display:flex;flex-direction:column;justify-content:center;
+         padding:28px 24px calc(28px + env(safe-area-inset-bottom));
+         background:linear-gradient(165deg,var(--navy) 0%,var(--navy-deep) 100%);color:#fff;}
+  .intro img{width:88px;height:88px;object-fit:contain;border-radius:20px;margin:0 auto 22px;display:block;}
+  .intro h1{font-size:1.9rem;margin:0 0 6px;text-align:center;letter-spacing:-.02em;}
+  .intro p.sub{text-align:center;color:#b9c2e4;margin:0 0 32px;font-size:1rem;}
+  .intro label{display:block;font-size:.85rem;font-weight:700;color:#b9c2e4;margin-bottom:10px;
+               text-transform:uppercase;letter-spacing:.06em;}
+  .intro input{width:100%;padding:18px 16px;border:2px solid rgba(255,255,255,.22);border-radius:14px;
+               font-size:1.25rem;font-family:inherit;background:rgba(255,255,255,.1);color:#fff;}
+  .intro input::placeholder{color:rgba(255,255,255,.45);}
+  .intro input:focus{outline:none;border-color:#fff;background:rgba(255,255,255,.16);}
+  .intro button{width:100%;margin-top:20px;padding:19px;border:none;border-radius:14px;
+                background:#fff;color:var(--navy);font-size:1.15rem;font-weight:800;font-family:inherit;cursor:pointer;}
+  .intro button:disabled{opacity:.5;}
+  .intro .err{color:#ffc9c5;font-size:.92rem;font-weight:600;margin:14px 0 0;text-align:center;}
+  .intro .note{margin-top:26px;font-size:.82rem;color:#9aa6d0;line-height:1.6;text-align:center;}
+  .intro .note a{color:#fff;}
 
-  .status{border-radius:20px;padding:22px 18px;text-align:center;margin-bottom:12px;border:1px solid var(--line);background:var(--surface);}
-  .status .dot{width:14px;height:14px;border-radius:50%;display:inline-block;margin-right:8px;vertical-align:-1px;}
-  .status .big{font-size:1.25rem;font-weight:800;margin:0 0 6px;}
-  .status .sub{font-size:.9rem;color:var(--ink-2);margin:0;}
-  .status.on{background:var(--ok-tint);border-color:#bfe3cd;}
-  .status.on .dot{background:var(--ok);}
-  .status.warn{background:var(--warn-tint);border-color:#ecd9ac;}
+  /* ── main screen ──────────────────────────────────────────────────── */
+  .screen{display:flex;flex-direction:column;min-height:100vh;}
+  header{background:var(--navy);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:11px;}
+  header img{width:34px;height:34px;object-fit:contain;border-radius:8px;}
+  header .who{flex:1;min-width:0;}
+  header .who b{display:block;font-size:1rem;line-height:1.2;}
+  header .who span{font-size:.75rem;color:#b9c2e4;}
+
+  #map{flex:1;min-height:200px;background:#dfe3ee;}
+  .map-empty{flex:1;display:flex;align-items:center;justify-content:center;padding:30px;
+             text-align:center;color:var(--ink-2);font-size:.9rem;line-height:1.6;background:#e6e9f2;}
+
+  .panel{background:var(--surface);border-top:1px solid var(--line);
+         padding:16px 16px calc(18px + env(safe-area-inset-bottom));
+         box-shadow:0 -4px 20px rgba(20,24,36,.07);}
+
+  .status{display:flex;align-items:center;gap:11px;margin-bottom:14px;}
+  .status .dot{width:14px;height:14px;border-radius:50%;flex-shrink:0;background:#9aa3bd;}
+  .status.on .dot{background:var(--ok);animation:pulse 2s infinite;}
   .status.warn .dot{background:var(--warn);}
-  .status.off{background:#fff;}
-  .status.off .dot{background:#9aa3bd;}
-  .status.bad{background:var(--bad-tint);border-color:#f0c4c0;}
   .status.bad .dot{background:var(--bad);}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+  .status .txt b{display:block;font-size:1.02rem;line-height:1.25;}
+  .status .txt span{font-size:.82rem;color:var(--ink-2);line-height:1.4;}
 
-  .row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;font-size:.92rem;border-bottom:1px solid var(--line);}
-  .row:last-child{border-bottom:none;}
-  .row b{font-weight:600;color:var(--ink-2);}
-  .row span{text-align:right;}
-  .pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:.75rem;font-weight:700;}
-  .pill.ok{background:var(--ok-tint);color:var(--ok);}
-  .pill.warn{background:var(--warn-tint);color:var(--warn);}
-  .pill.bad{background:var(--bad-tint);color:var(--bad);}
-  .note{font-size:.85rem;color:var(--ink-2);line-height:1.5;}
-  .note ul{margin:8px 0 0;padding-left:18px;}
-  .note li{margin-bottom:6px;}
-  .err{color:var(--bad);font-size:.88rem;margin:-6px 0 12px;font-weight:600;}
-  .ok-msg{color:var(--ok);font-size:.88rem;margin:-6px 0 12px;font-weight:600;}
-  .banner{background:var(--brand-dark);color:#fff;border-radius:12px;padding:12px 14px;font-size:.85rem;line-height:1.5;margin-bottom:12px;}
-  .banner b{color:#fff;}
-  [hidden]{display:none!important;}
-  .center{text-align:center;}
-  .muted{color:var(--ink-2);font-size:.8rem;}
-  .sheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:flex-end;z-index:20;}
+  .start{width:100%;padding:30px 16px;border:none;border-radius:18px;background:var(--navy);color:#fff;
+         font-size:1.5rem;font-weight:800;font-family:inherit;cursor:pointer;letter-spacing:.01em;}
+  .start:active{background:var(--navy-deep);}
+  .start:disabled{background:#98a2c0;}
+
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;}
+  .stat{background:var(--bg);border-radius:12px;padding:11px 8px;text-align:center;}
+  .stat b{display:block;font-size:1.3rem;font-weight:800;line-height:1.1;letter-spacing:-.02em;}
+  .stat span{font-size:.7rem;color:var(--ink-2);text-transform:uppercase;letter-spacing:.04em;}
+
+  .rowbtns{display:flex;gap:10px;margin-top:12px;}
+  .rowbtns button{flex:1;padding:14px;border-radius:12px;font-size:.92rem;font-weight:700;
+                  font-family:inherit;cursor:pointer;border:1.5px solid var(--navy);background:#fff;color:var(--navy);}
+  .rowbtns button.on{background:var(--warn-tint);border-color:#e3c98d;color:var(--warn);}
+
+  .msg{border-radius:12px;padding:12px 14px;font-size:.86rem;line-height:1.55;margin-bottom:13px;}
+  .msg.warn{background:var(--warn-tint);color:var(--warn);}
+  .msg.bad{background:var(--bad-tint);color:var(--bad);}
+  .msg.info{background:#e8ebf7;color:var(--navy);}
+  .msg b{font-weight:800;}
+
+  .foot{margin-top:13px;text-align:center;font-size:.76rem;color:var(--ink-2);line-height:1.5;}
+  .link{background:none;border:none;color:var(--navy);font-size:.8rem;font-weight:700;
+        text-decoration:underline;cursor:pointer;font-family:inherit;padding:4px;}
+
+  .sheet-bg{position:fixed;inset:0;background:rgba(16,27,73,.55);display:none;align-items:flex-end;z-index:30;}
   .sheet-bg.on{display:flex;}
-  .sheet{background:#fff;border-radius:18px 18px 0 0;width:100%;max-height:85vh;overflow:auto;padding:20px 18px calc(20px + env(safe-area-inset-bottom));}
-  .sheet h3{margin:0 0 10px;font-size:1.05rem;}
+  .sheet{background:#fff;border-radius:20px 20px 0 0;width:100%;max-height:86vh;overflow:auto;
+         padding:22px 20px calc(22px + env(safe-area-inset-bottom));}
+  .sheet h3{margin:0 0 12px;font-size:1.12rem;}
+  .sheet ul{margin:10px 0 0;padding-left:20px;font-size:.88rem;line-height:1.7;color:var(--ink-2);}
+  .sheet li{margin-bottom:8px;}
+  .sheet button{width:100%;margin-top:18px;padding:14px;border-radius:12px;border:none;
+                background:var(--navy);color:#fff;font-weight:700;font-size:1rem;font-family:inherit;cursor:pointer;}
+  [hidden]{display:none!important;}
 </style>
 </head>
 <body>
-<div class="wrap">
 
+<!-- ── 1. Name. Nothing else. ─────────────────────────────────────────── -->
+<section id="screenName" class="intro" hidden>
+  <img id="introLogo" src="logo.png" alt="">
+  <h1 id="introTitle">Modern Drivers</h1>
+  <p class="sub">What is your name?</p>
+  <label for="inName">Your name</label>
+  <input id="inName" type="text" autocomplete="name" autocapitalize="words" placeholder="Ramesh Patil">
+  <p id="nameErr" class="err" hidden></p>
+  <button id="btnName">Continue</button>
+  <p class="note">
+    That is all we need.<br>
+    <button class="link" id="btnWhy" style="color:#fff">Why does this app use my location?</button>
+  </p>
+</section>
+
+<!-- ── 2. Start Ride, live map ────────────────────────────────────────── -->
+<section id="screenMain" class="screen" hidden>
   <header>
-    <img id="brandLogo" src="logo.png" alt="">
-    <div>
-      <h1 id="brandName">Modern Drivers</h1>
-      <p id="brandCompany">Modern Dairy, Pune</p>
+    <img src="logo.png" alt="">
+    <div class="who">
+      <b id="hName">—</b>
+      <span id="hCode">Modern Drivers</span>
     </div>
+    <button class="link" id="btnWhy2" style="color:#b9c2e4">Info</button>
   </header>
 
-  <!-- ── Sign in: name and phone number, and nothing else ──────────── -->
-  <section id="screenEnrol" hidden>
-    <div class="card">
-      <h2>Your details</h2>
-      <label for="inName">Your name</label>
-      <input id="inName" type="text" autocomplete="name" placeholder="e.g. Ramesh Patil"
-             style="letter-spacing:normal;text-transform:none;font-weight:400">
-      <label for="inPhone">Your mobile number</label>
-      <input id="inPhone" type="tel" inputmode="numeric" autocomplete="tel" maxlength="10"
-             placeholder="10 digits"
-             style="letter-spacing:.08em;text-transform:none;font-weight:600">
-      <p id="enrolErr" class="err" hidden></p>
-      <button id="btnEnrol" class="btn-primary">Start using the app</button>
-      <p class="muted center" style="margin-top:14px">
-        That is all. No password, nothing to remember.
-      </p>
-    </div>
-    <div class="card">
-      <h2>Before you start</h2>
-      <div class="note" id="enrolNotice"></div>
-    </div>
-  </section>
+  <div id="map"></div>
+  <div id="mapEmpty" class="map-empty">
+    The map appears here once your ride starts.
+  </div>
 
-  <!-- ── Main ──────────────────────────────────────────────────────── -->
-  <section id="screenMain" hidden>
+  <div class="panel">
+    <div id="notice" class="msg info" hidden></div>
 
-    <div id="statusCard" class="status off">
-      <p class="big"><span class="dot"></span><span id="statusText">Not tracking</span></p>
-      <p class="sub" id="statusSub">Press Start Ride when you leave Modern Dairy.</p>
+    <div class="status" id="status">
+      <span class="dot"></span>
+      <span class="txt"><b id="stTitle">Not tracking</b><span id="stSub">Press Start Ride when you leave.</span></span>
     </div>
 
-    <div id="stoppedBanner" class="banner" hidden></div>
-
-    <button id="btnStart" class="start-btn">Start Ride</button>
-    <p id="startErr" class="err center" style="margin-top:10px" hidden></p>
-
-    <div id="activeBox" hidden>
-      <div class="card" style="margin-top:12px">
-        <h2>This ride</h2>
-        <div class="row"><b>Started</b><span id="rideStarted">—</span></div>
-        <div class="row"><b>Running for</b><span id="rideFor">—</span></div>
-        <div class="row"><b>Points sent</b><span id="ridePoints">—</span></div>
-        <div class="row"><b>Waiting to send</b><span id="rideQueued">0</span></div>
-        <div class="row"><b>Last position</b><span id="rideLast">—</span></div>
-      </div>
-
-      <div class="card">
-        <h2>Personal trip</h2>
-        <p class="note" id="personalState">Mark the stretch you are doing your own Porter work, so it is not counted as Modern Dairy kilometres.</p>
-        <button id="btnPersonal" class="btn-outline" style="margin-top:10px">Start a personal stretch</button>
+    <div id="statsBox" hidden>
+      <div class="stats">
+        <div class="stat"><b id="stKm">0.0</b><span>km</span></div>
+        <div class="stat"><b id="stTime">0m</b><span>running</span></div>
+        <div class="stat"><b id="stPts">0</b><span>points</span></div>
       </div>
     </div>
 
-    <div class="card">
-      <h2>Phone health</h2>
-      <div class="row"><b>Location permission</b><span id="hPerm">—</span></div>
-      <div class="row"><b>GPS</b><span id="hGps">—</span></div>
-      <div class="row"><b>Network</b><span id="hNet">—</span></div>
-      <div class="row"><b>Last sent to office</b><span id="hSync">—</span></div>
-      <button id="btnFix" class="btn-quiet" hidden>Fix location permission</button>
+    <button id="btnStart" class="start">Start Ride</button>
+    <p id="startErr" class="err" style="color:var(--bad);text-align:center;font-size:.88rem;font-weight:600;margin:12px 0 0" hidden></p>
+
+    <div id="rideBtns" class="rowbtns" hidden>
+      <button id="btnPersonal">Personal trip</button>
+      <button id="btnCentre">Centre map</button>
     </div>
 
-    <div class="card">
-      <h2>Account</h2>
-      <div class="row"><b>Name</b><span id="accName">—</span></div>
-      <div class="row"><b>Driver ID</b><span id="accCode">—</span></div>
-      <div class="row"><b>Mobile</b><span id="accPhone">—</span></div>
-      <button id="btnNotice" class="btn-quiet">Why is my location tracked?</button>
-    </div>
-
-    <p class="muted center" id="stopRule">Only the Modern Dairy office can stop a ride.</p>
-  </section>
-
-  <section id="screenLoading" class="center" style="padding-top:60px">
-    <p class="muted">Loading…</p>
-  </section>
-</div>
+    <p class="foot" id="footNote">Only the office can stop a ride.</p>
+  </div>
+</section>
 
 <div class="sheet-bg" id="sheetBg">
   <div class="sheet">
     <h3 id="sheetTitle"></h3>
-    <div id="sheetBody" class="note"></div>
-    <div id="sheetActions" style="margin-top:16px"></div>
-    <button class="btn-quiet" id="sheetClose" style="margin-top:6px">Close</button>
+    <div id="sheetBody"></div>
+    <button id="sheetClose">Close</button>
   </div>
 </div>
 

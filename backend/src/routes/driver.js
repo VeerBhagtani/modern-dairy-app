@@ -13,7 +13,7 @@ const router = require('express').Router();
 const repo = require('../services/repo');
 const { issueDriverTokens, verifyDriverToken, requireDriver } = require('../middleware/driverAuth');
 const { registerLimiter, gpsIngestLimiter, writeLimiter } = require('../middleware/rateLimit');
-const { isValidId, isValidPhone, isBoundedString, isOptionalBoundedString, hasForbiddenKeys } = require('../middleware/validate');
+const { isValidId, isBoundedString, isOptionalBoundedString, hasForbiddenKeys } = require('../middleware/validate');
 const { normaliseIncomingPoint } = require('../drivers/validation');
 const { ALERT } = require('../drivers/alerts');
 
@@ -35,32 +35,27 @@ const PRIVACY_NOTICE = {
   ],
 };
 
-// POST /driver/register { name, phone, deviceId, appVersion }
+// POST /driver/register { name, deviceId, appVersion }
 //
-// The whole of signing in. The driver types their name and their phone number
-// and that is the last thing they ever type in this app.
+// The entire sign-in. A name, and the id the app generated for this phone.
 router.post('/register', registerLimiter, async (req, res) => {
-  const { name, phone, deviceId, appVersion } = req.body || {};
+  const { name, deviceId, appVersion } = req.body || {};
   if (hasForbiddenKeys(req.body)) return res.status(400).json({ success: false, message: 'Invalid request' });
   if (!isBoundedString(name, { min: 1, max: 80 })) {
     return res.status(400).json({ success: false, message: 'Please enter your name.' });
   }
-  if (!isValidPhone(phone)) {
-    return res.status(400).json({ success: false, message: 'Please enter your 10-digit mobile number.' });
-  }
   if (!isValidId(deviceId)) return res.status(400).json({ success: false, message: 'Invalid device id' });
 
   try {
-    const { driver, created, deviceChanged } = await repo.registerDriver({ name, phone, deviceId, appVersion });
+    const { driver, created } = await repo.registerDriver({ name, deviceId, appVersion });
     const tokens = await issueDriverTokens(driver.id, deviceId);
     const { config } = await repo.getConfig();
     res.json({
       success: true,
       data: {
-        driver: { id: driver.id, name: driver.name, driverCode: driver.driverCode, phone: driver.phone },
+        driver: { id: driver.id, name: driver.name, driverCode: driver.driverCode },
         ...tokens,
         created,
-        deviceChanged,
         tracking: { sampleIntervalSec: config.sampleIntervalSec, maxBatchPoints: config.maxBatchPoints },
         privacyNotice: PRIVACY_NOTICE,
       },

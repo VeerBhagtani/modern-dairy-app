@@ -127,9 +127,8 @@ test('registration stores no secret of any kind', () => {
   assert.ok(!/bcrypt/.test(REPO), 'the driver store should have no password hashing left in it');
   assert.ok(!/enrolment|codeHash/i.test(REPO.replace(/^.*no enrolment code.*$/m, '')),
     'no enrolment machinery should remain');
-  assert.ok(/const phoneId = /.test(REPO), 'the phone number should be the account id');
-  assert.ok(/C\.drivers\(\)\.doc\(id\)/.test(REPO),
-    'the driver document id must be the phone number, so two accounts for one number cannot exist');
+  assert.ok(/C\.drivers\(\)\.doc\(deviceId\)/.test(REPO),
+    'the phone is the account: the device id must be the document id, so one handset is always one driver');
 });
 
 test('the driver list carries nothing that is not safe to show the office', () => {
@@ -145,23 +144,29 @@ test('a deactivated driver cannot register their way back in', () => {
   assert.ok(/INACTIVE/.test(fn));
 });
 
-test('a driver appearing on a different phone is recorded and surfaced', () => {
-  // With no code to gate it, the compensating control is that the office SEES
-  // every device change. If that is ever removed, the trade-off documented in
-  // the repo comment stops holding.
+test('a phone changing hands is recorded, not silently overwritten', () => {
+  // With no code and no password, the compensating control is that the office
+  // SEES who is driving. A handset passed to a different driver keeps working —
+  // that is the point — but the previous name is kept and the change is logged.
   const i = REPO.indexOf('async function registerDriver');
-  const fn = REPO.slice(i, i + 2200);
-  assert.ok(/device_changed/.test(fn), 'a device change must raise an event');
-  assert.ok(/raiseAlertOnce/.test(fn), 'and an alert the office will see');
+  const fn = REPO.slice(i, i + 2400);
+  assert.ok(/name_changed/.test(fn), 'a name change must raise an event');
+  assert.ok(/previousNames/.test(fn), 'and the previous name must be kept');
 });
 
-test('registration validates the name and the phone number server-side', () => {
+test('registration validates its input server-side', () => {
   const i = DRIVER_ROUTES.indexOf("router.post('/register'");
   const route = DRIVER_ROUTES.slice(i, i + 1400);
-  assert.ok(/isBoundedString\(name/.test(route));
-  assert.ok(/isValidPhone\(phone\)/.test(route));
-  assert.ok(/isValidId\(deviceId\)/.test(route));
-  assert.ok(/hasForbiddenKeys/.test(route), 'and guards against prototype-polluting keys');
+  assert.ok(/isBoundedString\(name/.test(route), 'the name must be bounded');
+  assert.ok(/isValidId\(deviceId\)/.test(route), 'the device id reaches a Firestore path, so it must be validated');
+  assert.ok(/hasForbiddenKeys/.test(route), 'and prototype-polluting keys must be rejected');
+});
+
+test('an account the office switched off cannot register its way back in', () => {
+  const i = REPO.indexOf('async function registerDriver');
+  const fn = REPO.slice(i, i + 1200);
+  assert.ok(/d\.status !== 'active'/.test(fn));
+  assert.ok(/INACTIVE/.test(fn));
 });
 
 // ── rate limiting ────────────────────────────────────────────────────────
@@ -221,13 +226,26 @@ test('no credential is hardcoded in the new subsystem', () => {
   }
 });
 
-test('the driver app ships with no server address and refuses to invent one', () => {
+test('the driver app ships with no server address and never invents a position', () => {
   const cfg = read('app/www/config.js');
   assert.match(cfg, /API_BASE:\s*''/, 'the committed config must not carry an environment URL');
+
   const app = read('app/www/app.js');
-  assert.ok(/no server address/.test(app), 'the app must say so rather than pretending to track');
-  assert.ok(!/DEMO|fakeGps|seedPoints|Math\.random\(\)\s*\*\s*0\.0/.test(app),
+  // With no server the app records locally rather than refusing — but it must
+  // say so, and it must never manufacture a coordinate to fill the screen.
+  assert.ok(/Not connected to the office/.test(app), 'it must tell the driver nothing has been sent');
+  assert.ok(!/DEMO|fakeGps|seedPoints|simulateRoute/.test(app),
     'the driver app must never synthesise GPS data');
+  // Every stored point comes from the OS callback and nowhere else.
+  assert.ok(/onLocation\(location, error\)/.test(app));
+  assert.ok(/lat: location\.latitude/.test(app) && /lng: location\.longitude/.test(app));
+});
+
+test('the map provider is free and keyless, and named in exactly one place', () => {
+  const cfg = read('app/www/config.js');
+  assert.ok(/tiles\.openfreemap\.org/.test(cfg), 'OpenFreeMap needs no API key and no billing account');
+  assert.ok(!/api[_-]?key|access[_-]?token|mapbox|googleapis\.com\/maps/i.test(cfg),
+    'no paid or keyed map provider should appear in the app config');
 });
 
 test('secrets reach the backend through Secret Manager, not the environment', () => {

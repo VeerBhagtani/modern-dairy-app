@@ -123,27 +123,23 @@ async function applyAlertDiff({ toRaise, toResolve }, resolvedBy = 'system') {
 // Drivers
 // ---------------------------------------------------------------------------
 
-// Drivers identify themselves with their name and phone number. There is no
-// password and no enrolment code: a code was the previous design and it was
-// wrong for this fleet — it made the office the bottleneck for every new phone
-// and every replaced handset, for no security the office does not already have
-// by simply looking at the driver list.
+// A driver types their NAME. That is the whole sign-in.
 //
-// The phone number IS the account. It is the document id, so two accounts for
-// one number cannot exist, and a driver who reinstalls or changes handset just
-// types the same number again and carries on.
+// The phone is the account: the device id the app generates on first launch is
+// the document id, so the same handset is always the same driver and a name is
+// a label on it rather than a credential. Two drivers called Ramesh on two
+// phones are two accounts, which is correct.
 //
-// The honest trade-off, stated plainly because it should be a decision and not
-// an accident: anyone who knows a driver's number could register as them on
-// another phone. What stops that mattering is that the office sees every
-// registration and every device change in the dashboard, can deactivate an
-// account instantly, and that there is nothing to steal here — a false
-// registration produces location data attributed to a driver who will be
-// visibly in two places. If that ever stops being acceptable, an SMS one-time
-// code on first registration is the upgrade, and nothing else has to change.
+// There is no password, no code and no phone number, because none of them were
+// earning their place. A code made the office the bottleneck for every new
+// handset. A phone number is not a secret either — it just looked like one.
+// What actually protects this is the office: it sees every registration in the
+// dashboard and can switch any account off instantly, and the data a false
+// registration would produce is a journey attributed to someone who is visibly
+// somewhere else. If that ever stops being enough, an SMS code at registration
+// is the upgrade and nothing else has to change.
 
-// Driver codes are assigned automatically, so the office never has to think of
-// one. MD-001, MD-002, ... in registration order.
+// Driver codes are assigned automatically so the office never invents one.
 async function nextDriverCode() {
   const counterRef = db.collection('counters').doc('driver_code');
   return db.runTransaction(async (tx) => {
@@ -154,57 +150,41 @@ async function nextDriverCode() {
   });
 }
 
-const phoneId = (phone) => String(phone).replace(/\D/g, '').slice(-10);
-
 /**
- * Register, or re-attach an existing driver on a new phone.
- * Returns { driver, created, deviceChanged }.
+ * Register this phone, or update the name on one already known.
+ * @returns {{ driver, created }}
  */
-async function registerDriver({ name, phone, deviceId, appVersion }) {
-  const id = phoneId(phone);
-  const ref = C.drivers().doc(id);
+async function registerDriver({ name, deviceId, appVersion }) {
+  const ref = C.drivers().doc(deviceId);
   const now = Date.now();
-
   const existing = await ref.get();
+
   if (existing.exists) {
     const d = existing.data();
     if (d.status !== 'active') {
-      throw Object.assign(new Error('This account has been deactivated. Contact the office.'), { code: 'INACTIVE' });
+      throw Object.assign(new Error('This phone has been switched off by the office.'), { code: 'INACTIVE' });
     }
-    const deviceChanged = !!d.deviceId && d.deviceId !== deviceId;
-    await ref.update({
-      deviceId,
-      lastSeenAt: now,
-      appVersion: appVersion || null,
-      // The office's record of the name stays authoritative; what the driver
-      // typed is kept beside it so a mismatch is visible rather than silently
-      // overwriting either one.
-      ...(String(d.name || '').trim().toLowerCase() !== String(name).trim().toLowerCase()
-        ? { selfReportedName: String(name).trim().slice(0, 80) }
-        : {}),
-    });
-    if (deviceChanged) {
-      await writeEvent({ driverId: id, kind: 'device_changed', detail: { from: d.deviceId, to: deviceId } });
-      await raiseAlertOnce({
-        key: `device_changed|${id}|${deviceId}`,
-        kind: 'device_changed',
-        severity: 'info',
-        driverId: id,
-        detail: `${d.name || id} signed in on a different phone.`,
-      });
+    const patch = { lastSeenAt: now, appVersion: appVersion || null };
+    // A name change is allowed — a phone gets handed to a different driver —
+    // but it is recorded, because "who was driving" is the whole point.
+    if (String(d.name || '').trim() !== String(name).trim()) {
+      patch.name = String(name).trim().slice(0, 80);
+      patch.previousNames = [...(d.previousNames || []), { name: d.name, until: now }].slice(-10);
+      await writeEvent({ driverId: deviceId, kind: 'name_changed', detail: { from: d.name, to: patch.name } });
     }
-    return { driver: { id, ...d, deviceId }, created: false, deviceChanged };
+    await ref.update(patch);
+    return { driver: { id: deviceId, ...d, ...patch }, created: false };
   }
 
   const driverCode = await nextDriverCode();
   const driver = {
     name: String(name).trim().slice(0, 80),
-    phone: id,
     driverCode,
+    deviceId,
+    phone: null,
     vehicleId: null,
     status: 'active',
     activeRideId: null,
-    deviceId,
     appVersion: appVersion || null,
     consentAcceptedAt: now,
     createdAt: now,
@@ -213,9 +193,9 @@ async function registerDriver({ name, phone, deviceId, appVersion }) {
     deactivatedAt: null,
   };
   await ref.set(driver);
-  await writeEvent({ driverId: id, kind: 'driver_registered', detail: { name: driver.name, driverCode } });
-  await writeAudit({ adminId: 'system:self-registration', action: 'driver.register', target: id, after: { name: driver.name, driverCode } });
-  return { driver: { id, ...driver }, created: true, deviceChanged: false };
+  await writeEvent({ driverId: deviceId, kind: 'driver_registered', detail: { name: driver.name, driverCode } });
+  await writeAudit({ adminId: 'system:self-registration', action: 'driver.register', target: deviceId, after: { name: driver.name, driverCode } });
+  return { driver: { id: deviceId, ...driver }, created: true };
 }
 
 async function getDriver(driverId) {
@@ -513,7 +493,7 @@ module.exports = {
   C, dayKeyFor,
   getConfig, setConfigOverrides,
   writeAudit, writeEvent, openAlerts, applyAlertDiff, raiseAlertOnce,
-  registerDriver, getDriver, listDrivers, updateDriver, nextDriverCode, phoneId,
+  registerDriver, getDriver, listDrivers, updateDriver, nextDriverCode,
   startRide, stopRide, getRide, activeRides, listRides,
   ingestPoints, loadPoints,
   loadPlaces, invalidatePlaceCache,

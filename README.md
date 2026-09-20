@@ -11,7 +11,7 @@ Three parts:
 
 | | What it is |
 |---|---|
-| `app/` | The Android app a driver installs. Name, phone number, Start Ride. |
+| `app/` | The Android app a driver installs. Name, Start Ride, live map. |
 | `dashboard/` | The website the office uses. Live map, ride control, reports. |
 | `backend/` | The API both talk to. |
 
@@ -19,8 +19,8 @@ Three parts:
 
 ## How it works, in one page
 
-**The driver** installs the app, types their **name and mobile number** once,
-and presses **Start Ride** at the beginning of the day. No password, no code,
+**The driver** installs the app, types their **name** once, and presses
+**Start Ride** at the beginning of the day. No password, no code,
 nothing to remember. Their phone records the journey until the office stops it
 — a driver cannot stop their own ride, and the server enforces that, so a
 modified app changes nothing.
@@ -119,8 +119,11 @@ Add a repository secret `DRIVERS_API_BASE` with the API URL the deploy printed,
 then Actions → **Build and publish the app**. The APK lands on a Release page
 you can open on a phone.
 
-Without that secret the app still builds, but it refuses to register a driver
-or start a ride rather than pretending to record. That is deliberate.
+**The app works before any of this.** With no server configured it records the
+route on the phone, draws it live on the map, and says plainly that nothing has
+reached the office yet. Real GPS, held locally — not a demo, and no coordinate
+is ever invented. Once `DRIVERS_API_BASE` is set and the APK rebuilt, it sends
+everything it has saved.
 
 ### 5. Add your locations
 
@@ -131,7 +134,7 @@ In the dashboard, under **Locations**:
 3. Optionally **Deliveries → Import orders** — this is what turns *likely*
    kilometres into *verified* ones.
 
-Drivers need nothing from you. They install the app and register themselves;
+Drivers need nothing from you. They install the app, type their name, and register themselves;
 they appear in the Drivers list, where you can switch off anyone who should not
 be there.
 
@@ -169,7 +172,7 @@ Gradle config to re-sync on every Capacitor bump.
 ## Tests
 
 ```bash
-npm test      # 114 tests, no database and no network needed
+npm test      # 116 tests, no database and no network needed
 ```
 
 The processing engine in `backend/src/drivers/` is pure — no Firestore, no
