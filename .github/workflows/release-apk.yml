@@ -1,13 +1,26 @@
 name: Publish downloadable APK
 
-# Builds the app(s) and attaches the APK — plus the app's index.html — to a
-# GitHub Release, so anyone with access to the repository can download them
-# from a stable link instead of digging through Actions artifacts (which
-# expire and need a login to fetch).
+# Builds the apps and puts the APKs — plus the admin website's index.html — on
+# a GitHub Release page, so they can be downloaded from a plain link with no
+# GitHub login and no expiry. (Actions artifacts need a login and vanish after
+# 90 days, which is no good for handing an APK to a driver.)
 #
-# Run it from the Actions tab: "Publish downloadable APK" → Run workflow.
+# It runs automatically whenever this workflow or an app changes on the
+# branches listed below, and can also be run by hand from the Actions tab.
 
 on:
+  push:
+    branches:
+      - master
+      - main
+      - claude/modern-drivers-dairy-platform-ezt936
+    paths:
+      - 'www/**'
+      - 'legal/admin/**'
+      - 'driver-app/**'
+      - 'android/**'
+      - 'scripts/**'
+      - '.github/workflows/release-apk.yml'
   workflow_dispatch:
     inputs:
       app:
@@ -15,27 +28,29 @@ on:
         type: choice
         required: true
         default: 'both'
-        options:
-          - both
-          - modern-dairy      # the customer ordering app (www/, android/)
-          - modern-drivers    # the driver tracking app (driver-app/)
+        options: [both, modern-dairy, modern-drivers]
       tag:
-        description: 'Release tag (e.g. apk-2026-09-20). Leave blank to use the run number.'
+        description: 'Release tag (blank = auto)'
         required: false
         default: ''
-      prerelease:
-        description: 'Mark the release as a pre-release'
-        type: boolean
-        required: false
-        default: true
 
 permissions:
-  contents: write        # needed to create the release and upload the assets
+  contents: write        # create the release and upload the files
+
+# A push while a build is running supersedes it, so the latest release always
+# reflects the latest code rather than whichever job happened to finish last.
+concurrency:
+  group: release-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # On a push there are no workflow inputs, so everything gets built.
+  APP: ${{ github.event.inputs.app || 'both' }}
 
 jobs:
   # ── Modern Dairy: the customer ordering app ─────────────────────────────
   modern-dairy:
-    if: ${{ github.event.inputs.app == 'both' || github.event.inputs.app == 'modern-dairy' }}
+    if: ${{ (github.event.inputs.app || 'both') == 'both' || github.event.inputs.app == 'modern-dairy' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -51,10 +66,10 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # The OTP and GST credentials are injected at build time from repository
-      # secrets; the committed www/secrets.js stays empty. A build with the
-      # secrets missing still produces a working APK — those features simply
-      # report that they are not configured, which is the honest behaviour.
+      # OTP and GST credentials come from repository secrets at build time; the
+      # committed www/secrets.js stays empty. With the secrets absent the build
+      # still succeeds and produces a DEMO-mode app — deliberately, so a
+      # misconfigured run can never ship a half-live build.
       - name: Inject build-time secrets
         env:
           OTP_CUSTOMER_ID: ${{ secrets.OTP_CUSTOMER_ID }}
@@ -71,13 +86,15 @@ jobs:
           chmod +x android/gradlew
           cd android && ./gradlew assembleDebug --no-daemon
 
-      - name: Stage the downloadable files
+      - name: Stage the files
         run: |
           mkdir -p out
           cp android/app/build/outputs/apk/debug/app-debug.apk out/modern-dairy.apk
-          # The app itself is one HTML file; ship the copy that went into this
-          # build so the APK and the index can never disagree.
-          cp www/index.html out/modern-dairy-index.html
+          # The admin website. It is a single self-contained HTML file, so this
+          # is the whole thing — open it in a browser and it works.
+          cp legal/admin/index.html out/admin-website.html
+          # The customer app's own front end, as built into this APK.
+          cp www/index.html out/modern-dairy-app.html
           ls -lh out
 
       - uses: actions/upload-artifact@v4
@@ -88,7 +105,7 @@ jobs:
 
   # ── Modern Drivers: the driver tracking app ─────────────────────────────
   modern-drivers:
-    if: ${{ github.event.inputs.app == 'both' || github.event.inputs.app == 'modern-drivers' }}
+    if: ${{ (github.event.inputs.app || 'both') == 'both' || github.event.inputs.app == 'modern-drivers' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -107,22 +124,21 @@ jobs:
 
       # The driver app refuses to start a ride without a backend address, on
       # purpose — an APK that silently records nothing would be worse than one
-      # that says it is not configured. If DRIVERS_API_BASE is not set yet, the
-      # build still runs so the app can be installed and looked at, and the
-      # release notes say plainly that it cannot track until it is set.
+      # that says it is not set up. Without the secret it still builds, so the
+      # screens can be seen, and the release notes say plainly what it can't do.
       - name: Point the build at the backend
         id: apibase
+        working-directory: driver-app
         env:
           API_BASE: ${{ secrets.DRIVERS_API_BASE }}
         run: |
           if [ -z "$API_BASE" ]; then
-            echo "::warning::DRIVERS_API_BASE is not set. The APK will install and open, but it cannot enrol a driver or start a ride until a backend URL is configured and the APK is rebuilt."
+            echo "::warning::DRIVERS_API_BASE is not set — this driver APK cannot enrol a driver or start a ride."
             echo "configured=false" >> "$GITHUB_OUTPUT"
           else
             node ../scripts/set-drivers-api-base.js "$API_BASE"
             echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
-        working-directory: driver-app
 
       - name: Generate the native Android project
         working-directory: driver-app
@@ -141,27 +157,28 @@ jobs:
           chmod +x android/gradlew
           cd android && ./gradlew assembleDebug --no-daemon
 
-      - name: Stage the downloadable files
+      - name: Stage the files
         run: |
           mkdir -p out
           cp driver-app/android/app/build/outputs/apk/debug/app-debug.apk out/modern-drivers.apk
-          cp driver-app/www/index.html out/modern-drivers-index.html
-          if [ "${{ steps.apibase.outputs.configured }}" = "false" ]; then
-            echo "NOT_CONFIGURED" > out/modern-drivers-NO-BACKEND-CONFIGURED.txt
-          fi
+          cp legal/drivers/index.html out/drivers-dashboard.html
+          echo "${{ steps.apibase.outputs.configured }}" > out/.drivers-configured
           ls -lh out
 
       - uses: actions/upload-artifact@v4
         with:
           name: modern-drivers-build
-          path: out/*
+          path: |
+            out/*
+            out/.drivers-configured
+          include-hidden-files: true
           if-no-files-found: error
 
-  # ── Publish ─────────────────────────────────────────────────────────────
+  # ── Publish one download page ───────────────────────────────────────────
   release:
     needs: [modern-dairy, modern-drivers]
-    # Runs even when one app was not selected, so a single-app build still
-    # publishes. It does NOT run if a selected build actually failed.
+    # Publishes whatever built. Skipped jobs are fine (a single-app run still
+    # publishes); a genuine failure is not.
     if: ${{ always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     runs-on: ubuntu-latest
     steps:
@@ -169,59 +186,78 @@ jobs:
         with:
           path: staged
 
-      - name: Collect the assets
+      - name: Collect the files
         id: collect
         run: |
           mkdir -p release
-          find staged -type f -exec cp {} release/ \; || true
-          ls -lh release
-          if [ -f release/modern-drivers-NO-BACKEND-CONFIGURED.txt ]; then
-            rm release/modern-drivers-NO-BACKEND-CONFIGURED.txt
-            echo "drivers_note=true" >> "$GITHUB_OUTPUT"
+          find staged -type f ! -name '.drivers-configured' -exec cp {} release/ \;
+          if [ -f staged/modern-drivers-build/.drivers-configured ]; then
+            echo "drivers_configured=$(cat staged/modern-drivers-build/.drivers-configured)" >> "$GITHUB_OUTPUT"
           fi
+          ls -lh release
           if [ -z "$(ls -A release)" ]; then
-            echo "::error::No files were produced — nothing to publish."
+            echo "::error::Nothing was produced — refusing to publish an empty release."
             exit 1
           fi
 
-      - name: Work out the tag
-        id: tag
+      - name: Write the download page text
+        id: notes
         run: |
           TAG="${{ github.event.inputs.tag }}"
-          if [ -z "$TAG" ]; then TAG="apk-$(date +%Y%m%d)-${{ github.run_number }}"; fi
+          if [ -z "$TAG" ]; then TAG="download-$(date +%Y%m%d)-${{ github.run_number }}"; fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Write the release notes
-        run: |
           {
-            echo "Built from \`${{ github.ref_name }}\` at commit \`${{ github.sha }}\`."
+            echo "**Download the files below.** Scroll to the bottom of this page — they are under **Assets**."
             echo
-            echo "## Downloads"
+            echo "| File | What it is | How to use it |"
+            echo "|---|---|---|"
+            [ -f release/modern-dairy.apk ] && echo "| \`modern-dairy.apk\` | The Modern Dairy ordering app for Android | Open this link on an Android phone, tap the file, allow \"install unknown apps\" once, install. Works straight away. |"
+            [ -f release/admin-website.html ] && echo "| \`admin-website.html\` | The admin website, one self-contained file | Download and open it in Chrome. It is the same page as modern-dairy-pune.web.app/admin. |"
+            [ -f release/modern-dairy-app.html ] && echo "| \`modern-dairy-app.html\` | The ordering app's screens as one HTML file | For reference — the exact front end inside that APK. |"
+            [ -f release/modern-drivers.apk ] && echo "| \`modern-drivers.apk\` | The Modern Drivers tracking app for Android | Install the same way. **See the warning below before handing it to a driver.** |"
+            [ -f release/drivers-dashboard.html ] && echo "| \`drivers-dashboard.html\` | The driver tracking dashboard page | For reference. It needs the other files in \`legal/drivers/\` to run. |"
             echo
-            echo "| File | What it is |"
-            echo "|---|---|"
-            [ -f release/modern-dairy.apk ] && echo "| \`modern-dairy.apk\` | The customer ordering app. Debug build — install it by allowing \"install unknown apps\" once. |"
-            [ -f release/modern-dairy-index.html ] && echo "| \`modern-dairy-index.html\` | The ordering app's single-file front end, exactly as built into that APK. |"
-            [ -f release/modern-drivers.apk ] && echo "| \`modern-drivers.apk\` | The Modern Drivers tracking app. Debug build. |"
-            [ -f release/modern-drivers-index.html ] && echo "| \`modern-drivers-index.html\` | The driver app's front end. |"
+            echo "## Installing an APK on Android"
             echo
-            echo "## Before you install"
+            echo "1. Open this page in Chrome **on the phone**."
+            echo "2. Tap the \`.apk\` file under Assets. Chrome will warn that this file type can harm your device — that warning appears for every APK not from the Play Store. Tap **Download anyway**."
+            echo "3. Tap the downloaded file. Android asks to allow installing from Chrome — allow it once."
+            echo "4. Install."
             echo
-            echo "- These are **debug** builds, signed with the debug keystore. They install side by side with a Play build and are not suitable for the Play Store."
-            echo "- Android will warn about installing outside the Play Store. That warning is correct and expected for a directly distributed APK."
-            if [ "${{ steps.collect.outputs.drivers_note }}" = "true" ]; then
+            echo "These are **debug** builds. They install alongside a Play Store version rather than replacing it."
+            if [ "${{ steps.collect.outputs.drivers_configured }}" = "false" ]; then
               echo
-              echo "> **Modern Drivers has no backend address in this build.** It will install and open, but it cannot enrol a driver or start a ride. Set the \`DRIVERS_API_BASE\` repository secret to the deployed Cloud Run URL and run this workflow again."
+              echo "## ⚠️ About modern-drivers.apk"
+              echo
+              echo "**It installs and opens, but it cannot track anything yet.** The tracking backend is not deployed, so the app has no server to talk to — it will not enrol a driver or start a ride. It refuses rather than pretending to record, which is deliberate."
+              echo
+              echo "To make it work: deploy the backend to Cloud Run, add a repository secret \`DRIVERS_API_BASE\` with that URL, and this page will rebuild with a working APK."
             fi
+            echo
+            echo "---"
+            echo "Built from \`${{ github.ref_name }}\` at commit \`${{ github.sha }}\`."
           } > NOTES.md
           cat NOTES.md
 
-      - name: Publish the release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: ${{ steps.tag.outputs.tag }}
-          body_path: NOTES.md
-          prerelease: ${{ github.event.inputs.prerelease }}
-          files: release/*
-          fail_on_unmatched_files: true
+      # gh is preinstalled on the runner, so this needs no third-party action.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.notes.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "Downloads — ${{ steps.notes.outputs.tag }}" \
+            --notes-file NOTES.md \
+            release/*
+          echo "Published: $(gh release view "${{ steps.notes.outputs.tag }}" --repo "${{ github.repository }}" --json url -q .url)"
+
+      - name: Put the link in the run summary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          URL=$(gh release view "${{ steps.notes.outputs.tag }}" --repo "${{ github.repository }}" --json url -q .url)
+          echo "## Download page" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
