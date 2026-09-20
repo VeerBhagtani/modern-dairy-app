@@ -232,6 +232,28 @@ jobs:
             git push origin HEAD:"${{ github.ref_name }}"
           fi
 
+      # Nobody can sign in to the dashboard until an account exists, and there
+      # is no self-service signup for a system holding live location data. When
+      # the two secrets are set this creates the account; otherwise it says so
+      # and moves on. The password never leaves the secret: it is passed through
+      # the environment, GitHub masks it in the logs, and only its bcrypt hash
+      # reaches the database.
+      - name: Create the office login, if it has been configured
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+          GCP_PROJECT_ID: ${{ steps.cfg.outputs.project }}
+          ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+        run: |
+          if [ -z "$ADMIN_USERNAME" ] || [ -z "$ADMIN_PASSWORD" ]; then
+            echo "No ADMIN_USERNAME / ADMIN_PASSWORD secrets set — skipping."
+            echo "Nobody can sign in to the dashboard until they are."
+            exit 0
+          fi
+          cd backend
+          npm ci --omit=dev
+          npm run create-admin -- --user "$ADMIN_USERNAME" --name "Modern Dairy" --role admin
+
       # Republished here rather than left to the dashboard workflow: a push made
       # with the workflow's own token does not start another workflow, so
       # nothing else would pick the new address up.

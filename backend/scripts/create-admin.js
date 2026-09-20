@@ -53,15 +53,24 @@ function askPassword(prompt) {
 }
 
 (async () => {
-  const password = await askPassword('Password: ');
+  // ADMIN_PASSWORD lets the deploy create this account with nobody at a
+  // terminal. It is read from the environment rather than from an argument on
+  // purpose: arguments are visible to anyone who can list processes and they
+  // land in shell history. In CI it comes from a repository secret, which is
+  // masked in the logs — never from a commit and never from a workflow input,
+  // both of which are public on a public repository.
+  const fromEnv = process.env.ADMIN_PASSWORD;
+  const password = fromEnv || await askPassword('Password: ');
   if (password.length < 10) {
     console.error('\nUse at least 10 characters. This account can see where every driver is.');
     process.exit(1);
   }
-  const again = await askPassword('Again:    ');
-  if (password !== again) {
-    console.error('\nThe two passwords do not match.');
-    process.exit(1);
+  if (!fromEnv) {
+    const again = await askPassword('Again:    ');
+    if (password !== again) {
+      console.error('\nThe two passwords do not match.');
+      process.exit(1);
+    }
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
