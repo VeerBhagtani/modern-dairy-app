@@ -97,15 +97,16 @@ Add two repository secrets under **Settings → Secrets and variables → Action
 
 ### 2. Put the office dashboard online
 
-Actions → **Publish the office dashboard** → Run workflow. It publishes the site
-to GitHub Pages — free, no server — at:
+Actions → **Publish the office dashboard** → Run workflow. It pushes the site to
+a `gh-pages` branch, hosted free by GitHub Pages at:
 
 ```
 https://<your-github-username>.github.io/<repo>/
 ```
 
-The first run switches Pages on and can take a couple of minutes to appear. It
-re-publishes itself whenever `dashboard/` changes.
+**The first time only**, turn Pages on by hand — GitHub does not let a workflow
+do it: **Settings → Pages → Source: _Deploy from a branch_ → Branch `gh-pages`
+/ `(root)` → Save**. After that every change to `dashboard/` republishes itself.
 
 The site asks for the **server address** on its sign-in screen the first time
 and remembers it, so it works as soon as the API below is deployed, with no

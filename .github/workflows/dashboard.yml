@@ -58,15 +58,22 @@ jobs:
             "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" \
             gh-pages
 
+      # Switching Pages on for the first time is the one thing the workflow's
+      # own token is not allowed to do (GitHub refuses `POST /pages` with a
+      # GITHUB_TOKEN). So it tries, and if it cannot, it says which switch to
+      # flip rather than failing the run — the site is already pushed either way.
       - name: Switch GitHub Pages on, the first time only
+        id: pages
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh api "repos/${GITHUB_REPOSITORY}/pages" >/dev/null 2>&1; then
-            echo "Pages is already on."
+            echo "state=on" >> "$GITHUB_OUTPUT"
+          elif gh api -X POST "repos/${GITHUB_REPOSITORY}/pages" \
+                 -f "source[branch]=gh-pages" -f "source[path]=/" >/dev/null 2>&1; then
+            echo "state=turned-on" >> "$GITHUB_OUTPUT"
           else
-            gh api -X POST "repos/${GITHUB_REPOSITORY}/pages" \
-              -f "source[branch]=gh-pages" -f "source[path]=/"
+            echo "state=needs-a-click" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Where it is
@@ -74,9 +81,21 @@ jobs:
           OWNER="${GITHUB_REPOSITORY%%/*}"
           NAME="${GITHUB_REPOSITORY##*/}"
           {
-            echo "## The office dashboard is live"
-            echo
-            echo "https://${OWNER,,}.github.io/${NAME}/"
-            echo
-            echo "It can take a couple of minutes to appear the very first time."
+            if [ "${{ steps.pages.outputs.state }}" = "needs-a-click" ]; then
+              echo "## One switch left"
+              echo
+              echo "The dashboard is pushed to the \`gh-pages\` branch, but GitHub will not let"
+              echo "a workflow turn Pages on for the first time. Do it once, by hand:"
+              echo
+              echo "**Settings → Pages → Build and deployment → Source: _Deploy from a branch_ → Branch: \`gh-pages\` / \`(root)\` → Save**"
+              echo
+              echo "Then the site is at https://${OWNER,,}.github.io/${NAME}/ and every later"
+              echo "run updates it by itself."
+            else
+              echo "## The office dashboard is live"
+              echo
+              echo "https://${OWNER,,}.github.io/${NAME}/"
+              echo
+              echo "It can take a couple of minutes to appear the very first time."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
