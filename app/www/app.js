@@ -192,7 +192,8 @@
   // MapLibre GL with OpenFreeMap tiles: open data, no API key, no billing
   // account, no per-view charge. The style URL below is the only line that
   // knows which map provider this is.
-  var map = null, marker = null, mapReady = false, followMap = true;
+  var map = null, marker = null, markerArrow = null, mapReady = false, followMap = true;
+
   function initMap() {
     if (map || !window.maplibregl) return;
     try { if (maplibregl.setWorkerUrl) maplibregl.setWorkerUrl('vendor/maplibre/maplibre-gl-csp-worker.js'); } catch (e) {}
@@ -201,36 +202,134 @@
         container: 'map',
         style: CFG.MAP_STYLE || 'https://tiles.openfreemap.org/styles/liberty',
         center: state.lastFix ? [state.lastFix.lng, state.lastFix.lat] : (CFG.MAP_CENTER || [73.8567, 18.5204]),
-        zoom: 15,
-        attributionControl: true,
+        zoom: 16,
+        attributionControl: { compact: true },
       });
       map.on('load', function () {
         mapReady = true;
-        map.addSource('route', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: state.route } } });
+
+        // The accuracy circle, drawn underneath everything: an honest picture
+        // of how well the phone actually knows where it is, rather than a dot
+        // that implies more precision than GPS has.
+        map.addSource('acc', { type: 'geojson', data: emptyFC() });
+        map.addLayer({
+          id: 'acc-fill', type: 'fill', source: 'acc',
+          paint: { 'fill-color': '#1B2A6B', 'fill-opacity': 0.1 },
+        });
+        map.addLayer({
+          id: 'acc-line', type: 'line', source: 'acc',
+          paint: { 'line-color': '#1B2A6B', 'line-opacity': 0.25, 'line-width': 1 },
+        });
+
+        map.addSource('route', { type: 'geojson', data: lineFC(state.route) });
+        map.addLayer({
+          id: 'route-casing', type: 'line', source: 'route',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': '#fff', 'line-width': 8, 'line-opacity': .9 },
+        });
         map.addLayer({
           id: 'route-line', type: 'line', source: 'route',
           layout: { 'line-cap': 'round', 'line-join': 'round' },
-          paint: { 'line-color': '#1B2A6B', 'line-width': 5, 'line-opacity': .85 },
+          paint: { 'line-color': '#1B2A6B', 'line-width': 4.5 },
         });
+
+        // Where the ride began, so the driver can see the shape of the day.
+        map.addSource('startpin', { type: 'geojson', data: emptyFC() });
+        map.addLayer({
+          id: 'startpin-dot', type: 'circle', source: 'startpin',
+          paint: {
+            'circle-radius': 6, 'circle-color': '#fff',
+            'circle-stroke-width': 3, 'circle-stroke-color': '#1a7a4c',
+          },
+        });
+
         drawRoute();
       });
-      // Panning turns off follow, so the driver can look ahead without the map
-      // yanking back every thirty seconds.
+      // Panning turns following off, so the driver can look ahead without the
+      // map yanking back every thirty seconds. "Centre map" turns it back on.
       map.on('dragstart', function () { followMap = false; });
     } catch (e) { map = null; }
   }
+
+  function emptyFC() { return { type: 'FeatureCollection', features: [] }; }
+  function lineFC(coords) {
+    return { type: 'Feature', geometry: { type: 'LineString', coordinates: coords || [] }, properties: {} };
+  }
+
+  // A circle on the ground, in metres, as a polygon — MapLibre has no
+  // metre-radius circle, and a pixel radius would lie at every other zoom.
+  function accuracyCircle(centre, radiusM) {
+    var pts = [], n = 48;
+    var dLat = radiusM / 111320;
+    var dLng = radiusM / (111320 * Math.cos(centre[1] * Math.PI / 180) || 1);
+    for (var i = 0; i <= n; i += 1) {
+      var a = (i / n) * 2 * Math.PI;
+      pts.push([centre[0] + dLng * Math.cos(a), centre[1] + dLat * Math.sin(a)]);
+    }
+    return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [pts] }, properties: {} };
+  }
+
+  // The driver's own marker: a filled disc with a white ring and a heading
+  // arrow, the shape people already read as "you are here" from every other
+  // map they use. It rotates to the direction of travel when the phone reports
+  // one and hides the arrow when it does not, rather than pointing north and
+  // pretending.
+  function buildMarkerEl() {
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'width:42px;height:42px;position:relative;';
+    wrap.innerHTML = ''
+      + '<div class="md-pulse" style="position:absolute;inset:0;border-radius:50%;'
+      + 'background:rgba(27,42,107,.18);"></div>'
+      + '<div style="position:absolute;left:50%;top:50%;width:20px;height:20px;margin:-10px 0 0 -10px;'
+      + 'border-radius:50%;background:#1B2A6B;border:3px solid #fff;'
+      + 'box-shadow:0 1px 6px rgba(0,0,0,.45);"></div>'
+      + '<svg class="md-arrow" width="42" height="42" viewBox="0 0 42 42" '
+      + 'style="position:absolute;inset:0;display:none;">'
+      + '<path d="M21 2 L26 12 L21 9.5 L16 12 Z" fill="#1B2A6B" stroke="#fff" stroke-width="1.4"'
+      + ' stroke-linejoin="round"/></svg>';
+    return wrap;
+  }
+
   function drawRoute() {
     if (!map || !mapReady) return;
-    var src = map.getSource('route');
-    if (src) src.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: state.route } });
     var last = state.route[state.route.length - 1];
+
+    var routeSrc = map.getSource('route');
+    if (routeSrc) routeSrc.setData(lineFC(state.route));
+
+    var startSrc = map.getSource('startpin');
+    if (startSrc) {
+      startSrc.setData(state.route.length > 1
+        ? { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: state.route[0] }, properties: {} }] }
+        : emptyFC());
+    }
+
     if (!last) return;
+
+    var accSrc = map.getSource('acc');
+    if (accSrc) {
+      var r = state.lastAccuracyM;
+      accSrc.setData(r && r > 5 && r < 500
+        ? { type: 'FeatureCollection', features: [accuracyCircle(last, r)] }
+        : emptyFC());
+    }
+
     if (!marker) {
-      var el = document.createElement('div');
-      el.style.cssText = 'width:20px;height:20px;border-radius:50%;background:#1B2A6B;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.4)';
-      marker = new maplibregl.Marker({ element: el }).setLngLat(last).addTo(map);
-    } else marker.setLngLat(last);
-    if (followMap) map.easeTo({ center: last, duration: 600 });
+      var el = buildMarkerEl();
+      markerArrow = el.querySelector('.md-arrow');
+      marker = new maplibregl.Marker({ element: el, rotationAlignment: 'map' }).setLngLat(last).addTo(map);
+    } else {
+      marker.setLngLat(last);
+    }
+    if (markerArrow) {
+      if (state.lastHeading == null) markerArrow.style.display = 'none';
+      else {
+        markerArrow.style.display = '';
+        marker.setRotation(state.lastHeading);
+      }
+    }
+
+    if (followMap) map.easeTo({ center: last, duration: 700 });
   }
 
   // ── tracking ───────────────────────────────────────────────────────────
@@ -262,6 +361,10 @@
     state.permission = 'granted';
     state.lastFix = { lat: location.latitude, lng: location.longitude };
     state.lastFixAt = Date.now();
+    state.lastAccuracyM = location.accuracy == null ? null : location.accuracy;
+    // Android reports bearing only while genuinely moving; when it does not,
+    // the arrow is hidden rather than left pointing at a stale direction.
+    state.lastHeading = (location.bearing == null || location.speed === 0) ? null : location.bearing;
     if (!riding()) { render(); return; }
     if (!shouldKeep(location)) { render(); return; }
 

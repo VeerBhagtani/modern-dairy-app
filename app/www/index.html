@@ -24,71 +24,69 @@
 
   /* ── name screen ──────────────────────────────────────────────────── */
   .intro{min-height:100vh;display:flex;flex-direction:column;justify-content:center;
-         padding:28px 24px calc(28px + env(safe-area-inset-bottom));
-         background:linear-gradient(165deg,var(--navy) 0%,var(--navy-deep) 100%);color:#fff;}
-  .intro img{width:88px;height:88px;object-fit:contain;border-radius:20px;margin:0 auto 22px;display:block;}
-  .intro h1{font-size:1.9rem;margin:0 0 6px;text-align:center;letter-spacing:-.02em;}
-  .intro p.sub{text-align:center;color:#b9c2e4;margin:0 0 32px;font-size:1rem;}
-  .intro label{display:block;font-size:.85rem;font-weight:700;color:#b9c2e4;margin-bottom:10px;
-               text-transform:uppercase;letter-spacing:.06em;}
-  .intro input{width:100%;padding:18px 16px;border:2px solid rgba(255,255,255,.22);border-radius:14px;
-               font-size:1.25rem;font-family:inherit;background:rgba(255,255,255,.1);color:#fff;}
-  .intro input::placeholder{color:rgba(255,255,255,.45);}
-  .intro input:focus{outline:none;border-color:#fff;background:rgba(255,255,255,.16);}
-  .intro button{width:100%;margin-top:20px;padding:19px;border:none;border-radius:14px;
-                background:#fff;color:var(--navy);font-size:1.15rem;font-weight:800;font-family:inherit;cursor:pointer;}
+         padding:24px calc(20px + env(safe-area-inset-left)) calc(24px + env(safe-area-inset-bottom));
+         background:var(--surface);}
+  .intro img{width:60px;height:60px;object-fit:contain;border-radius:13px;margin:0 auto 18px;display:block;}
+  .intro h1{font-size:1.3rem;margin:0 0 4px;text-align:center;letter-spacing:-.01em;}
+  .intro p.sub{text-align:center;color:var(--ink-2);margin:0 0 26px;font-size:.92rem;}
+  .intro label{display:block;font-size:.78rem;font-weight:600;color:var(--ink-2);margin-bottom:7px;}
+  .intro input{width:100%;padding:13px 13px;border:1px solid var(--line);border-radius:9px;
+               font-size:1.02rem;font-family:inherit;background:#fff;color:var(--ink);}
+  .intro input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(27,42,107,.1);}
+  .intro button{width:100%;margin-top:16px;padding:13px;border:none;border-radius:9px;
+                background:var(--navy);color:#fff;font-size:1rem;font-weight:600;font-family:inherit;cursor:pointer;}
   .intro button:disabled{opacity:.5;}
-  .intro .err{color:#ffc9c5;font-size:.92rem;font-weight:600;margin:14px 0 0;text-align:center;}
-  .intro .note{margin-top:26px;font-size:.82rem;color:#9aa6d0;line-height:1.6;text-align:center;}
-  .intro .note a{color:#fff;}
+  .intro .err{color:var(--bad);font-size:.87rem;font-weight:600;margin:12px 0 0;text-align:center;}
+  .intro .note{margin-top:22px;font-size:.8rem;color:var(--ink-2);line-height:1.6;text-align:center;}
 
   /* ── main screen ──────────────────────────────────────────────────── */
   .screen{display:flex;flex-direction:column;min-height:100vh;}
-  header{background:var(--navy);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:11px;}
-  header img{width:34px;height:34px;object-fit:contain;border-radius:8px;}
+  header{background:var(--navy);color:#fff;padding:10px 14px;display:flex;align-items:center;gap:10px;}
+  header img{width:28px;height:28px;object-fit:contain;border-radius:6px;}
   header .who{flex:1;min-width:0;}
-  header .who b{display:block;font-size:1rem;line-height:1.2;}
-  header .who span{font-size:.75rem;color:#b9c2e4;}
+  header .who b{display:block;font-size:.92rem;line-height:1.25;font-weight:600;}
+  header .who span{font-size:.72rem;color:#b9c2e4;}
 
   #map{flex:1;min-height:200px;background:#dfe3ee;}
   .map-empty{flex:1;display:flex;align-items:center;justify-content:center;padding:30px;
              text-align:center;color:var(--ink-2);font-size:.9rem;line-height:1.6;background:#e6e9f2;}
 
   .panel{background:var(--surface);border-top:1px solid var(--line);
-         padding:16px 16px calc(18px + env(safe-area-inset-bottom));
-         box-shadow:0 -4px 20px rgba(20,24,36,.07);}
+         padding:13px 14px calc(14px + env(safe-area-inset-bottom));}
 
-  .status{display:flex;align-items:center;gap:11px;margin-bottom:14px;}
-  .status .dot{width:14px;height:14px;border-radius:50%;flex-shrink:0;background:#9aa3bd;}
+  .status{display:flex;align-items:center;gap:9px;margin-bottom:11px;}
+  .status .dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;background:#9aa3bd;}
   .status.on .dot{background:var(--ok);animation:pulse 2s infinite;}
   .status.warn .dot{background:var(--warn);}
   .status.bad .dot{background:var(--bad);}
   @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
-  .status .txt b{display:block;font-size:1.02rem;line-height:1.25;}
-  .status .txt span{font-size:.82rem;color:var(--ink-2);line-height:1.4;}
+  .status .txt b{display:block;font-size:.93rem;line-height:1.3;font-weight:600;}
+  .status .txt span{font-size:.79rem;color:var(--ink-2);line-height:1.4;}
 
-  .start{width:100%;padding:30px 16px;border:none;border-radius:18px;background:var(--navy);color:#fff;
-         font-size:1.5rem;font-weight:800;font-family:inherit;cursor:pointer;letter-spacing:.01em;}
+  /* Prominent, because it is the one thing this screen is for — but a button,
+     not a billboard. */
+  .start{width:100%;padding:15px;border:none;border-radius:10px;background:var(--navy);color:#fff;
+         font-size:1.05rem;font-weight:600;font-family:inherit;cursor:pointer;}
   .start:active{background:var(--navy-deep);}
   .start:disabled{background:#98a2c0;}
 
-  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;}
-  .stat{background:var(--bg);border-radius:12px;padding:11px 8px;text-align:center;}
-  .stat b{display:block;font-size:1.3rem;font-weight:800;line-height:1.1;letter-spacing:-.02em;}
-  .stat span{font-size:.7rem;color:var(--ink-2);text-transform:uppercase;letter-spacing:.04em;}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:11px;}
+  .stat{background:var(--bg);border-radius:8px;padding:9px 6px;text-align:center;}
+  .stat b{display:block;font-size:1.05rem;font-weight:700;line-height:1.15;}
+  .stat span{font-size:.67rem;color:var(--ink-2);}
 
-  .rowbtns{display:flex;gap:10px;margin-top:12px;}
-  .rowbtns button{flex:1;padding:14px;border-radius:12px;font-size:.92rem;font-weight:700;
-                  font-family:inherit;cursor:pointer;border:1.5px solid var(--navy);background:#fff;color:var(--navy);}
+  .rowbtns{display:flex;gap:8px;margin-top:10px;}
+  .rowbtns button{flex:1;padding:10px;border-radius:8px;font-size:.85rem;font-weight:600;
+                  font-family:inherit;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--ink);}
   .rowbtns button.on{background:var(--warn-tint);border-color:#e3c98d;color:var(--warn);}
 
-  .msg{border-radius:12px;padding:12px 14px;font-size:.86rem;line-height:1.55;margin-bottom:13px;}
+  .msg{border-radius:8px;padding:10px 12px;font-size:.82rem;line-height:1.5;margin-bottom:11px;}
   .msg.warn{background:var(--warn-tint);color:var(--warn);}
   .msg.bad{background:var(--bad-tint);color:var(--bad);}
   .msg.info{background:#e8ebf7;color:var(--navy);}
   .msg b{font-weight:800;}
 
-  .foot{margin-top:13px;text-align:center;font-size:.76rem;color:var(--ink-2);line-height:1.5;}
+  .foot{margin-top:11px;text-align:center;font-size:.73rem;color:var(--ink-2);}
   .link{background:none;border:none;color:var(--navy);font-size:.8rem;font-weight:700;
         text-decoration:underline;cursor:pointer;font-family:inherit;padding:4px;}
 
@@ -99,8 +97,10 @@
   .sheet h3{margin:0 0 12px;font-size:1.12rem;}
   .sheet ul{margin:10px 0 0;padding-left:20px;font-size:.88rem;line-height:1.7;color:var(--ink-2);}
   .sheet li{margin-bottom:8px;}
-  .sheet button{width:100%;margin-top:18px;padding:14px;border-radius:12px;border:none;
-                background:var(--navy);color:#fff;font-weight:700;font-size:1rem;font-family:inherit;cursor:pointer;}
+  .sheet button{width:100%;margin-top:16px;padding:12px;border-radius:9px;border:none;
+                background:var(--navy);color:#fff;font-weight:600;font-size:.95rem;font-family:inherit;cursor:pointer;}
+  .md-pulse{animation:mdpulse 2.4s ease-out infinite;}
+  @keyframes mdpulse{0%{transform:scale(.45);opacity:.85;}70%{transform:scale(1);opacity:0;}100%{opacity:0;}}
   [hidden]{display:none!important;}
 </style>
 </head>
@@ -117,7 +117,7 @@
   <button id="btnName">Continue</button>
   <p class="note">
     That is all we need.<br>
-    <button class="link" id="btnWhy" style="color:#fff">Why does this app use my location?</button>
+    <button class="link" id="btnWhy">Why does this app use my location?</button>
   </p>
 </section>
 
