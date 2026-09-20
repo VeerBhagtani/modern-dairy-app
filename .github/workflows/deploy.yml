@@ -170,7 +170,31 @@ jobs:
           done
 
           if [ -z "$URL" ]; then
-            echo "::error::The service deployed but no reported address answers /healthz. Check the Cloud Run logs."
+            echo "--- what each address actually returns ---"
+            for c in $CANDIDATES; do
+              echo "== $c/healthz"
+              curl -sS -i --max-time 20 "$c/healthz" | head -25 || true
+              echo
+              # An identity token separates "the service refuses anonymous
+              # callers" from "the app itself is not answering".
+              echo "== same, with an identity token"
+              curl -sS -i --max-time 20 \
+                -H "Authorization: Bearer $(gcloud auth print-identity-token 2>/dev/null)" \
+                "$c/healthz" | head -25 || true
+              echo
+            done
+            echo "--- who may invoke it ---"
+            gcloud run services get-iam-policy "$S" --project "$P" --region "$R" 2>&1 | head -30 || true
+            echo "--- revision state ---"
+            gcloud run revisions list --service "$S" --project "$P" --region "$R" 2>&1 | head -20 || true
+            gcloud run services describe "$S" --project "$P" --region "$R" \
+              --format='yaml(status.conditions,status.latestReadyRevisionName,status.traffic)' 2>&1 | head -40 || true
+            echo "--- the container's own log ---"
+            gcloud logging read \
+              "resource.type=cloud_run_revision AND resource.labels.service_name=$S" \
+              --project "$P" --limit 40 --format='value(textPayload)' 2>&1 | head -40 || true
+
+            echo "::error::The service deployed but no reported address answers /healthz. The diagnostics above say why."
             exit 1
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
