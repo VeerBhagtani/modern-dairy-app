@@ -14,6 +14,9 @@ const { db } = require('../services/firestore');
 const { writeLimiter } = require('../middleware/rateLimit');
 const bcrypt = require('bcryptjs');
 const { verifyLogin } = require('../middleware/adminAuth');
+const { placeIdFor } = require('../services/placeKey');
+const geocode = require('../services/geocode');
+const { getSecret, setSecret, KNOWN_SECRETS } = require('../services/secretManager');
 const {
   isValidId, isBoundedString, isOptionalBoundedString, pickAllowed, hasForbiddenKeys,
 } = require('../middleware/validate');
@@ -482,6 +485,22 @@ for (const [path, colName, isFacility] of [['restaurants', 'restaurants', false]
 // CSV import for restaurants. Rows that cannot be trusted are REPORTED, never
 // guessed at: a restaurant imported to the wrong coordinates silently poisons
 // every classification that touches it.
+// POST /admin/restaurants/import { csv }
+//
+// The real file has a name and an area and nothing else — no coordinates, no
+// ids — and it gets uploaded again every time a restaurant is added. Two
+// things follow.
+//
+// First, lat/lng are optional. A row without them is stored as "pending": it
+// exists, it is listed, and it is invisible to the classification engine until
+// it has a location somebody trusts. A restaurant with no known position must
+// never silently become a geofence.
+//
+// Second, every row gets a stable id derived from its name and area, so the
+// second upload of the same file updates the same thousand rows instead of
+// creating a second thousand. And an existing row's coordinates are never
+// touched: once the office has placed or corrected a pin, re-importing the
+// spreadsheet must not undo that work.
 router.post('/restaurants/import', requireRole('admin'), writeLimiter, async (req, res) => {
   const { csv } = req.body || {};
   if (!isBoundedString(csv, { min: 1, max: 2_000_000 })) return bad(res, 'csv is required');
@@ -489,38 +508,185 @@ router.post('/restaurants/import', requireRole('admin'), writeLimiter, async (re
   if (rows.length < 2) return bad(res, 'The file has no data rows.');
   const header = rows[0].map((h) => h.trim().toLowerCase().replace(/\s+/g, '_'));
   const col = (n) => header.indexOf(n);
-  for (const required of ['name', 'lat', 'lng']) {
-    if (col(required) === -1) return bad(res, `Missing required column "${required}"`);
-  }
-  const imported = []; const problems = [];
+  if (col('name') === -1) return bad(res, 'Missing required column "name"');
+
+  const existing = new Set((await repo.C.restaurants().select().get()).docs.map((d) => d.id));
+
+  const added = []; const updated = []; const problems = [];
+  const seen = new Set();
   const writer = db.bulkWriter();
+
   for (let r = 1; r < rows.length; r += 1) {
     const at = (n) => (col(n) === -1 ? null : (rows[r][col(n)] ?? '').trim());
-    const candidate = {
-      name: at('name'),
+    const name = at('name');
+    if (!name) continue;                      // blank line at the end of a file
+    const area = at('area') || null;
+    const hasCoords = at('lat') && at('lng');
+
+    const base = {
+      name,
       customerId: at('customer_id') || null,
       address: at('address') || null,
-      lat: Number(at('lat')),
-      lng: Number(at('lng')),
       radiusM: at('radius_m') ? Number(at('radius_m')) : null,
-      area: at('area') || null,
+      area,
       externalId: at('external_id') || null,
       schedule: at('schedule') || null,
       active: at('active') ? !/^(0|no|false|inactive)$/i.test(at('active')) : true,
     };
-    const { place, error } = validatePlace(candidate, { isFacility: false });
-    if (error) { problems.push({ row: r + 1, error, name: candidate.name }); continue; }
-    // An external id makes the import idempotent: re-uploading a corrected file
-    // updates the same records instead of creating a second set.
-    const id = candidate.externalId ? `ext_${candidate.externalId.replace(/[^A-Za-z0-9_-]/g, '_')}` : undefined;
-    const ref = id ? repo.C.restaurants().doc(id) : repo.C.restaurants().doc();
-    writer.set(ref, { ...place, importedAt: Date.now(), importedBy: req.adminId }, { merge: true });
-    imported.push(ref.id);
+
+    const id = placeIdFor({ externalId: base.externalId, name, area });
+    if (seen.has(id)) {
+      problems.push({ row: r + 1, name, error: 'Duplicate of an earlier row in this file' });
+      continue;
+    }
+    seen.add(id);
+
+    if (hasCoords) {
+      const { place, error } = validatePlace({ ...base, lat: Number(at('lat')), lng: Number(at('lng')) }, { isFacility: false });
+      if (error) { problems.push({ row: r + 1, error, name }); continue; }
+      writer.set(repo.C.restaurants().doc(id),
+        { ...place, locationStatus: 'confirmed', importedAt: Date.now(), importedBy: req.adminId },
+        { merge: true });
+    } else if (existing.has(id)) {
+      // Known row: refresh the details from the file, leave the location alone.
+      writer.set(repo.C.restaurants().doc(id),
+        { ...base, importedAt: Date.now(), importedBy: req.adminId },
+        { merge: true });
+    } else {
+      writer.set(repo.C.restaurants().doc(id), {
+        ...base,
+        locationStatus: 'pending',
+        importedAt: Date.now(),
+        importedBy: req.adminId,
+        createdAt: Date.now(),
+      });
+    }
+    (existing.has(id) ? updated : added).push(id);
   }
   await writer.close();
   repo.invalidatePlaceCache();
-  await repo.writeAudit({ adminId: req.adminId, action: 'restaurants.import', after: { imported: imported.length, problems: problems.length } });
-  res.json({ success: true, data: { imported: imported.length, problems } });
+
+  const pending = (await repo.C.restaurants().where('locationStatus', 'in', ['pending', 'unconfirmed']).select().get()).size;
+  await repo.writeAudit({
+    adminId: req.adminId,
+    action: 'restaurants.import',
+    after: { added: added.length, updated: updated.length, problems: problems.length, awaitingLocation: pending },
+  });
+  res.json({ success: true, data: { added: added.length, updated: updated.length, problems, awaitingLocation: pending } });
+});
+
+// GET /admin/restaurants/awaiting-location
+// Everything the engine is currently ignoring, and why.
+router.get('/restaurants/awaiting-location', requireRole('viewer'), async (req, res) => {
+  const snap = await repo.C.restaurants().where('locationStatus', 'in', ['pending', 'unconfirmed']).limit(500).get();
+  res.json({
+    success: true,
+    data: snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+  });
+});
+
+// POST /admin/restaurants/locate { limit }
+//
+// Geocodes a batch of the pending rows. A batch rather than all of them: a
+// thousand lookups do not fit in one HTTP request, and a run that times out
+// half way through is worse than one that says how far it got. Call it again
+// until nothing is pending.
+router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (req, res) => {
+  const limit = Math.min(Math.max(Number(req.body?.limit) || 100, 1), 200);
+  const apiKey = await getSecret('geocoding');
+  if (!apiKey) {
+    return res.status(400).json({
+      success: false,
+      code: 'NO_GEOCODING_KEY',
+      message: 'No geocoding key is configured, so locations cannot be looked up yet.',
+    });
+  }
+
+  const snap = await repo.C.restaurants().where('locationStatus', '==', 'pending').limit(limit).get();
+  let placed = 0; let heldForReview = 0; let notFound = 0;
+  const failures = [];
+
+  for (const doc of snap.docs) {
+    const p = doc.data();
+    const query = geocode.buildQuery({ name: p.name, area: p.area, address: p.address });
+    let out;
+    try {
+      /* eslint-disable-next-line no-await-in-loop */
+      out = await geocode.geocodeOne(query, apiKey);
+    } catch (e) {
+      failures.push({ name: p.name, error: e.message });
+      if (e.message === 'OVER_QUERY_LIMIT') break;   // stop rather than burn the quota
+      /* eslint-disable-next-line no-await-in-loop */
+      continue;
+    }
+
+    const patch = {
+      geocode: {
+        query,
+        confidence: out.confidence,
+        alternatives: out.alternatives,
+        formattedAddress: out.point ? out.point.formattedAddress : null,
+        at: Date.now(),
+      },
+    };
+
+    if (out.autoPlace && out.point) {
+      patch.lat = out.point.lat;
+      patch.lng = out.point.lng;
+      patch.locationStatus = 'confirmed';
+      patch.locationSource = 'geocoded';
+      placed += 1;
+    } else if (out.point) {
+      // A candidate, not a location. Kept off lat/lng on purpose: the engine
+      // reads lat/lng, and a guess must not reach it.
+      patch.candidate = { lat: out.point.lat, lng: out.point.lng, confidence: out.confidence };
+      patch.locationStatus = 'unconfirmed';
+      heldForReview += 1;
+    } else {
+      patch.locationStatus = 'unconfirmed';
+      notFound += 1;
+    }
+    /* eslint-disable-next-line no-await-in-loop */
+    await doc.ref.set(patch, { merge: true });
+  }
+
+  repo.invalidatePlaceCache();
+  const stillPending = (await repo.C.restaurants().where('locationStatus', '==', 'pending').select().get()).size;
+  await repo.writeAudit({
+    adminId: req.adminId,
+    action: 'restaurants.locate',
+    after: { placed, heldForReview, notFound, stillPending },
+  });
+  res.json({ success: true, data: { looked: snap.size, placed, heldForReview, notFound, stillPending, failures } });
+});
+
+// POST /admin/restaurants/:id/confirm-location { lat, lng }
+// A person accepting or correcting a pin. This is the only way a guess becomes
+// a location the kilometre figures rely on.
+router.post('/restaurants/:id/confirm-location', requireRole('admin'), writeLimiter, async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) return bad(res, 'Invalid id');
+  const doc = await repo.C.restaurants().doc(id).get();
+  if (!doc.exists) return res.status(404).json({ success: false, message: 'Not found' });
+
+  const body = req.body || {};
+  const cand = doc.data().candidate || {};
+  const lat = Number.isFinite(Number(body.lat)) ? Number(body.lat) : cand.lat;
+  const lng = Number.isFinite(Number(body.lng)) ? Number(body.lng) : cand.lng;
+  if (!Number.isFinite(lat) || lat < -90 || lat > 90) return bad(res, 'A valid latitude is required');
+  if (!Number.isFinite(lng) || lng < -180 || lng > 180) return bad(res, 'A valid longitude is required');
+
+  await doc.ref.set({
+    lat,
+    lng,
+    locationStatus: 'confirmed',
+    locationSource: body.lat != null ? 'office' : 'geocoded_confirmed',
+    confirmedBy: req.adminId,
+    confirmedAt: Date.now(),
+  }, { merge: true });
+  repo.invalidatePlaceCache();
+  await repo.writeAudit({ adminId: req.adminId, action: 'restaurants.confirm_location', target: id, after: { lat, lng } });
+  res.json({ success: true, data: { id, lat, lng } });
 });
 
 router.get('/restaurants/export.csv', requireRole('viewer'), async (req, res) => {
@@ -541,6 +707,32 @@ router.get('/restaurants/export.csv', requireRole('viewer'), async (req, res) =>
 // ---------------------------------------------------------------------------
 // Orders / integration
 // ---------------------------------------------------------------------------
+
+// PUT /admin/integration/secret { alias, value }
+//
+// Lets the office configure an integration key from the dashboard instead of a
+// terminal. The value goes straight into Secret Manager and is never stored in
+// Firestore, never logged, and never read back out to the browser — the UI can
+// only ever learn whether a key is set, not what it is.
+//
+// jwt-signing-key is deliberately not settable here. Replacing it invalidates
+// every driver's token and signs forty phones out mid-shift; that is a
+// deliberate operation, not a form field.
+router.put('/integration/secret', requireRole('admin'), writeLimiter, async (req, res) => {
+  const { alias, value } = req.body || {};
+  if (!Object.prototype.hasOwnProperty.call(KNOWN_SECRETS, alias)) return bad(res, 'Unknown setting');
+  if (alias === 'jwt-signing-key') return bad(res, 'The signing key cannot be changed from here.');
+  if (!isBoundedString(value, { min: 8, max: 4000 })) return bad(res, 'That value looks wrong.');
+  try {
+    await setSecret(alias, value.trim());
+  } catch (e) {
+    console.error('could not store secret', alias, e);
+    return res.status(500).json({ success: false, message: 'Could not store that key: ' + e.message });
+  }
+  // The value itself never goes near the audit trail.
+  await repo.writeAudit({ adminId: req.adminId, action: 'integration.secret_set', after: { alias } });
+  res.json({ success: true, data: { alias, set: true } });
+});
 
 router.get('/integration/sources', requireRole('viewer'), async (req, res) => {
   const out = [];

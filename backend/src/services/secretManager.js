@@ -11,6 +11,9 @@ const KNOWN_SECRETS = {
   'jwt-signing-key': 'jwt-signing-key',
   // Optional: the GoFrugal order import. Absent means the adapter stays inert,
   // which is its honest state until the licence has API access.
+  // Google Geocoding, used to turn a restaurant's name and area into a point.
+  // Absent means the Locate button says so rather than guessing.
+  geocoding: 'geocoding-api-key',
   gofrugal: 'gofrugal-api-key',
   gofrugal_outlet_id: 'gofrugal-outlet-id',
   gofrugal_company_id: 'gofrugal-company-id',

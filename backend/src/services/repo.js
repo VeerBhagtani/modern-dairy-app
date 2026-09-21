@@ -395,7 +395,16 @@ async function loadPlaces({ fresh = false } = {}) {
   }
   const [fSnap, rSnap] = await Promise.all([C.facilities().get(), C.restaurants().get()]);
   const facilities = fSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((p) => p.active !== false);
-  const restaurants = rSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  // A restaurant only reaches the classification engine once it has real,
+  // confirmed coordinates. Rows imported from a spreadsheet without a location,
+  // and geocoder guesses nobody has checked, are deliberately invisible here:
+  // an unconfirmed pin is a geofence in the wrong place, and a geofence in the
+  // wrong place turns somebody's own errand into billable distance. They are
+  // listed in the dashboard for review instead.
+  const restaurants = rSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng)
+      && p.locationStatus !== 'pending' && p.locationStatus !== 'unconfirmed');
   placeCache = { at: Date.now(), facilities, restaurants };
   return { facilities, restaurants };
 }

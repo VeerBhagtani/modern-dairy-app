@@ -531,9 +531,10 @@ window.DRIVERS_VIEWS = (function () {
 
   // ── Locations ──────────────────────────────────────────────────────────
   function renderPlaces() {
-    return Promise.all([API.places('restaurants'), API.places('facilities')]).then(function (r) {
+    return Promise.all([API.places('restaurants'), API.places('facilities'), API.awaitingLocation()]).then(function (r) {
       var restaurants = r[0];
       var facilities = r[1];
+      var awaiting = r[2] || [];
       set('<div class="card"><h2>Modern Dairy facilities (' + facilities.length + ')</h2>'
         + placeTable(facilities, 'facilities')
         + placeForm('facilities')
@@ -543,9 +544,12 @@ window.DRIVERS_VIEWS = (function () {
         + placeTable(restaurants, 'restaurants')
         + placeForm('restaurants')
         + '</div>'
+        + awaitingCard(awaiting)
         + '<div class="card"><h2>Import / export</h2>'
-        + '<p class="muted">CSV columns: <code>name, customer_id, address, lat, lng, radius_m, area, external_id, schedule, active</code>. '
-        + 'Rows with a missing or invalid coordinate are reported and skipped, never guessed at. Re-importing a file with the same <code>external_id</code> updates those rows rather than duplicating them.</p>'
+        + '<p class="muted">Only <code>name</code> is required. <code>area</code> and <code>address</code> make the location lookup far more accurate; '
+        + '<code>lat</code> and <code>lng</code> skip it entirely. Other columns: <code>customer_id, radius_m, external_id, schedule, active</code>.</p>'
+        + '<p class="muted">Re-upload the same file whenever you add a restaurant. Rows already here are matched by name and area, so only the new ones are added — '
+        + 'and <b>a pin you have placed or corrected is never overwritten</b>.</p>'
         + '<input type="file" id="csvFile" accept=".csv,text/csv" style="margin-bottom:10px">'
         + '<div><button class="btn-primary" id="btnImport">Import restaurants</button> '
         + '<button class="btn-outline" id="btnExport">Export restaurants CSV</button></div>'
@@ -553,6 +557,7 @@ window.DRIVERS_VIEWS = (function () {
         + '</div>');
 
       bindPlaceForms();
+      bindAwaiting();
       on('#btnExport', 'click', function () {
         API.download('/admin/restaurants/export.csv', {}, 'restaurants.csv').catch(function (e) { alert(e.message); });
       });
@@ -562,11 +567,106 @@ window.DRIVERS_VIEWS = (function () {
         if (!f) { msg.textContent = 'Choose a CSV file first.'; return; }
         msg.textContent = 'Importing…';
         f.text().then(function (csv) { return API.importRestaurants(csv); }).then(function (out) {
-          msg.innerHTML = '<b>' + out.imported + ' location(s) imported.</b>'
+          msg.innerHTML = '<b>' + out.added + ' added, ' + out.updated + ' already here.</b>'
+            + (out.awaitingLocation ? '<br>' + out.awaitingLocation + ' still need a location — use <b>Find locations</b> above.' : '')
             + (out.problems.length ? '<br>' + out.problems.length + ' row(s) skipped:<br><span class="tiny">'
               + esc(out.problems.slice(0, 20).map(function (p) { return 'row ' + p.row + ': ' + p.error; }).join('; ')) + '</span>' : '');
           setTimeout(render, 1200);
         }).catch(function (e) { msg.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
+      });
+    });
+  }
+
+  // Restaurants the engine is ignoring, and the two ways out: look the address
+  // up, or place the pin by hand. Nothing here counts towards any kilometre
+  // until it leaves this list, which is the point of showing it so prominently.
+  function awaitingCard(awaiting) {
+    if (!awaiting.length) return '';
+    var pending = awaiting.filter(function (p) { return p.locationStatus === 'pending'; }).length;
+    var unconfirmed = awaiting.length - pending;
+
+    return '<div class="card" style="border-color:#efdcb2">'
+      + '<h2>' + awaiting.length + ' restaurant(s) without a confirmed location</h2>'
+      + '<div class="banner">These are <b>not</b> on the map and are <b>not</b> counted in any driver\'s kilometres. '
+      + 'A pin in the wrong place would turn a driver\'s own errand into business distance, so a guess is never used until someone confirms it.</div>'
+      + (pending ? '<p class="muted">' + pending + ' have never been looked up. '
+          + '<button class="btn-primary btn-sm" id="btnLocate">Find locations (100 at a time)</button> '
+          + '<span id="locMsg" class="tiny"></span></p>' : '')
+      + '<details style="margin:10px 0"><summary class="tiny">Geocoding key</summary>'
+      + '<p class="tiny">Looking addresses up needs a Google Geocoding API key. Paste it once; it is stored in Secret Manager '
+      + 'and never shown again. Around ₹450 for a thousand lookups, one time.</p>'
+      + '<input id="geoKey" type="password" placeholder="Paste the API key" style="max-width:420px;display:inline-block"> '
+      + '<button class="btn-outline btn-sm" id="btnGeoKey">Save key</button> <span id="geoKeyMsg" class="tiny"></span>'
+      + '</details>'
+      + (unconfirmed ? '<p class="muted">' + unconfirmed + ' came back uncertain and need a person to look.</p>' : '')
+      + '<div style="overflow-x:auto;max-height:420px;overflow-y:auto"><table><thead><tr>'
+      + '<th>Name</th><th>Area</th><th>What the lookup found</th><th>Confidence</th><th>Place it</th>'
+      + '</tr></thead><tbody>'
+      + awaiting.slice(0, 200).map(function (p) {
+        var g = p.geocode || {};
+        var c = p.candidate || null;
+        return '<tr>'
+          + '<td><b>' + esc(p.name) + '</b></td>'
+          + '<td>' + esc(p.area || '—') + '</td>'
+          + '<td>' + (g.formattedAddress ? esc(g.formattedAddress) : '<span class="tiny">not looked up yet</span>')
+          + (g.alternatives ? '<br><span class="tiny">' + g.alternatives + ' other possible match(es)</span>' : '') + '</td>'
+          + '<td>' + (g.confidence ? '<span class="pill ' + (g.confidence === 'NONE' ? 'bad' : 'warn') + '">' + esc(g.confidence) + '</span>' : '—') + '</td>'
+          + '<td>'
+          + (c ? '<button class="btn-outline btn-sm confirm-cand" data-id="' + esc(p.id) + '">Use this</button> ' : '')
+          + '<input class="lat-in" data-id="' + esc(p.id) + '" placeholder="lat" style="width:90px;display:inline-block">'
+          + '<input class="lng-in" data-id="' + esc(p.id) + '" placeholder="lng" style="width:90px;display:inline-block">'
+          + '<button class="btn-outline btn-sm confirm-manual" data-id="' + esc(p.id) + '">Save</button>'
+          + '</td></tr>';
+      }).join('')
+      + '</tbody></table></div>'
+      + (awaiting.length > 200 ? '<p class="tiny">Showing the first 200.</p>' : '')
+      + '</div>';
+  }
+
+  function bindAwaiting() {
+    on('#btnLocate', 'click', function () {
+      var msg = document.getElementById('locMsg');
+      var btn = document.getElementById('btnLocate');
+      btn.disabled = true;
+      msg.textContent = 'Looking up…';
+      API.locateRestaurants(100).then(function (out) {
+        msg.innerHTML = '<b>' + out.placed + ' placed</b>, ' + out.heldForReview + ' uncertain, '
+          + out.notFound + ' not found. ' + out.stillPending + ' left.';
+        setTimeout(render, 1500);
+      }).catch(function (e) {
+        msg.innerHTML = '<span class="err">' + esc(
+          e.code === 'NO_GEOCODING_KEY'
+            ? 'No geocoding key is set up yet, so addresses cannot be looked up. Coordinates can still be entered by hand.'
+            : e.message) + '</span>';
+        btn.disabled = false;
+      });
+    });
+
+    on('#btnGeoKey', 'click', function () {
+      var v = document.getElementById('geoKey').value;
+      var m = document.getElementById('geoKeyMsg');
+      if (!v) { m.textContent = 'Paste the key first.'; return; }
+      m.textContent = 'Saving…';
+      API.setIntegrationSecret('geocoding', v).then(function () {
+        document.getElementById('geoKey').value = '';
+        m.innerHTML = '<span class="ok-msg">Saved. Try Find locations.</span>';
+      }).catch(function (e) { m.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
+    });
+
+    document.querySelectorAll('.confirm-cand').forEach(function (b) {
+      b.addEventListener('click', function () {
+        API.confirmLocation(b.getAttribute('data-id'), null, null)
+          .then(render).catch(function (e) { alert(e.message); });
+      });
+    });
+    document.querySelectorAll('.confirm-manual').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var id = b.getAttribute('data-id');
+        var lat = document.querySelector('.lat-in[data-id="' + id + '"]').value;
+        var lng = document.querySelector('.lng-in[data-id="' + id + '"]').value;
+        if (!lat || !lng) { alert('Enter both a latitude and a longitude.'); return; }
+        API.confirmLocation(id, Number(lat), Number(lng))
+          .then(render).catch(function (e) { alert(e.message); });
       });
     });
   }

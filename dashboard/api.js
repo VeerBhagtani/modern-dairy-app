@@ -118,6 +118,14 @@ window.DRIVERS_API = (function () {
     createPlace: function (kind, body) { return request(D + '/' + kind, { method: 'POST', body: body }); },
     updatePlace: function (kind, id, body) { return request(D + '/' + kind + '/' + id, { method: 'PATCH', body: body }); },
     importRestaurants: function (csv) { return request(D + '/restaurants/import', { method: 'POST', body: { csv: csv } }); },
+    awaitingLocation: function () { return request(D + '/restaurants/awaiting-location'); },
+    setIntegrationSecret: function (alias, value) {
+      return request(D + '/integration/secret', { method: 'PUT', body: { alias: alias, value: value } });
+    },
+    locateRestaurants: function (limit) { return request(D + '/restaurants/locate', { method: 'POST', body: { limit: limit || 100 } }); },
+    confirmLocation: function (id, lat, lng) {
+      return request(D + '/restaurants/' + id + '/confirm-location', { method: 'POST', body: { lat: lat, lng: lng } });
+    },
 
     reviewQueue: function (params) { return request(D + '/review/queue' + qs(params)); },
     review: function (rideId, segmentId, toType, note) {

@@ -149,10 +149,14 @@ jobs:
             SA="${NUM}-compute@developer.gserviceaccount.com"
             echo "The service does not name a runtime account yet; using the default: $SA"
           fi
-          gcloud secrets add-iam-policy-binding jwt-signing-key \
-            --project "$P" --member="serviceAccount:${SA}" \
+          # Project-level rather than per-secret: the office can add integration
+          # keys from the dashboard at any time, and a grant made now cannot
+          # name a secret that does not exist yet. The scope is still only
+          # "read the secrets belonging to this product's own project".
+          gcloud projects add-iam-policy-binding "$P" \
+            --member="serviceAccount:${SA}" \
             --role=roles/secretmanager.secretAccessor --quiet >/dev/null
-          echo "$SA can now read jwt-signing-key."
+          echo "$SA can now read this project's secrets."
 
       - name: Deploy the API
         id: backend
