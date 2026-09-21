@@ -137,6 +137,9 @@ window.DRIVERS_API = (function () {
     audit: function () { return request(D + '/audit'); },
     config: function () { return request(D + '/config'); },
     saveConfig: function (overrides) { return request(D + '/config', { method: 'PUT', body: { overrides: overrides } }); },
+    changePassword: function (currentPassword, newPassword) {
+      return request(D + '/password', { method: 'POST', body: { currentPassword: currentPassword, newPassword: newPassword } });
+    },
     runMaintenance: function (dryRunRetention) { return request(D + '/maintenance/run', { method: 'POST', body: { dryRunRetention: dryRunRetention !== false } }); },
   };
   return api;

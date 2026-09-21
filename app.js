@@ -70,6 +70,9 @@
     }
     window.DRIVERS_VIEWS.renderTabs();
     window.DRIVERS_VIEWS.render();
+    if (session && session.admin && session.admin.mustChangePassword) {
+      window.DRIVERS_PASSWORD_DIALOG(true);
+    }
   }
 
   function signIn() {
@@ -141,6 +144,62 @@
   el('password').addEventListener('keydown', function (e) { if (e.key === 'Enter') signIn(); });
   el('username').addEventListener('keydown', function (e) { if (e.key === 'Enter') el('password').focus(); });
   el('btnSignout').addEventListener('click', signOut);
+
+  // Changing your own password, in the browser. The seeded account arrives with
+  // a password the office did not choose, and one that was generated elsewhere
+  // is not a secret the office keeps — so the banner stays up until it is
+  // replaced.
+  function passwordDialog(forced) {
+    var bg = el('modalBg');
+    el('modal').innerHTML = ''
+      + '<h2 style="margin:0 0 6px;font-size:1.2rem">Change your password</h2>'
+      + '<p class="muted" style="margin:0 0 18px">'
+      + (forced
+        ? 'This account is still using the password it was set up with. Choose your own.'
+        : 'At least 10 characters.')
+      + '</p>'
+      + '<div class="field"><label for="pwOld">Current password</label>'
+      + '<input id="pwOld" type="password" autocomplete="current-password"></div>'
+      + '<div class="field"><label for="pwNew">New password</label>'
+      + '<input id="pwNew" type="password" autocomplete="new-password"></div>'
+      + '<div class="field"><label for="pwNew2">New password again</label>'
+      + '<input id="pwNew2" type="password" autocomplete="new-password"></div>'
+      + '<p id="pwMsg" class="err" hidden></p>'
+      + '<div style="display:flex;gap:10px">'
+      + '<button id="pwSave" class="btn-primary">Save</button>'
+      + (forced ? '' : '<button id="pwCancel" class="btn-outline" style="width:100%">Cancel</button>')
+      + '</div>';
+    bg.classList.add('on');
+
+    var msg = el('pwMsg');
+    function fail(t) { msg.className = 'err'; msg.textContent = t; msg.hidden = false; }
+
+    el('pwSave').addEventListener('click', function () {
+      msg.hidden = true;
+      var oldPw = el('pwOld').value;
+      var a = el('pwNew').value;
+      var b = el('pwNew2').value;
+      if (a !== b) return fail('The two new passwords do not match.');
+      if (a.length < 10) return fail('Use at least 10 characters.');
+      var btn = el('pwSave');
+      btn.disabled = true; btn.textContent = 'Saving…';
+      window.DRIVERS_API.changePassword(oldPw, a)
+        .then(function () {
+          msg.className = 'ok-msg';
+          msg.textContent = 'Changed. Use the new password next time you sign in.';
+          msg.hidden = false;
+          if (session && session.admin) session.admin.mustChangePassword = false;
+          try { sessionStorage.setItem(KEY, JSON.stringify(session)); } catch (e) { /* private window */ }
+          setTimeout(function () { bg.classList.remove('on'); showApp(); }, 1200);
+        })
+        .catch(function (e) { fail(e.message); })
+        .then(function () { btn.disabled = false; btn.textContent = 'Save'; });
+    });
+    var cancel = el('pwCancel');
+    if (cancel) cancel.addEventListener('click', function () { bg.classList.remove('on'); });
+  }
+  el('btnPassword').addEventListener('click', function () { passwordDialog(false); });
+  window.DRIVERS_PASSWORD_DIALOG = passwordDialog;
 
   function tick() {
     var c = el('clock');
