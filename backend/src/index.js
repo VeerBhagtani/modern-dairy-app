@@ -111,6 +111,15 @@ app.use((err, req, res, next) => {
   res.status(500).json({ success: false, message: 'Internal server error' });
 });
 
+// A last line of defence. Node's default for an unhandled rejection is to kill
+// the process, which on Cloud Run means every request gets a 503 — including
+// the forty phones trying to report a position — because of one failing code
+// path somewhere else. Logging loudly and staying up is the right trade for a
+// service whose job is to keep receiving data.
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection (the service is staying up):', reason);
+});
+
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Modern Drivers API listening on :${PORT}`);

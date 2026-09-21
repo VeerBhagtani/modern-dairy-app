@@ -63,14 +63,26 @@ async function verifyLogin(username, password) {
 }
 
 // POST /admin/login
+//
+// The try/catch is not decoration. Express 4 does not catch a rejected promise
+// from an async handler, Node treats an unhandled rejection as fatal, and this
+// handler reads the signing key from Secret Manager — so a permissions problem
+// on one secret took the whole service down with a 503 on every login attempt,
+// and the browser could only report it as "could not reach the server".
+// One failing request must never take the fleet offline.
 async function adminLoginHandler(req, res) {
-  const { username, password } = req.body || {};
-  const admin = await verifyLogin(username, password);
-  // One message for both a wrong username and a wrong password — anything more
-  // specific tells an attacker which half they got right.
-  if (!admin) return res.status(401).json({ success: false, message: 'Incorrect username or password.' });
-  const token = await issueAdminToken(admin.id, admin.role);
-  res.json({ success: true, data: { token, admin: { id: admin.id, name: admin.name, role: admin.role, mustChangePassword: admin.mustChangePassword } } });
+  try {
+    const { username, password } = req.body || {};
+    const admin = await verifyLogin(username, password);
+    // One message for both a wrong username and a wrong password — anything
+    // more specific tells an attacker which half they got right.
+    if (!admin) return res.status(401).json({ success: false, message: 'Incorrect username or password.' });
+    const token = await issueAdminToken(admin.id, admin.role);
+    return res.json({ success: true, data: { token, admin: { id: admin.id, name: admin.name, role: admin.role, mustChangePassword: admin.mustChangePassword } } });
+  } catch (e) {
+    console.error('admin login failed:', e);
+    return res.status(500).json({ success: false, message: 'Sign-in is temporarily unavailable. The server log has the detail.' });
+  }
 }
 
 function requireAdmin() {

@@ -130,6 +130,30 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
         run: npx --yes firebase-tools@13 deploy --project "${{ steps.cfg.outputs.project }}" --only firestore:rules,firestore:indexes --non-interactive
 
+      # The service reads the signing key from Secret Manager at sign-in, and
+      # the runtime account could not: roles/editor, which Cloud Run's default
+      # account carries, does not include secretmanager.versions.access. The
+      # read threw, the rejection killed the process, and every login came back
+      # as a 503 — which looks from a browser exactly like the server being
+      # down. Granted here rather than by hand so a fresh project cannot repeat
+      # it, and scoped to this one secret rather than the project.
+      - name: Let the service read its signing key
+        run: |
+          P="${{ steps.cfg.outputs.project }}"
+          R="${{ github.event.inputs.region || 'asia-south1' }}"
+          S="${{ github.event.inputs.service || 'modern-drivers' }}"
+          SA=$(gcloud run services describe "$S" --project "$P" --region "$R" \
+                 --format='value(spec.template.spec.serviceAccountName)' 2>/dev/null)
+          if [ -z "$SA" ]; then
+            NUM=$(gcloud projects describe "$P" --format='value(projectNumber)')
+            SA="${NUM}-compute@developer.gserviceaccount.com"
+            echo "The service does not name a runtime account yet; using the default: $SA"
+          fi
+          gcloud secrets add-iam-policy-binding jwt-signing-key \
+            --project "$P" --member="serviceAccount:${SA}" \
+            --role=roles/secretmanager.secretAccessor --quiet >/dev/null
+          echo "$SA can now read jwt-signing-key."
+
       - name: Deploy the API
         id: backend
         run: |
