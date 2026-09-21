@@ -149,14 +149,23 @@ jobs:
             SA="${NUM}-compute@developer.gserviceaccount.com"
             echo "The service does not name a runtime account yet; using the default: $SA"
           fi
-          # Project-level rather than per-secret: the office can add integration
-          # keys from the dashboard at any time, and a grant made now cannot
-          # name a secret that does not exist yet. The scope is still only
-          # "read the secrets belonging to this product's own project".
-          gcloud projects add-iam-policy-binding "$P" \
-            --member="serviceAccount:${SA}" \
-            --role=roles/secretmanager.secretAccessor --quiet >/dev/null
-          echo "$SA can now read this project's secrets."
+          # Per secret, not project-wide. Project-level IAM needs
+          # resourcemanager.projects.setIamPolicy, which this deploy account
+          # deliberately does not have — it can administer secrets and nothing
+          # else. Granting per secret keeps it that way.
+          #
+          # The integration secrets are created here with no version so the
+          # grant has something to attach to. A secret with no version reads
+          # back as "not configured", which is exactly right until the office
+          # saves a key from the dashboard.
+          for SECRET in jwt-signing-key geocoding-api-key gofrugal-api-key gofrugal-outlet-id gofrugal-company-id; do
+            gcloud secrets describe "$SECRET" --project "$P" >/dev/null 2>&1 \
+              || gcloud secrets create "$SECRET" --project "$P" --replication-policy=automatic --quiet
+            gcloud secrets add-iam-policy-binding "$SECRET" \
+              --project "$P" --member="serviceAccount:${SA}" \
+              --role=roles/secretmanager.secretAccessor --quiet >/dev/null
+          done
+          echo "$SA can read this product's secrets."
 
       - name: Deploy the API
         id: backend
