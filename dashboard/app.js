@@ -123,8 +123,14 @@
         showApp();
       })
       .catch(function (e) {
+        // "Failed to fetch" is all the browser will say for a blocked request,
+        // and on its own it sends people looking at the server when the server
+        // is fine. Naming the address it tried turns an hour of guessing into a
+        // glance — a wrong or stale address is by far the most common cause,
+        // and it is invisible until you print it.
         err.textContent = e.message === 'Failed to fetch'
-          ? 'Could not reach the server. Check that it is deployed and running.'
+          ? 'Could not reach ' + base + ' from this browser. '
+            + 'Either that address is wrong, or the server is not allowing this site to call it.'
           : e.message;
         err.hidden = false;
       })
