@@ -30,10 +30,20 @@ if (!fs.existsSync(target)) {
 }
 
 const src = fs.readFileSync(target, 'utf8');
-const out = src.replace(/API_BASE:\s*'[^']*'/, `API_BASE: '${base}'`);
-if (out === src) {
+const LINE = /API_BASE:\s*'[^']*'/;
+
+// Absence of the line is the failure. An unchanged file is not: the second
+// deploy to the same address produces identical text, and treating that as an
+// error made a re-run fail on a step that had nothing left to do.
+if (!LINE.test(src)) {
   console.error('Could not find the API_BASE line to replace — has config.js been reformatted?');
   process.exit(1);
+}
+
+const out = src.replace(LINE, `API_BASE: '${base}'`);
+if (out === src) {
+  console.log(`${path.relative(process.cwd(), target)} already points at ${base}`);
+  process.exit(0);
 }
 fs.writeFileSync(target, out);
 console.log(`${path.relative(process.cwd(), target)} now points at ${base}`);
