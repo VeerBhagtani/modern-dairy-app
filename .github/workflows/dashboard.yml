@@ -57,6 +57,17 @@ jobs:
           cp -R dashboard/. site/
           touch site/.nojekyll        # keep Pages from running Jekyll over it
 
+          # Stamp every local script and stylesheet with this commit, so a
+          # browser cannot serve yesterday's JavaScript from cache. Without it
+          # a published change is invisible until someone thinks to hard-refresh
+          # — which is not something to ask of the office, and not something to
+          # rely on when the change is a bug fix.
+          V="${GITHUB_SHA::7}"
+          sed -i -E "s#(src|href)=\"(api|app|map|views|config)\.js\"#\\1=\"\\2.js?v=${V}\"#g" site/index.html
+          sed -i -E "s#href=\"(vendor/maplibre/maplibre-gl\.css)\"#href=\"\\1?v=${V}\"#g" site/index.html
+          echo "Asset URLs stamped with $V:"
+          grep -oE '(src|href)="[^"]*\?v=[^"]*"' site/index.html || true
+
           cd site
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
