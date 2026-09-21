@@ -51,7 +51,15 @@ async function verifyLogin(username, password) {
   const ok = await bcrypt.compare(password, hash);
   if (!data || !ok) return null;
   if (data.status === 'disabled') return null;
-  return { id: username, role: ROLES[data.role] ? data.role : 'viewer', name: data.name || username };
+  return {
+    id: username,
+    role: ROLES[data.role] ? data.role : 'viewer',
+    name: data.name || username,
+    // Set on a seeded account. The dashboard keeps saying so until it is
+    // replaced, because a password that arrived with the software is not a
+    // password only this office knows.
+    mustChangePassword: data.mustChangePassword === true,
+  };
 }
 
 // POST /admin/login
@@ -62,7 +70,7 @@ async function adminLoginHandler(req, res) {
   // specific tells an attacker which half they got right.
   if (!admin) return res.status(401).json({ success: false, message: 'Incorrect username or password.' });
   const token = await issueAdminToken(admin.id, admin.role);
-  res.json({ success: true, data: { token, admin: { id: admin.id, name: admin.name, role: admin.role } } });
+  res.json({ success: true, data: { token, admin: { id: admin.id, name: admin.name, role: admin.role, mustChangePassword: admin.mustChangePassword } } });
 }
 
 function requireAdmin() {

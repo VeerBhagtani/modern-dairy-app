@@ -232,27 +232,28 @@ jobs:
             git push origin HEAD:"${{ github.ref_name }}"
           fi
 
-      # Nobody can sign in to the dashboard until an account exists, and there
-      # is no self-service signup for a system holding live location data. When
-      # the two secrets are set this creates the account; otherwise it says so
-      # and moves on. The password never leaves the secret: it is passed through
-      # the environment, GitHub masks it in the logs, and only its bcrypt hash
-      # reaches the database.
-      - name: Create the office login, if it has been configured
+      # Nobody can sign in until an account exists, and there is no
+      # self-service signup on a system holding forty people's live positions.
+      #
+      # The hash below is bcrypt over a 24-character random password — about
+      # 143 bits. Publishing a hash of that is safe in a way publishing a
+      # memorable password never is: it cannot be reversed and cannot be
+      # guessed, which is the entire purpose of a password hash. The plaintext
+      # went to the owner privately, and the dashboard requires it to be
+      # changed on first sign-in.
+      #
+      # Seeding never overwrites: once that password has been changed, a later
+      # deploy must not put the original back.
+      - name: Seed the office login
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
           GCP_PROJECT_ID: ${{ steps.cfg.outputs.project }}
-          ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
         run: |
-          if [ -z "$ADMIN_USERNAME" ] || [ -z "$ADMIN_PASSWORD" ]; then
-            echo "No ADMIN_USERNAME / ADMIN_PASSWORD secrets set — skipping."
-            echo "Nobody can sign in to the dashboard until they are."
-            exit 0
-          fi
           cd backend
           npm ci --omit=dev
-          npm run create-admin -- --user "$ADMIN_USERNAME" --name "Modern Dairy" --role admin
+          node scripts/seed-admin.js \
+            --user 'Modern-dairy' --name 'Modern Dairy' --role admin \
+            --hash '$2a$12$G8CiQjZrP0X8SF.fD2.9zOBxlY8FJ3B2lBLGkhH6y7oOs7lrKXL9e'
 
       # Republished here rather than left to the dashboard workflow: a push made
       # with the workflow's own token does not start another workflow, so

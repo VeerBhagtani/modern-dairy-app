@@ -12,6 +12,8 @@ const router = require('express').Router();
 const repo = require('../services/repo');
 const { db } = require('../services/firestore');
 const { writeLimiter } = require('../middleware/rateLimit');
+const bcrypt = require('bcryptjs');
+const { verifyLogin } = require('../middleware/adminAuth');
 const {
   isValidId, isBoundedString, isOptionalBoundedString, pickAllowed, hasForbiddenKeys,
 } = require('../middleware/validate');
@@ -41,6 +43,41 @@ const bad = (res, message) => res.status(400).json({ success: false, message });
 router.use((req, res, next) => {
   if (hasForbiddenKeys(req.body)) return bad(res, 'Invalid request body');
   next();
+});
+
+// ---------------------------------------------------------------------------
+// Your own password
+// ---------------------------------------------------------------------------
+
+// POST /admin/password { currentPassword, newPassword }
+//
+// Registered before the routes that take a :driverId so a literal path can
+// never be read as an id. Any signed-in role may change their own password and
+// only their own: the account is taken from the verified token, never from the
+// request body, so this cannot be pointed at somebody else's login.
+//
+// The current password is required even though the caller already holds a
+// valid token. A token left open on an office PC should not be enough to lock
+// the real owner out.
+router.post('/password', writeLimiter, async (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (typeof newPassword !== 'string' || newPassword.length < 10) {
+    return bad(res, 'Use at least 10 characters. This account can see where every driver is.');
+  }
+  if (typeof currentPassword !== 'string' || !currentPassword) {
+    return bad(res, 'Enter your current password.');
+  }
+  const ok = await verifyLogin(req.adminId, currentPassword);
+  if (!ok) return res.status(401).json({ success: false, message: 'That is not your current password.' });
+
+  await db.collection('admins').doc(req.adminId).set({
+    passwordHash: await bcrypt.hash(newPassword, 12),
+    mustChangePassword: false,
+    updatedAt: Date.now(),
+  }, { merge: true });
+
+  await repo.writeAudit({ adminId: req.adminId, action: 'admin.password_changed' });
+  res.json({ success: true, data: { changed: true } });
 });
 
 // ---------------------------------------------------------------------------
