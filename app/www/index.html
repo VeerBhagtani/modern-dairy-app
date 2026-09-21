@@ -26,7 +26,7 @@
   .intro{min-height:100vh;display:flex;flex-direction:column;justify-content:center;
          padding:24px calc(20px + env(safe-area-inset-left)) calc(24px + env(safe-area-inset-bottom));
          background:var(--surface);}
-  .intro img{width:60px;height:60px;object-fit:contain;border-radius:13px;margin:0 auto 18px;display:block;}
+  .intro img{width:180px;max-width:70%;height:auto;object-fit:contain;margin:0 auto 14px;display:block;}
   .intro h1{font-size:1.3rem;margin:0 0 4px;text-align:center;letter-spacing:-.01em;}
   .intro p.sub{text-align:center;color:var(--ink-2);margin:0 0 26px;font-size:.92rem;}
   .intro label{display:block;font-size:.78rem;font-weight:600;color:var(--ink-2);margin-bottom:7px;}
@@ -42,7 +42,7 @@
   /* ── main screen ──────────────────────────────────────────────────── */
   .screen{display:flex;flex-direction:column;min-height:100vh;}
   header{background:var(--navy);color:#fff;padding:10px 14px;display:flex;align-items:center;gap:10px;}
-  header img{width:28px;height:28px;object-fit:contain;border-radius:6px;}
+  header img{width:26px;height:26px;object-fit:contain;}
   header .who{flex:1;min-width:0;}
   header .who b{display:block;font-size:.92rem;line-height:1.25;font-weight:600;}
   header .who span{font-size:.72rem;color:#b9c2e4;}
@@ -109,7 +109,7 @@
 <!-- ── 1. Name. Nothing else. ─────────────────────────────────────────── -->
 <section id="screenName" class="intro" hidden>
   <img id="introLogo" src="logo.png" alt="">
-  <h1 id="introTitle">Modern Drivers</h1>
+  <h1 id="introTitle" hidden>Modern Drivers</h1>
   <p class="sub">What is your name?</p>
   <label for="inName">Your name</label>
   <input id="inName" type="text" autocomplete="name" autocapitalize="words" placeholder="Ramesh Patil">
@@ -124,7 +124,7 @@
 <!-- ── 2. Start Ride, live map ────────────────────────────────────────── -->
 <section id="screenMain" class="screen" hidden>
   <header>
-    <img src="logo.png" alt="">
+    <img src="mark.png" alt="">
     <div class="who">
       <b id="hName">—</b>
       <span id="hCode">Modern Drivers</span>

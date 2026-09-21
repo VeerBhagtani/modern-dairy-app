@@ -8,7 +8,11 @@
 window.BRANDING = {
   appName: 'Modern Drivers',
   companyName: 'Modern Dairy, Pune',
+  // Two files, because one image cannot do both jobs. The lockup carries the
+  // wordmark and the strapline and needs room to be read; the mark alone is
+  // what survives at 26px in a header or on a launcher.
   logo: 'logo.png',
+  mark: 'mark.png',
   supportPhone: '',          // shown on the "call the office" prompts when set
   theme: {
     // "Modern" navy and crest red, matching the customer app's tokens.

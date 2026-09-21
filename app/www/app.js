@@ -729,10 +729,11 @@
     if (t.brand) r.setProperty('--navy', t.brand);
     if (t.brandDark) r.setProperty('--navy-deep', t.brandDark);
     if (BRAND.appName) { document.title = BRAND.appName; text('introTitle', BRAND.appName); }
-    if (BRAND.logo) {
-      var l = $('introLogo'); if (l) l.src = BRAND.logo;
-      document.querySelectorAll('header img').forEach(function (i) { i.src = BRAND.logo; });
-    }
+    if (BRAND.logo) { var l = $('introLogo'); if (l) l.src = BRAND.logo; }
+    // The header is 26px. The full lockup there is an unreadable smudge, so it
+    // gets the mark, falling back to the lockup if no mark is supplied.
+    var small = BRAND.mark || BRAND.logo;
+    if (small) document.querySelectorAll('header img').forEach(function (i) { i.src = small; });
   })();
 
   $('btnName').addEventListener('click', saveName);

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Modern Drivers</title>
-<link rel="icon" href="logo.png">
+<link rel="icon" href="mark.png">
 <link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css">
 <script src="vendor/maplibre/maplibre-gl-csp.js" defer></script>
 <style>
@@ -29,14 +29,14 @@
              padding:24px;background:linear-gradient(160deg,var(--navy) 0%,var(--navy-deep) 100%);}
   .signin{background:var(--surface);border-radius:20px;padding:36px 32px;max-width:400px;width:100%;
           box-shadow:0 20px 60px rgba(0,0,0,.28);}
-  .signin img{width:72px;height:72px;object-fit:contain;display:block;margin:0 auto 18px;border-radius:16px;}
+  .signin img{width:200px;max-width:70%;height:auto;object-fit:contain;display:block;margin:0 auto 20px;}
   .signin h1{font-size:1.5rem;margin:0 0 4px;text-align:center;letter-spacing:-.01em;}
   .signin .sub{text-align:center;color:var(--ink-2);font-size:.9rem;margin:0 0 26px;}
 
   /* ── shell ────────────────────────────────────────────────────────── */
   .topbar{background:var(--navy);color:#fff;padding:12px 20px;display:flex;align-items:center;gap:14px;
           flex-wrap:wrap;position:sticky;top:0;z-index:6;}
-  .topbar img{width:34px;height:34px;object-fit:contain;border-radius:8px;}
+  .topbar img{width:32px;height:32px;object-fit:contain;}
   .topbar h1{font-size:1.05rem;margin:0;font-weight:700;letter-spacing:-.01em;}
   .topbar .sp{flex:1;}
   .topbar .meta{font-size:.8rem;color:#b9c2e4;}
@@ -120,8 +120,7 @@
 
 <div id="login" class="signin-bg" hidden>
   <div class="signin">
-    <img src="logo.png" alt="">
-    <h1>Modern Drivers</h1>
+    <img src="logo.png" alt="Modern Drivers">
     <p class="sub">Office dashboard</p>
     <div class="field" id="serverField" hidden>
       <label for="apiBase">Server address</label>
@@ -144,7 +143,7 @@
 
 <div id="app" hidden>
   <div class="topbar">
-    <img src="logo.png" alt="">
+    <img src="mark.png" alt="">
     <h1>Modern Drivers</h1>
     <span class="sp"></span>
     <span id="whoami" class="meta"></span>
