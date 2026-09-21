@@ -507,13 +507,29 @@ router.post('/restaurants/import', requireRole('admin'), writeLimiter, async (re
   const rows = manual.parseCsv(csv);
   if (rows.length < 2) return bad(res, 'The file has no data rows.');
   const header = rows[0].map((h) => h.trim().toLowerCase().replace(/\s+/g, '_'));
-  const col = (n) => header.indexOf(n);
-  if (col('name') === -1) return bad(res, 'Missing required column "name"');
+  // The office's own export calls these "Customer Name" and "Address", and
+  // asking someone to rename columns before every upload is how an import stops
+  // being used. The aliases are here so their file works untouched.
+  const ALIASES = {
+    name: ['name', 'customer_name', 'customer', 'restaurant', 'restaurant_name', 'shop_name'],
+    address: ['address', 'customer_address', 'full_address'],
+    area: ['area', 'locality', 'route'],
+    customer_id: ['customer_id', 'code', 'customer_code'],
+    external_id: ['external_id', 'id'],
+  };
+  const col = (n) => {
+    for (const alias of (ALIASES[n] || [n])) {
+      const i = header.indexOf(alias);
+      if (i !== -1) return i;
+    }
+    return -1;
+  };
+  if (col('name') === -1) return bad(res, 'Missing a name column (accepted: name, customer_name, restaurant)');
 
   const existing = new Set((await repo.C.restaurants().select().get()).docs.map((d) => d.id));
 
   const added = []; const updated = []; const problems = [];
-  const seen = new Set();
+  const seen = new Map();
   const writer = db.bulkWriter();
 
   for (let r = 1; r < rows.length; r += 1) {
@@ -535,11 +551,23 @@ router.post('/restaurants/import', requireRole('admin'), writeLimiter, async (re
     };
 
     const id = placeIdFor({ externalId: base.externalId, name, area });
-    if (seen.has(id)) {
-      problems.push({ row: r + 1, name, error: 'Duplicate of an earlier row in this file' });
-      continue;
+    // Two rows that normalise to the same restaurant are near-certainly a
+    // duplicate in the source data ("SARTH MILK & MILK PRODUCTS" and "SARTH
+    // MILK AND MILK PRODUCTS"). Both are reported so the office can clean the
+    // master list, and the one carrying an actual address is the one kept —
+    // taking whichever happened to come first can leave the useful row on the
+    // floor and the empty one on the map.
+    const prev = seen.get(id);
+    if (prev) {
+      const better = (base.address || '').length > (prev.address || '').length;
+      problems.push({
+        row: r + 1,
+        name,
+        error: `Same restaurant as row ${prev.row} ("${prev.name}"). Kept the one with the fuller address.`,
+      });
+      if (!better) continue;
     }
-    seen.add(id);
+    seen.set(id, { row: r + 1, name, address: base.address });
 
     if (hasCoords) {
       const { place, error } = validatePlace({ ...base, lat: Number(at('lat')), lng: Number(at('lng')) }, { isFacility: false });
