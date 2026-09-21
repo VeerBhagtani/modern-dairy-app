@@ -45,7 +45,14 @@ jobs:
         working-directory: app
         env:
           API_BASE: ${{ secrets.DRIVERS_API_BASE }}
+          # The production API, as the deploy reported it. It lives here rather
+          # than in app/www/config.js because the committed app must stay
+          # environment-agnostic — one source tree, and the target chosen at
+          # build time. A DRIVERS_API_BASE secret overrides it for a staging
+          # build.
+          DEFAULT_API_BASE: https://modern-drivers-795895369854.asia-south1.run.app
         run: |
+          API_BASE="${API_BASE:-$DEFAULT_API_BASE}"
           if [ -z "$API_BASE" ]; then
             echo "::warning::DRIVERS_API_BASE is not set — this APK cannot register a driver or start a ride."
             echo "configured=false" >> "$GITHUB_OUTPUT"
