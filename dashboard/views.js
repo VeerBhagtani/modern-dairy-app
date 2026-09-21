@@ -545,6 +545,7 @@ window.DRIVERS_VIEWS = (function () {
         + placeForm('restaurants')
         + '</div>'
         + awaitingCard(awaiting)
+        + geocodingKeyCard()
         + '<div class="card"><h2>Import / export</h2>'
         + '<p class="muted">Only <code>name</code> is required. <code>area</code> and <code>address</code> make the location lookup far more accurate; '
         + '<code>lat</code> and <code>lng</code> skip it entirely. Other columns: <code>customer_id, radius_m, external_id, schedule, active</code>.</p>'
@@ -558,6 +559,7 @@ window.DRIVERS_VIEWS = (function () {
 
       bindPlaceForms();
       bindAwaiting();
+      bindGeocodingKey();
       on('#btnExport', 'click', function () {
         API.download('/admin/restaurants/export.csv', {}, 'restaurants.csv').catch(function (e) { alert(e.message); });
       });
@@ -577,6 +579,21 @@ window.DRIVERS_VIEWS = (function () {
     });
   }
 
+  function geocodingKeyCard() {
+    return '<div class="card"><h2>Address lookup key</h2>'
+      + '<p class="muted">Turning a restaurant\'s address into a point on the map uses Google\'s Geocoding API, which needs a key. '
+      + 'Paste it once. It is stored in Google Secret Manager, never in this site and never shown again — if you lose it, make a new one.</p>'
+      + '<p class="tiny">Create it at <b>APIs &amp; Services → Credentials → Create credentials → API key</b>, '
+      + 'restrict it to the <b>Geocoding API</b>, and leave <b>Application restrictions</b> set to <b>None</b> '
+      + '(the lookup runs on the server, which has no fixed IP — any other setting blocks it). '
+      + 'Roughly ₹450 per thousand lookups, once.</p>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+      + '<input id="geoKey" type="password" autocomplete="off" placeholder="AIzaSy…" style="max-width:420px">'
+      + '<button class="btn-outline btn-sm" id="btnGeoKey">Save key</button>'
+      + '</div><p id="geoKeyMsg" class="tiny" style="margin-top:8px"></p>'
+      + '</div>';
+  }
+
   // Restaurants the engine is ignoring, and the two ways out: look the address
   // up, or place the pin by hand. Nothing here counts towards any kilometre
   // until it leaves this list, which is the point of showing it so prominently.
@@ -592,12 +609,7 @@ window.DRIVERS_VIEWS = (function () {
       + (pending ? '<p class="muted">' + pending + ' have never been looked up. '
           + '<button class="btn-primary btn-sm" id="btnLocate">Find locations (100 at a time)</button> '
           + '<span id="locMsg" class="tiny"></span></p>' : '')
-      + '<details style="margin:10px 0"><summary class="tiny">Geocoding key</summary>'
-      + '<p class="tiny">Looking addresses up needs a Google Geocoding API key. Paste it once; it is stored in Secret Manager '
-      + 'and never shown again. Around ₹450 for a thousand lookups, one time.</p>'
-      + '<input id="geoKey" type="password" placeholder="Paste the API key" style="max-width:420px;display:inline-block"> '
-      + '<button class="btn-outline btn-sm" id="btnGeoKey">Save key</button> <span id="geoKeyMsg" class="tiny"></span>'
-      + '</details>'
+
       + (unconfirmed ? '<p class="muted">' + unconfirmed + ' came back uncertain and need a person to look.</p>' : '')
       + '<div style="overflow-x:auto;max-height:420px;overflow-y:auto"><table><thead><tr>'
       + '<th>Name</th><th>Area</th><th>What the lookup found</th><th>Confidence</th><th>Place it</th>'
@@ -623,6 +635,19 @@ window.DRIVERS_VIEWS = (function () {
       + '</div>';
   }
 
+  function bindGeocodingKey() {
+    on('#btnGeoKey', 'click', function () {
+      var v = (document.getElementById('geoKey').value || '').trim();
+      var m = document.getElementById('geoKeyMsg');
+      if (!v) { m.innerHTML = '<span class="err">Paste the key first.</span>'; return; }
+      m.textContent = 'Saving…';
+      API.setIntegrationSecret('geocoding', v).then(function () {
+        document.getElementById('geoKey').value = '';
+        m.innerHTML = '<span class="ok-msg">Saved. Import your restaurants, then use Find locations.</span>';
+      }).catch(function (e) { m.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
+    });
+  }
+
   function bindAwaiting() {
     on('#btnLocate', 'click', function () {
       var msg = document.getElementById('locMsg');
@@ -640,17 +665,6 @@ window.DRIVERS_VIEWS = (function () {
             : e.message) + '</span>';
         btn.disabled = false;
       });
-    });
-
-    on('#btnGeoKey', 'click', function () {
-      var v = document.getElementById('geoKey').value;
-      var m = document.getElementById('geoKeyMsg');
-      if (!v) { m.textContent = 'Paste the key first.'; return; }
-      m.textContent = 'Saving…';
-      API.setIntegrationSecret('geocoding', v).then(function () {
-        document.getElementById('geoKey').value = '';
-        m.innerHTML = '<span class="ok-msg">Saved. Try Find locations.</span>';
-      }).catch(function (e) { m.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
     });
 
     document.querySelectorAll('.confirm-cand').forEach(function (b) {
