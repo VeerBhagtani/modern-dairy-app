@@ -112,4 +112,9 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Modern Drivers API listening on :${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Modern Drivers API listening on :${PORT}`);
+  // After listening, never before: the seed touches Firestore, and the service
+  // must come up and answer whether or not that succeeds.
+  require('./services/seedAdmin').seedAdminOnStartup();
+});

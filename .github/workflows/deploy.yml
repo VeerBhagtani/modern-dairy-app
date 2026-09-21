@@ -141,6 +141,21 @@ jobs:
           # the list in case the dashboard is ever served from there too.
           OWNER="${GITHUB_REPOSITORY%%/*}"
           ORIGINS="https://${OWNER,,}.github.io,https://${P}.web.app,https://${P}.firebaseapp.com"
+
+          # The first office login, seeded by the service on startup because the
+          # deploy account can manage Firestore indexes but not write documents,
+          # and widening it for one row would hand CI read/write access to every
+          # driver's location history.
+          #
+          # This is bcrypt over a 24-character random password — around 143 bits.
+          # A hash of that is safe in the open: it cannot be reversed and there
+          # is nothing to guess, which is what a password hash is for. The
+          # plaintext went to the owner privately, and the dashboard requires it
+          # to be changed at first sign-in. Seeding never overwrites, so the
+          # changed password survives every later deploy.
+          SEED_USER='Modern-dairy'
+          SEED_NAME='Modern Dairy'
+          SEED_HASH='$2a$12$G8CiQjZrP0X8SF.fD2.9zOBxlY8FJ3B2lBLGkhH6y7oOs7lrKXL9e'
           # ALLOWED_ORIGINS is itself a comma-separated list, and --set-env-vars
           # splits on commas — so the list has to be passed with gcloud's
           # alternate delimiter syntax, "^@^", which makes @ the separator
@@ -151,7 +166,7 @@ jobs:
           # office dashboard and forty phones all reach this over the internet.
           gcloud run deploy "$S" --project "$P" --region "$R" --source backend \
             --allow-unauthenticated --ingress=all --port 8080 --quiet \
-            --set-env-vars "^@^GCP_PROJECT_ID=${P}@NODE_ENV=production@ALLOWED_ORIGINS=${ORIGINS}"
+            --set-env-vars "^@^GCP_PROJECT_ID=${P}@NODE_ENV=production@ALLOWED_ORIGINS=${ORIGINS}@SEED_ADMIN_USERNAME=${SEED_USER}@SEED_ADMIN_NAME=${SEED_NAME}@SEED_ADMIN_HASH=${SEED_HASH}"
           # Cloud Run can hold more than one address for a service, and
           # `status.url` has handed back a legacy one that 404s while the
           # service itself was serving fine on another. So rather than trusting
@@ -231,29 +246,6 @@ jobs:
             git commit -m "Point the dashboard at ${{ steps.backend.outputs.url }} [skip ci]"
             git push origin HEAD:"${{ github.ref_name }}"
           fi
-
-      # Nobody can sign in until an account exists, and there is no
-      # self-service signup on a system holding forty people's live positions.
-      #
-      # The hash below is bcrypt over a 24-character random password — about
-      # 143 bits. Publishing a hash of that is safe in a way publishing a
-      # memorable password never is: it cannot be reversed and cannot be
-      # guessed, which is the entire purpose of a password hash. The plaintext
-      # went to the owner privately, and the dashboard requires it to be
-      # changed on first sign-in.
-      #
-      # Seeding never overwrites: once that password has been changed, a later
-      # deploy must not put the original back.
-      - name: Seed the office login
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
-          GCP_PROJECT_ID: ${{ steps.cfg.outputs.project }}
-        run: |
-          cd backend
-          npm ci --omit=dev
-          node scripts/seed-admin.js \
-            --user 'Modern-dairy' --name 'Modern Dairy' --role admin \
-            --hash '$2a$12$G8CiQjZrP0X8SF.fD2.9zOBxlY8FJ3B2lBLGkhH6y7oOs7lrKXL9e'
 
       # Republished here rather than left to the dashboard workflow: a push made
       # with the workflow's own token does not start another workflow, so

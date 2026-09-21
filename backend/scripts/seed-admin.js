@@ -26,7 +26,7 @@ const name = arg('name', username);
 const role = arg('role', 'admin');
 const passwordHash = arg('hash');
 
-if (!username || !/^[A-Za-z0-9_.@-]{1,128}$/.test(username)) {
+if (!username || !/^[A-Za-z0-9_.@-]{1,128}$/.test(username) || username === '.' || username === '..') {
   console.error('A valid --user is required.');
   process.exit(1);
 }
