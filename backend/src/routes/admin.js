@@ -605,12 +605,96 @@ router.post('/restaurants/import', requireRole('admin'), writeLimiter, async (re
 
 // GET /admin/restaurants/awaiting-location
 // Everything the engine is currently ignoring, and why.
+//
+// The list of rows is capped — nobody reads three thousand of them — but the
+// counts are not: they are the whole list, counted. Reporting "500" when 3,152
+// were waiting told the office the job was done when it had barely started.
 router.get('/restaurants/awaiting-location', requireRole('viewer'), async (req, res) => {
-  const snap = await repo.C.restaurants().where('locationStatus', 'in', ['pending', 'unconfirmed']).limit(500).get();
-  res.json({
-    success: true,
-    data: snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+  const snap = await repo.C.restaurants().where('locationStatus', 'in', ['pending', 'unconfirmed']).get();
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  const counts = {
+    total: rows.length, pending: 0, unconfirmed: 0, acceptable: 0, areaOnly: 0, notFound: 0,
+  };
+  for (const p of rows) {
+    if (p.locationStatus === 'pending') { counts.pending += 1; continue; }
+    counts.unconfirmed += 1;
+    const c = p.candidate && p.candidate.confidence;
+    if (c === geocode.CONFIDENCE.APPROXIMATE) counts.acceptable += 1;
+    else if (c === geocode.CONFIDENCE.AREA_ONLY) counts.areaOnly += 1;
+    else counts.notFound += 1;
+  }
+
+  // Street-level candidates first: those are the ones a person can act on in
+  // bulk, and burying them under the hopeless rows is what made this screen
+  // feel like three thousand forms to fill in.
+  const order = { APPROXIMATE: 0, AREA_ONLY: 1 };
+  rows.sort((a, b) => {
+    const ra = a.locationStatus === 'pending' ? 3 : (order[a.candidate?.confidence] ?? 2);
+    const rb = b.locationStatus === 'pending' ? 3 : (order[b.candidate?.confidence] ?? 2);
+    return ra - rb;
   });
+
+  res.json({ success: true, data: { counts, rows: rows.slice(0, 200) } });
+});
+
+// POST /admin/restaurants/accept-candidates { limit }
+//
+// Nobody is going to type three thousand pairs of coordinates, and asking them
+// to is how a list like this quietly stops being kept up to date — which costs
+// more accuracy in the end than the thing the caution was protecting.
+//
+// So the street-level candidates can be accepted together, by a person who has
+// been told plainly what they are accepting. What this refuses is the point:
+//
+//   accepted  APPROXIMATE — the right road or block, found from an address the
+//             office typed. Tens of metres out at worst, and a driver standing
+//             on that road is genuinely there on Modern Dairy business.
+//
+//   refused   AREA_ONLY — the centre of a suburb. Kilometres wide. Accepting
+//             these in bulk would geofence half of Pune and turn every private
+//             errand through it into billable distance. They wait for a person
+//             to place them, and no button here will ever do it for them.
+//
+//   refused   rows with no candidate at all — there is nothing to accept.
+router.post('/restaurants/accept-candidates', requireRole('admin'), writeLimiter, async (req, res) => {
+  const limit = Math.min(Math.max(Number(req.body?.limit) || 500, 1), 1000);
+  const snap = await repo.C.restaurants().where('locationStatus', '==', 'unconfirmed').get();
+
+  const eligible = snap.docs.filter((d) => {
+    const c = d.data().candidate;
+    return !!c
+      && c.confidence === geocode.CONFIDENCE.APPROXIMATE
+      && Number.isFinite(c.lat) && Number.isFinite(c.lng);
+  });
+
+  const take = eligible.slice(0, limit);
+  let accepted = 0;
+  for (let i = 0; i < take.length; i += 400) {
+    const batch = db.batch();
+    for (const doc of take.slice(i, i + 400)) {
+      const c = doc.data().candidate;
+      batch.set(doc.ref, {
+        lat: c.lat,
+        lng: c.lng,
+        locationStatus: 'confirmed',
+        locationSource: 'geocoded_accepted_in_bulk',
+        confirmedBy: req.adminId,
+        confirmedAt: Date.now(),
+      }, { merge: true });
+      accepted += 1;
+    }
+    /* eslint-disable-next-line no-await-in-loop */
+    await batch.commit();
+  }
+
+  repo.invalidatePlaceCache();
+  await repo.writeAudit({
+    adminId: req.adminId,
+    action: 'restaurants.accept_candidates',
+    after: { accepted, remaining: eligible.length - accepted },
+  });
+  res.json({ success: true, data: { accepted, remaining: eligible.length - accepted } });
 });
 
 // POST /admin/restaurants/locate { limit }
@@ -640,7 +724,9 @@ router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (re
     let out;
     try {
       /* eslint-disable-next-line no-await-in-loop */
-      out = await geocode.geocodeOne(query, apiKey);
+      out = await geocode.geocodeOne(query, apiKey, {
+        hasStreetAddress: geocode.looksLikeStreetAddress(p.address),
+      });
     } catch (e) {
       failures.push({ name: p.name, error: e.message });
       if (e.message === 'OVER_QUERY_LIMIT') break;   // stop rather than burn the quota

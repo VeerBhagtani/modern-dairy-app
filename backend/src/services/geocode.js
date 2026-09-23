@@ -24,8 +24,46 @@ const CONFIDENCE = {
   NONE: 'NONE',             // nothing came back
 };
 
-// Only EXACT is placed without a person looking at it. The rest are held.
+// Only EXACT is placed on the strength of the confidence alone. The rest are
+// held — see canAutoPlace below for the one further case that is safe.
 const AUTO_PLACE = new Set([CONFIDENCE.EXACT]);
+
+/* Does the spreadsheet row carry a real street address, or just a
+ * neighbourhood?
+ *
+ * This matters because it changes what a street-level match means. Geocoding
+ * "Hotel Sai, Kothrud" to the middle of a road is a shrug. Geocoding
+ * "32/A Hadapsar Industrial Estate, Pune" to the middle of that road is very
+ * nearly right — the building is on it. A plot or shop number alongside a road
+ * name is what separates the two, so that is what is looked for.
+ */
+function looksLikeStreetAddress(address) {
+  const a = String(address || '').replace(/\s+/g, ' ').trim();
+  if (a.length < 12) return false;
+  if (!/\d/.test(a)) return false;              // no plot, shop or door number
+  return a.split(/[\s,]+/).filter(Boolean).length >= 3;
+}
+
+/* Whether a result may become a location without a person looking at it.
+ *
+ * A confirmed pin is a geofence, so this stays narrow. Two cases pass:
+ *
+ *   EXACT                     the geocoder found the building itself.
+ *
+ *   APPROXIMATE, from a real  the right road, from an address the office
+ *   street address, with no   typed — tens of metres out at worst, and a
+ *   other candidate           driver standing on that road is genuinely there
+ *                             on Modern Dairy business.
+ *
+ * AREA_ONLY never passes, whatever the row looks like: that is the centre of a
+ * suburb, kilometres wide, and it would turn an errand across Kothrud into
+ * billable distance. Nor does an ambiguous match, address or not — two
+ * candidates means the geocoder does not know which restaurant this is.
+ */
+function canAutoPlace({ confidence, alternatives } = {}, { hasStreetAddress = false } = {}) {
+  if (confidence === CONFIDENCE.EXACT) return true;
+  return confidence === CONFIDENCE.APPROXIMATE && hasStreetAddress === true && !alternatives;
+}
 
 /* The query. Address first when there is one — it is worth far more than a
  * name — then name and area, and always the city and country, because
@@ -98,7 +136,7 @@ function toPoint(result) {
 
 /* One lookup. The caller supplies the key so this stays testable and so a
  * missing key is a configuration problem reported once, not a thousand times. */
-async function geocodeOne(query, apiKey, { fetchImpl = fetch } = {}) {
+async function geocodeOne(query, apiKey, { fetchImpl = fetch, hasStreetAddress = false } = {}) {
   const url = 'https://maps.googleapis.com/maps/api/geocode/json'
     + `?address=${encodeURIComponent(query)}`
     + '&components=country:IN'
@@ -116,8 +154,18 @@ async function geocodeOne(query, apiKey, { fetchImpl = fetch } = {}) {
     confidence,
     alternatives,
     point: toPoint(result),
-    autoPlace: AUTO_PLACE.has(confidence),
+    autoPlace: canAutoPlace({ confidence, alternatives }, { hasStreetAddress }),
   };
 }
 
-module.exports = { CONFIDENCE, AUTO_PLACE, buildQuery, assessConfidence, assessResponse, toPoint, geocodeOne };
+module.exports = {
+  CONFIDENCE,
+  AUTO_PLACE,
+  buildQuery,
+  assessConfidence,
+  assessResponse,
+  canAutoPlace,
+  looksLikeStreetAddress,
+  toPoint,
+  geocodeOne,
+};

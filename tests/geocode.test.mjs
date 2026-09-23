@@ -87,6 +87,89 @@ test('an address is preferred over a name, because it is worth far more', () => 
   assert.ok(!/Hotel Sai/.test(q), 'the name adds nothing once there is a street address');
 });
 
+// ── what may be placed without a person looking ──────────────────────────────
+//
+// Three thousand restaurants cannot be placed by hand, so this rule had to
+// widen past "rooftop only". These tests pin exactly how far it widened — and,
+// more importantly, what it still refuses.
+
+test('a street-level match from a real address is placed', () => {
+  // The office's own spreadsheet has rows like "32/A, Hadapsar Industrial
+  // Estate". Landing on that road is tens of metres out, and a driver standing
+  // on it is genuinely at that customer.
+  assert.ok(geo.canAutoPlace(
+    { confidence: geo.CONFIDENCE.APPROXIMATE, alternatives: 0 },
+    { hasStreetAddress: true },
+  ));
+});
+
+test('the same match from a name and an area alone is not', () => {
+  // "Hotel Sai, Kothrud" landing on some road is a shrug, not an address.
+  assert.ok(!geo.canAutoPlace(
+    { confidence: geo.CONFIDENCE.APPROXIMATE, alternatives: 0 },
+    { hasStreetAddress: false },
+  ));
+});
+
+test('the centre of a suburb is never placed, address or no address', () => {
+  // The rule that must never widen. A suburb centroid is kilometres across, and
+  // accepting one turns every private errand through Kothrud into billable
+  // distance. No combination of inputs may let it through.
+  for (const hasStreetAddress of [true, false]) {
+    for (const alternatives of [0, 3]) {
+      assert.ok(!geo.canAutoPlace(
+        { confidence: geo.CONFIDENCE.AREA_ONLY, alternatives },
+        { hasStreetAddress },
+      ), 'AREA_ONLY must never be placed automatically');
+    }
+  }
+  assert.ok(!geo.canAutoPlace({ confidence: geo.CONFIDENCE.NONE }, { hasStreetAddress: true }));
+  assert.ok(!geo.canAutoPlace(undefined, undefined));
+});
+
+test('an ambiguous street-level match still goes to a person', () => {
+  // Two candidates means the geocoder does not know which restaurant this is,
+  // and having an address does not settle that.
+  assert.ok(!geo.canAutoPlace(
+    { confidence: geo.CONFIDENCE.APPROXIMATE, alternatives: 1 },
+    { hasStreetAddress: true },
+  ));
+});
+
+test('a rooftop match is placed whatever the spreadsheet gave', () => {
+  assert.ok(geo.canAutoPlace({ confidence: geo.CONFIDENCE.EXACT, alternatives: 0 }, { hasStreetAddress: false }));
+});
+
+test('an area name is not mistaken for a street address', () => {
+  for (const good of [
+    '32/A, Hadapsar Industrial Estate, Pune',
+    'Shop 4, Paud Road, Kothrud',
+    '1204 Sadashiv Peth, Near Tilak Road',
+  ]) assert.ok(geo.looksLikeStreetAddress(good), `"${good}" should count as an address`);
+
+  for (const bad of ['Kothrud', 'Baner', '', null, undefined, 'Pune', 'Camp area', '411038']) {
+    assert.ok(!geo.looksLikeStreetAddress(bad), `"${bad}" should not count as an address`);
+  }
+});
+
+test('a lookup reports autoPlace using the address it was given', async () => {
+  const body = {
+    status: 'OK',
+    results: [{
+      geometry: { location: { lat: 18.5, lng: 73.8 }, location_type: 'GEOMETRIC_CENTER' },
+      formatted_address: 'Hadapsar Industrial Estate Rd, Pune',
+    }],
+  };
+  const fetchImpl = async () => ({ ok: true, json: async () => body });
+
+  const withAddress = await geo.geocodeOne('q', 'key', { fetchImpl, hasStreetAddress: true });
+  assert.equal(withAddress.confidence, geo.CONFIDENCE.APPROXIMATE);
+  assert.equal(withAddress.autoPlace, true);
+
+  const without = await geo.geocodeOne('q', 'key', { fetchImpl });
+  assert.equal(without.autoPlace, false, 'no address means no automatic placement');
+});
+
 // ── re-importing the same spreadsheet ────────────────────────────────────────
 
 test('the same row always gets the same id, however it is typed', () => {
