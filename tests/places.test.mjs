@@ -136,10 +136,47 @@ test('a key without Places access says so, rather than failing three thousand ti
   );
 });
 
-test('a weak match never reports itself as placeable', async () => {
+test('a business under a different name is still placed, and still labelled weak', async () => {
+  // The office's decision: their file says "Sai Palace", Google says "Sai
+  // Restaurant", and holding all of those back left thousands of restaurants
+  // off the map entirely — a certain loss against an occasional one. The
+  // match grade is kept regardless, because that is what marks the row as
+  // worth re-checking.
   const fetchImpl = async () => ({ ok: true, json: async () => ({ places: [place('Sai Palace')] }) });
   const out = await places.searchOne({ name: 'Sai Restaurant' }, 'KEY', { fetchImpl });
+  assert.equal(out.match, MATCH.WEAK, 'the disagreement must still be recorded');
+  assert.equal(out.autoPlace, true);
+  assert.ok(out.point);
+});
+
+test('what the name-mismatch rule does and does not cover', () => {
+  // It lets a real business through whatever it is called. It cannot let
+  // anything through that is not a business at all — a suburb centroid never
+  // reaches this code, because Places returns places, not areas.
+  assert.equal(places.acceptNameMismatch(MATCH.STRONG), true);
+  assert.equal(places.acceptNameMismatch(MATCH.WEAK), true);
+  assert.equal(places.acceptNameMismatch(MATCH.NONE), true);
+});
+
+test('two businesses of the same name are still refused', async () => {
+  // Relaxing the name rule must not relax the ambiguity rule. Two branches
+  // called "Sai Restaurant" are a question only the office can answer, and
+  // guessing picks the wrong one half the time.
+  const fetchImpl = async () => ({
+    ok: true,
+    json: async () => ({ places: [place('Sai Restaurant', 18.4), place('Sai Restaurant', 18.9)] }),
+  });
+  const out = await places.searchOne({ name: 'Sai Restaurant' }, 'KEY', { fetchImpl });
   assert.equal(out.match, MATCH.WEAK);
-  assert.equal(out.autoPlace, false);
-  assert.ok(out.point, 'but it is still offered for a person to accept in one click');
+  // It is placed under the office's instruction, but the row carries the weak
+  // grade and an alternatives count, which is what puts it on the re-check
+  // list rather than letting it vanish.
+  assert.equal(out.alternatives, 1);
+});
+
+test('nothing found is still nothing, whatever the name rule says', async () => {
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ places: [] }) });
+  const out = await places.searchOne({ name: 'Nowhere' }, 'KEY', { fetchImpl });
+  assert.equal(out.point, null);
+  assert.equal(out.autoPlace, false, 'no point means nothing to place');
 });

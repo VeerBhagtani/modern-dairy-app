@@ -160,13 +160,36 @@ async function searchOne(row, apiKey, { fetchImpl = fetch } = {}) {
     match,
     point,
     alternatives,
-    // A named business at its own coordinates, and the name agrees. This is as
-    // precise as an address lookup gets, and it is the only case placed here
-    // without a person.
-    autoPlace: match === MATCH.STRONG && !!point,
+    // Anything Places found is a real business at its own building, which is
+    // as precise as this gets. A name that does not match is placed too, on
+    // the office's instruction — see acceptNameMismatch below for what that
+    // trades away.
+    autoPlace: !!point && acceptNameMismatch(match),
   };
 }
 
+/* Whether a business whose name does not match the spreadsheet is still placed.
+ *
+ * The office asked for this explicitly, and the reasoning holds: their file
+ * calls a shop "Sai Palace", Google calls it "Sai Restaurant", and nine times
+ * out of ten that is the same shop typed two ways. Holding all of those back
+ * left thousands of restaurants off the map, and a restaurant that is off the
+ * map contributes nothing at all — which is a certain loss weighed against an
+ * occasional one.
+ *
+ * What it trades away, stated plainly: sometimes it is the shop next door, and
+ * the pin lands a few hundred metres off. The kilometres are still real and
+ * still business — the driver was on that road, delivering — but the visit may
+ * be credited to the wrong customer. Every such row is written with
+ * locationSource 'places_name_differs' so the office can find and re-check
+ * them, and the search still refuses to choose between two businesses that
+ * both match, and still refuses a suburb centroid outright.
+ */
+function acceptNameMismatch(match) {
+  return match === MATCH.STRONG || match === MATCH.WEAK || match === MATCH.NONE;
+}
+
 module.exports = {
-  MATCH, GENERIC, distinctive, compareNames, buildQuery, assessResponse, toPoint, searchOne,
+  MATCH, GENERIC, distinctive, compareNames, buildQuery, assessResponse, toPoint,
+  acceptNameMismatch, searchOne,
 };

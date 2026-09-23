@@ -886,7 +886,12 @@ router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (re
       patch.lat = found.point.lat;
       patch.lng = found.point.lng;
       patch.locationStatus = 'confirmed';
-      patch.locationSource = found === hit ? 'places' : 'geocoded';
+      // A business placed under a name that is not the office's own is marked
+      // apart from the rest, so these can be listed and re-checked later
+      // rather than disappearing into the pile.
+      patch.locationSource = found === hit
+        ? (hit.match === placesApi.MATCH.STRONG ? 'places' : 'places_name_differs')
+        : 'geocoded';
       placed += 1;
       // "Precise" means the building itself, however it was found: a named
       // business, or an address the geocoder resolved to a rooftop.

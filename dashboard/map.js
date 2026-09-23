@@ -141,6 +141,51 @@ window.DRIVERS_MAP = (function () {
     return true;
   }
 
+  /* Many rides at once, for the reports screen.
+   *
+   * Deliberately not drawRoute() in a loop: that draws a dot per GPS fix, and
+   * twenty rides is tens of thousands of dots — enough to lock the browser up
+   * and to turn the picture into a smear. Here each ride is one line, in one
+   * source, and the individual fixes stay where they belong, on the single-ride
+   * replay where somebody is actually auditing them.
+   *
+   * @param tracks [{ rideId, label, color, coords: [[lng,lat], ...] }]
+   */
+  function drawTracks(map, sourceId, tracks) {
+    if (!map || !map.isStyleLoaded()) return false;
+    var fc = {
+      type: 'FeatureCollection',
+      features: (tracks || []).filter(function (t) { return t.coords && t.coords.length > 1; })
+        .map(function (t) {
+          return {
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: t.coords },
+            properties: { label: t.label || '', color: t.color || '#1B2A6B', rideId: t.rideId || '' },
+          };
+        }),
+    };
+
+    if (map.getSource(sourceId)) { map.getSource(sourceId).setData(fc); return true; }
+    map.addSource(sourceId, { type: 'geojson', data: fc });
+    map.addLayer({
+      id: sourceId + '-line', type: 'line', source: sourceId,
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      // Several drivers often share a road. Semi-transparent lines let the
+      // overlap show as a darker stripe rather than hiding all but the last
+      // one drawn.
+      paint: { 'line-color': ['get', 'color'], 'line-width': 3, 'line-opacity': 0.6 },
+    });
+    return true;
+  }
+
+  function clearLayer(map, sourceId) {
+    if (!map || !map.getSource(sourceId)) return;
+    [sourceId + '-line', sourceId + '-sym', sourceId + '-dots'].forEach(function (id) {
+      if (map.getLayer(id)) map.removeLayer(id);
+    });
+    map.removeSource(sourceId);
+  }
+
   function drawPlaces(map, sourceId, places, color) {
     if (!map || !map.isStyleLoaded() || !places.length) return;
     // A place still awaiting a location has no coordinates. One such row would
@@ -169,5 +214,14 @@ window.DRIVERS_MAP = (function () {
     try { map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 50, maxZoom: 15, duration: 500 }); } catch (e) { /* degenerate bounds */ }
   }
 
-  return { create: create, syncMarkers: syncMarkers, drawRoute: drawRoute, drawPlaces: drawPlaces, fitTo: fitTo, esc: esc };
+  return {
+    create: create,
+    syncMarkers: syncMarkers,
+    drawRoute: drawRoute,
+    drawTracks: drawTracks,
+    clearLayer: clearLayer,
+    drawPlaces: drawPlaces,
+    fitTo: fitTo,
+    esc: esc,
+  };
 })();
