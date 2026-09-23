@@ -1,0 +1,189 @@
+name: Code audit
+
+# Claude reviews this codebase and opens a pull request.
+#
+# This is the other half of maintenance. The Maintenance screen in the
+# dashboard audits the RUNNING SYSTEM — data that is not flowing, work that is
+# queued, evidence that is missing. This audits the CODE.
+#
+# It lives here rather than behind a button in the dashboard for one reason: a
+# web page that can change production code is one stolen office login away from
+# being arbitrary code execution on the business. Here, the change arrives as a
+# pull request with a diff somebody reads, and nothing reaches a driver's phone
+# until a person merges it.
+#
+# ── SETUP (one time) ────────────────────────────────────────────────────
+# Settings → Secrets and variables → Actions → New repository secret:
+#
+#   ANTHROPIC_API_KEY   from console.anthropic.com → API keys
+#
+# It may be the same key the dashboard uses. Without it this workflow does
+# nothing and says so, rather than failing every week.
+
+on:
+  schedule:
+    # Early Monday, IST. Something to read with the week's first coffee rather
+    # than a notification in the middle of a delivery round.
+    - cron: '0 1 * * 1'
+  workflow_dispatch:
+    inputs:
+      focus:
+        description: 'Something specific to look at (optional)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: code-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: modern-drivers-standalone
+          # Enough history for Claude to see what changed lately and why.
+          fetch-depth: 50
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Is there a key?
+        id: key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY}" ]; then
+            echo "has=no" >> "$GITHUB_OUTPUT"
+            {
+              echo "## No Anthropic API key"
+              echo
+              echo "Add a repository secret named \`ANTHROPIC_API_KEY\` and this will run."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "has=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The tests are the floor. Claude is told what is already failing so it
+      # does not spend the audit rediscovering it, and so a change that breaks
+      # something is visibly its fault and not pre-existing.
+      - name: Run the tests first, and record what they say
+        if: steps.key.outputs.has == 'yes'
+        run: |
+          npm test > /tmp/test-output.txt 2>&1 && echo "TESTS_PASS=yes" >> "$GITHUB_ENV" || echo "TESTS_PASS=no" >> "$GITHUB_ENV"
+          tail -40 /tmp/test-output.txt
+
+      - name: Let Claude read the codebase and fix what it finds
+        if: steps.key.outputs.has == 'yes'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          FOCUS: ${{ inputs.focus }}
+        run: |
+          npm install -g @anthropic-ai/claude-code
+
+          cat > /tmp/brief.md <<'BRIEF'
+          You are the maintaining engineer for Modern Drivers, a driver-tracking platform
+          running in production for Modern Dairy in Pune. Around forty drivers depend on the
+          Android app; the office bills against the kilometre figures this code produces.
+
+          Audit this codebase and fix what you find. Work on the current branch.
+
+          The rule the whole product is built around: only provable Modern Dairy business
+          kilometres count. Distance the system cannot verify is reported as unknown and is
+          never folded into the business total. Any change that would let an unverified
+          number reach the business figures is wrong, however reasonable it looks. Read
+          backend/src/drivers/distance.js and classification.js before touching anything in
+          that pipeline.
+
+          Look for, in this order:
+
+          1. Correctness bugs that would produce wrong kilometres, wrong visit detection, or
+             lost GPS data. This is the one that matters.
+          2. Security: authentication, authorisation, input validation, anything that lets
+             one driver reach another driver's data, anything that logs a secret.
+          3. Crashes and unhandled rejections — this runs on Cloud Run, where an unhandled
+             rejection takes the service down for everybody.
+          4. Tests that are missing for logic that decides money.
+          5. Dead code, stale comments, and comments that no longer match the code.
+
+          Rules:
+          - Every change must come with tests, and `npm test` must pass before you finish.
+          - Do not reformat, rename, or restructure anything you are not fixing. A large
+            diff is a diff nobody reviews, and an unreviewed diff is worse than the bug.
+          - Do not add dependencies.
+          - Do not change API contracts the Android app depends on — a driver's phone may
+            be running last month's build for weeks.
+          - If you find something serious you cannot safely fix, write it up in the summary
+            instead of guessing.
+          - If the codebase is in good shape, change nothing and say so. An honest "nothing
+            to fix" is a useful result; an invented refactor is not.
+
+          Finish by writing /tmp/summary.md: what you changed, why, and anything you found
+          but deliberately did not touch.
+          BRIEF
+
+          if [ -n "$FOCUS" ]; then
+            printf '\n\nThe office specifically asked you to look at: %s\n' "$FOCUS" >> /tmp/brief.md
+          fi
+          printf '\n\nTests before you started: %s\n' "${TESTS_PASS}" >> /tmp/brief.md
+
+          claude --print --permission-mode acceptEdits \
+                 --allowedTools 'Read,Grep,Glob,Edit,Write,Bash(npm test),Bash(node --check *),Bash(git diff *),Bash(git log *)' \
+                 < /tmp/brief.md || echo "The audit ended early; any changes it made are still below."
+
+      - name: The tests have to pass, or nothing is proposed
+        if: steps.key.outputs.has == 'yes'
+        id: verify
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "changed=no" >> "$GITHUB_OUTPUT"
+            echo "Nothing to propose." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "changed=yes" >> "$GITHUB_OUTPUT"
+          # A pull request whose tests fail wastes the reviewer's time and
+          # teaches them to distrust the next one.
+          npm test
+
+      - name: Open a pull request
+        if: steps.key.outputs.has == 'yes' && steps.verify.outputs.changed == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BRANCH="claude/code-audit-$(date -u +%Y-%m-%d)"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -q -F - <<'MSG'
+          Weekly code audit
+
+          Found and fixed by the scheduled code audit. The tests pass on this
+          branch; the reasoning is in the pull request body.
+
+          Co-Authored-By: Claude <noreply@anthropic.com>
+          MSG
+          git push -q origin "$BRANCH"
+
+          {
+            echo "Claude audited the codebase and proposes the changes in this branch."
+            echo
+            echo "**The tests pass here** — the workflow refuses to open a pull request otherwise."
+            echo
+            echo "Read the diff before merging. Nothing reaches a driver's phone until you do."
+            echo
+            echo '---'
+            echo
+            cat /tmp/summary.md 2>/dev/null || echo '_No summary was written._'
+          } > /tmp/body.md
+
+          gh pr create --base modern-drivers-standalone --head "$BRANCH" \
+            --title "Weekly code audit" --body-file /tmp/body.md

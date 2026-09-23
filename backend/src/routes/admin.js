@@ -18,6 +18,7 @@ const { placeIdFor } = require('../services/placeKey');
 const geocode = require('../services/geocode');
 const placesApi = require('../services/places');
 const legObservations = require('../drivers/legObservations');
+const maintenance = require('../services/maintenance');
 const { getSecret, setSecret, secretStatus, KNOWN_SECRETS } = require('../services/secretManager');
 const {
   isValidId, isBoundedString, isOptionalBoundedString, pickAllowed, hasForbiddenKeys,
@@ -953,6 +954,46 @@ router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (re
     success: true,
     data: { looked: snap.size, placed, precise, heldForReview, notFound, stillPending, failures },
   });
+});
+
+// ---------------------------------------------------------------------------
+// Maintenance
+// ---------------------------------------------------------------------------
+
+// GET /admin/maintenance — past audits, newest first.
+router.get('/maintenance', requireRole('manager'), async (req, res) => {
+  const [audits, secrets] = await Promise.all([
+    maintenance.listAudits({ limit: 12 }),
+    secretStatus(),
+  ]);
+  res.json({
+    success: true,
+    data: { audits, hasKey: secrets.anthropic === 'configured', model: maintenance.MODEL },
+  });
+});
+
+// POST /admin/maintenance/run — audit the running system.
+//
+// admin-only and rate-limited: each run costs real money on the office's own
+// Anthropic account, and the answer does not change minute to minute.
+router.post('/maintenance/audit', requireRole('admin'), writeLimiter, async (req, res) => {
+  try {
+    const out = await maintenance.runAudit({ adminId: req.adminId });
+    res.json({ success: true, data: out });
+  } catch (e) {
+    if (e.code === 'NO_ANTHROPIC_KEY') {
+      return res.status(400).json({ success: false, code: e.code, message: e.message });
+    }
+    // An API key that is wrong, out of credit or rate-limited is the common
+    // case, and the office can act on each of those — so say which.
+    const status = e.status || 500;
+    const message = status === 401 ? 'That Anthropic API key was rejected. Check it and save it again.'
+      : status === 429 ? 'Anthropic is rate-limiting this key. Try again in a few minutes.'
+        : status === 400 && /credit|balance/i.test(e.message || '') ? 'The Anthropic account is out of credit.'
+          : (e.message || 'The audit could not be completed.');
+    return res.status(status === 401 || status === 429 ? status : 500)
+      .json({ success: false, message });
+  }
 });
 
 // GET / PUT /admin/locations-lock

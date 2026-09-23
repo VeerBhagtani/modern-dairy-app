@@ -14,6 +14,9 @@ const KNOWN_SECRETS = {
   // Google Geocoding, used to turn a restaurant's name and area into a point.
   // Absent means the Locate button says so rather than guessing.
   geocoding: 'geocoding-api-key',
+  // Anthropic, for the maintenance audit. Absent means the Maintenance screen
+  // says it needs a key rather than reporting nothing and looking healthy.
+  anthropic: 'anthropic-api-key',
   gofrugal: 'gofrugal-api-key',
   gofrugal_outlet_id: 'gofrugal-outlet-id',
   gofrugal_company_id: 'gofrugal-company-id',

@@ -5,7 +5,9 @@
   "description": "Modern Drivers — driver tracking API (Cloud Run + Firestore + Secret Manager)",
   "type": "commonjs",
   "main": "src/index.js",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
@@ -14,6 +16,7 @@
     "maintenance": "node scripts/maintenance.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
     "@google-cloud/secret-manager": "^5.6.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
