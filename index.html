@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Modern Drivers</title>
 <link rel="icon" href="mark.png">
-<link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css">
+<link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css?v=5bbb4ca">
 <script src="vendor/maplibre/maplibre-gl-csp.js" defer></script>
 <style>
   /* Modern Drivers has its own look: navy ground, white surfaces, one accent.
@@ -113,6 +113,15 @@
   .banner.info{background:var(--navy-tint);border-color:#ccd4ee;color:var(--navy);}
   .link-sm{background:none;border:none;color:var(--navy);font-size:.75rem;font-weight:700;
            text-decoration:underline;padding:4px 0;}
+  /* A folded-away panel. Everything that is not the main job of a screen goes
+     behind one of these: the office should see the one thing to do, not the
+     twelve things the software is capable of. */
+  details.card>summary.disclose{cursor:pointer;font-size:.88rem;font-weight:700;color:var(--ink);
+                                list-style:none;display:flex;align-items:center;gap:8px;}
+  details.card>summary.disclose::-webkit-details-marker{display:none;}
+  details.card>summary.disclose::before{content:'\25B8';color:var(--ink-2);font-size:.85rem;}
+  details.card[open]>summary.disclose::before{content:'\25BE';}
+  details.card>summary.disclose:hover{color:var(--navy);}
   [hidden]{display:none!important;}
 </style>
 </head>
@@ -157,11 +166,11 @@
 
 <div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
 
-<script src="config.js"></script>
+<script src="config.js?v=5bbb4ca"></script>
 <script src="xlsx.js"></script>
-<script src="api.js"></script>
-<script src="map.js"></script>
-<script src="views.js"></script>
-<script src="app.js"></script>
+<script src="api.js?v=5bbb4ca"></script>
+<script src="map.js?v=5bbb4ca"></script>
+<script src="views.js?v=5bbb4ca"></script>
+<script src="app.js?v=5bbb4ca"></script>
 </body>
 </html>

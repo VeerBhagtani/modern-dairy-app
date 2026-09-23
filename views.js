@@ -544,42 +544,52 @@ window.DRIVERS_VIEWS = (function () {
       var counts = await_.counts
         || { total: awaiting.length, pending: 0, unconfirmed: 0, business: 0, street: 0, areaOnly: 0, notFound: 0 };
       var secrets = r[3] || {};
-      // Order matters here. The three things the office actually does — paste
-      // the key, upload the file, run the lookup — come first, because the
-      // restaurant list below them is three thousand rows long and the buttons
-      // were impossible to find underneath it.
-      set(geocodingKeyCard(secrets)
-        + awaitingCard(awaiting, counts)
-        + '<div class="card"><h2>Import / export</h2>'
-        + '<p class="muted">Upload the Excel file straight from the office — <code>.xlsx</code> or <code>.csv</code>, either works. '
-        + 'Only <code>name</code> is required (a column called <code>Customer Name</code> counts). <code>address</code> makes the location lookup far more accurate; '
-        + '<code>lat</code> and <code>lng</code> skip it entirely. Other columns: <code>customer_id, radius_m, external_id, schedule, active</code>.</p>'
-        + '<p class="muted">Re-upload the same file whenever you add a restaurant. Rows already here are matched by name and area, so only the new ones are added — '
-        + 'and <b>a pin you have placed or corrected is never overwritten</b>.</p>'
+      var onMap = restaurants.filter(hasPin).length;
+
+      // This screen does two things: take the office's spreadsheet, and get
+      // those restaurants onto the map. It had grown a button for every state
+      // the data could be in — retry, look up, accept these, accept those —
+      // which is a description of the machinery, not a description of the job.
+      // One button now runs the whole sequence; everything else is folded away
+      // until it is actually needed.
+      set(summaryCard(restaurants.length, onMap, counts, secrets)
+        + needsYouCard(awaiting, counts)
+        // With nothing imported yet, the upload panel IS the screen, so it
+        // opens itself rather than making somebody hunt for it.
+        + '<details class="card"' + (restaurants.length ? '' : ' open')
+        + '><summary class="disclose">Upload or update the restaurant list</summary>'
+        + '<div style="margin-top:14px">'
+        + '<p class="muted">Your Excel file, straight from the office — <code>.xlsx</code> or <code>.csv</code>. '
+        + 'Only a name column is required; an address column makes the lookup far more accurate. '
+        + 'Re-upload the same file whenever you add a restaurant: rows already here are matched by name and area, so only new ones are added, '
+        + 'and <b>a pin you have placed is never overwritten</b>.</p>'
         + '<input type="file" id="csvFile" accept=".csv,.xlsx,text/csv" style="margin-bottom:10px">'
         + '<p id="pickedMsg" class="tiny" style="margin:0 0 10px">'
-        + (pickedFile ? 'Holding <b>' + esc(pickedFile.name) + '</b> — it stays chosen while you move around.' : 'No file chosen yet.')
+        + (pickedFile ? 'Holding <b>' + esc(pickedFile.name) + '</b>.' : 'No file chosen yet.')
         + '</p>'
-        + '<div><button class="btn-primary" id="btnImport">Import restaurants</button> '
-        + '<button class="btn-outline" id="btnExport">Export restaurants CSV</button></div>'
+        + '<div><button class="btn-primary" id="btnImport" style="width:auto">Upload</button> '
+        + '<button class="btn-outline btn-sm" id="btnExport">Download current list</button></div>'
         + '<p id="impMsg" class="muted" style="margin-top:10px"></p>'
-        + '</div>'
-        + '<div class="card"><h2>Restaurants and delivery locations ('
-        + restaurants.filter(hasPin).length + ' on the map'
-        + (restaurants.length - restaurants.filter(hasPin).length
-          ? ', ' + (restaurants.length - restaurants.filter(hasPin).length) + ' still without one'
-          : '') + ')</h2>'
-        + '<p class="muted">A geofence hit is evidence that the driver was <b>at</b> a place. It is not proof that a delivery happened — that comes from the order records.</p>'
+        + '</div></details>'
+        + '<details class="card"><summary class="disclose">All restaurants (' + restaurants.length + ')</summary>'
+        + '<div style="margin-top:14px">'
         + placeTable(restaurants, 'restaurants')
         + placeForm('restaurants')
-        + '</div>'
-        + '<div class="card"><h2>Modern Dairy facilities (' + facilities.length + ')</h2>'
+        + '</div></details>'
+        + '<details class="card"><summary class="disclose">Modern Dairy depots (' + facilities.length + ')</summary>'
+        + '<div style="margin-top:14px">'
         + placeTable(facilities, 'facilities')
         + placeForm('facilities')
-        + '</div>');
+        + '</div></details>'
+        + geocodingKeyCard(secrets));
 
-      bindPlaceTables();
+      // The tables live inside collapsed panels now, so they are filled when
+      // the panel is first opened rather than on every render of the tab.
+      document.querySelectorAll('details').forEach(function (d) {
+        d.addEventListener('toggle', function () { if (d.open) bindPlaceTables(); }, { once: true });
+      });
       bindPlaceForms();
+      bindOneButton(counts, secrets);
       bindAwaiting();
       bindGeocodingKey();
       on('#btnExport', 'click', function () {
@@ -627,12 +637,124 @@ window.DRIVERS_VIEWS = (function () {
     });
   }
 
+  /* The whole screen in one card: where the list stands, and the one button
+   * that moves it forward. Everything the office used to have to sequence by
+   * hand — requeue the held rows, run the lookup, accept the matches — happens
+   * behind this, because that sequence was never a decision anybody wanted to
+   * make. It was just the order the machinery had to run in.
+   */
+  function summaryCard(total, onMap, counts, secrets) {
+    var saved = secrets && secrets.geocoding === 'configured';
+    var todo = counts.total || 0;
+
+    if (!total) {
+      return '<div class="card"><h2>Restaurants</h2>'
+        + '<p class="muted">No restaurants yet. Upload your Excel file below to get started.</p></div>';
+    }
+
+    return '<div class="card">'
+      + '<h2>Restaurants</h2>'
+      + '<div class="grid metrics" style="margin-bottom:16px">'
+      + metric(onMap, 'On the map and counting', onMap ? 'ok' : '')
+      + metric(todo, 'Still need a location', todo ? 'warn' : 'ok')
+      + '</div>'
+
+      + (!saved
+        ? '<p class="err">A Google lookup key is needed before any of this can run — open <b>Lookup key</b> below.</p>'
+        : todo
+          ? '<p style="margin:0 0 6px"><button class="btn-primary" id="btnGo" style="width:auto;font-size:1.05rem;padding:14px 26px">'
+            + 'Put ' + todo + ' restaurant' + (todo === 1 ? '' : 's') + ' on the map</button></p>'
+            + '<p class="tiny" style="margin:0">Looks each one up with Google and places every one it can identify — '
+            + 'the business at its own building, or the right road from your address. '
+            + 'Anything that only matches a whole suburb is left for you, because a suburb-wide pin would make '
+            + 'a driver\'s private errand look like a delivery.</p>'
+          : '<p class="ok-msg" style="margin:0">Every restaurant has a location. Nothing to do here.</p>')
+
+      + '<p id="goMsg" class="tiny" style="margin:10px 0 0"></p>'
+      + '</div>';
+  }
+
+  /* One button, the whole sequence. Each step reports into the same line, so
+   * the office sees one running total rather than four separate outcomes they
+   * have to add up themselves. */
+  function bindOneButton(counts) {
+    on('#btnGo', 'click', function () {
+      var btn = document.getElementById('btnGo');
+      var msg = document.getElementById('goMsg');
+      btn.disabled = true;
+      var placed = 0, precise = 0, held = 0, missing = 0, accepted = 0;
+
+      function say(stage) {
+        msg.innerHTML = '<b>' + stage + '</b><br>'
+          + (placed + accepted) + ' placed so far'
+          + (precise ? ' (' + precise + ' on the building itself)' : '')
+          + (missing ? ' · ' + missing + ' not found' : '');
+      }
+
+      function fail(e) {
+        btn.disabled = false;
+        msg.innerHTML = '<span class="err">' + esc(
+          e.code === 'NO_GEOCODING_KEY'
+            ? 'No lookup key saved yet — open Lookup key below.'
+            : e.message,
+        ) + '</span>';
+      }
+
+      // 1. Anything held from an earlier, less capable run deserves another go
+      //    before anybody is asked to click through it by hand.
+      function requeue() {
+        if (!counts.unconfirmed) return Promise.resolve();
+        say('Re-checking the ones held earlier…');
+        return API.retryUnconfirmed();
+      }
+
+      // 2. The lookup itself, batch after batch until nothing is pending.
+      function lookup() {
+        say('Looking them up…');
+        return API.locateRestaurants(200).then(function (out) {
+          placed += out.placed;
+          precise += (out.precise || 0);
+          held += out.heldForReview;
+          missing += out.notFound;
+          var fatal = (out.failures || []).filter(function (f) { return !f.advisory; });
+          if (fatal.length) throw new Error(fatal[0].error);
+          say('Looking them up…');
+          if (out.stillPending > 0 && out.looked > 0) return lookup();
+          return null;
+        });
+      }
+
+      // 3. Accept what was found but not placed outright. Two kinds, run one
+      //    after the other; the office does not need to know they are two.
+      function accept(kind) {
+        return API.acceptCandidates(kind, 1000).then(function (out) {
+          accepted += out.accepted;
+          say('Placing the rest…');
+          if (out.remaining > 0 && out.accepted > 0) return accept(kind);
+          return null;
+        });
+      }
+
+      requeue()
+        .then(lookup)
+        .then(function () { return accept('business'); })
+        .then(function () { return accept('street'); })
+        .then(function () {
+          msg.innerHTML = '<span class="ok-msg"><b>Done — ' + (placed + accepted) + ' now on the map.</b></span>';
+          setTimeout(render, 1500);
+        })
+        .catch(fail);
+    });
+  }
+
   function geocodingKeyCard(secrets) {
     var saved = secrets && secrets.geocoding === 'configured';
-    return '<div class="card"><h2>Location lookup key</h2>'
-      + (saved
-        ? '<p class="ok-msg" style="margin:0 0 10px">✓ A key is saved. The server checked Secret Manager just now — this is not remembered in the browser.</p>'
-        : '<p class="err" style="margin:0 0 10px">No key saved yet. The lookup will not run until one is.</p>')
+    // Nothing works without a key, so when there isn't one this panel is not
+    // something to go looking for.
+    return '<details class="card"' + (saved ? '' : ' open')
+      + '><summary class="disclose">Lookup key '
+      + (saved ? '<span class="pill ok">saved</span>' : '<span class="pill bad">not set</span>')
+      + '</summary><div style="margin-top:14px">'
       + '<p class="muted">Finding a restaurant uses two of Google\'s APIs, cheapest first. '
       + '<b>Geocoding</b> answers "where is this address?" — most rows in your file have one, and it lands on the building. '
       + '<b>Places</b> answers "where is this business?" and is only asked for a row the address could not pin down, '
@@ -647,7 +769,7 @@ window.DRIVERS_VIEWS = (function () {
       + '<input id="geoKey" type="password" autocomplete="off" placeholder="AIzaSy…" style="max-width:420px">'
       + '<button class="btn-outline btn-sm" id="btnGeoKey">' + (saved ? 'Replace key' : 'Save key') + '</button>'
       + '</div><p id="geoKeyMsg" class="tiny" style="margin-top:8px"></p>'
-      + '</div>';
+      + '</div></details>';
   }
 
   // A re-render replaces the whole panel, and with it the <input type="file">
@@ -674,73 +796,34 @@ window.DRIVERS_VIEWS = (function () {
     return 'warn';
   }
 
-  // Restaurants the engine is ignoring, and the ways out — none of which is
-  // "type in three thousand pairs of coordinates". Nothing in this list counts
-  // towards any kilometre until it leaves it, which is why it sits at the top.
-  function awaitingCard(awaiting, counts) {
-    if (!counts.total) return '';
+  /* The only restaurants that genuinely need a person.
+   *
+   * This card used to carry every button in the process. They have all moved
+   * behind the one button above, because deciding in what order to run a
+   * lookup, a retry and two kinds of bulk accept was never a judgement the
+   * office wanted to make — it was just the machinery showing through.
+   *
+   * What is left here is the one thing a person really must do: place the
+   * restaurants the lookup could not identify. It appears only once the
+   * lookup has run and only for rows that need it, so on a good day this card
+   * is not on the screen at all.
+   */
+  function needsYouCard(awaiting, counts) {
+    // Nothing looked up yet: the button above is the whole story.
+    if (!counts.total || !counts.unconfirmed) return '';
 
     return '<div class="card" style="border-color:#efdcb2">'
-      + '<h2>' + counts.total + ' restaurant(s) without a confirmed location</h2>'
-      + '<div class="banner">These are <b>not</b> on the map and are <b>not</b> counted in any driver\'s kilometres. '
-      + 'Anything found precisely — the business at its own building, under your own name for it — went straight onto the map and is not listed here. '
-      + 'What is left is what the lookup could not settle on its own.</div>'
-
-      // Step 1 — the lookup.
-      + (counts.pending
-        ? '<p style="margin:14px 0"><button class="btn-primary" id="btnLocate" style="width:auto;font-size:1rem;padding:12px 22px">'
-          + 'Find locations for ' + counts.pending + ' restaurant' + (counts.pending === 1 ? '' : 's') + '</button> '
-          + '<button class="btn-outline btn-sm" id="btnLocateStop" hidden>Stop</button></p>'
-          + '<p id="locMsg" class="tiny" style="margin:0 0 6px"></p>'
-        : '<p class="muted">Every one of these has been looked up already — they need a decision, not another lookup.</p>')
-
-      // The lookup itself got better after the first run, so the rows it held
-      // then deserve another go before anybody starts clicking through them.
-      + (counts.unconfirmed
-        ? '<p style="margin:10px 0 0"><button class="btn-outline btn-sm" id="btnRetry">'
-          + 'Look up the ' + counts.unconfirmed + ' held row' + (counts.unconfirmed === 1 ? '' : 's') + ' again</button> '
-          + '<span class="tiny">Use this after enabling Places on the key: it asks for the business by name, '
-          + 'which finds the building where an address lookup could only find the road. Pins you have already placed are untouched.</span>'
-          + '<span id="retryMsg" class="tiny"></span></p>'
-        : '')
-
-      // Step 2 — the two bulk decisions. They are separate buttons because
-      // they are separate risks, and rolling them into one "accept all" would
-      // hide the difference behind a number.
-      + ((counts.business || counts.street)
-        ? '<div style="border-top:1px solid var(--line);margin-top:16px;padding-top:14px">'
-          + (counts.business
-            ? '<p style="margin:0 0 4px"><button class="btn-primary" id="btnAcceptBusiness" style="width:auto;font-size:1rem;padding:12px 22px">'
-              + 'Accept ' + counts.business + ' business match' + (counts.business === 1 ? '' : 'es') + '</button></p>'
-              + '<p class="tiny" style="margin:0 0 14px">A real restaurant was found at its own building — precise — but Google names it '
-              + 'differently from your file (it found "Sai Restaurant" where you wrote "Sai Palace"). '
-              + 'Usually the same shop written another way; occasionally the one next door. '
-              + 'The table below shows each name, so you can scan them first.</p>'
-            : '')
-          + (counts.street
-            ? '<p style="margin:0 0 4px"><button class="btn-outline" id="btnAcceptStreet" style="width:auto;font-size:1rem;padding:12px 22px">'
-              + 'Accept ' + counts.street + ' street-level match' + (counts.street === 1 ? '' : 'es') + '</button></p>'
-              + '<p class="tiny" style="margin:0">No business was found, so these came from the address in your spreadsheet and landed on the '
-              + 'right road or block — tens of metres out at worst. A driver standing there is genuinely at that customer.</p>'
-            : '')
-          + '<p id="accMsg" class="tiny" style="margin:8px 0 0"></p></div>'
-        : '')
-
-      // Step 3 — what is genuinely left for a person, and how few it is.
-      + (counts.areaOnly || counts.notFound
-        ? '<p class="muted" style="margin-top:14px">'
-          + (counts.areaOnly
-            ? '<b>' + counts.areaOnly + '</b> only matched a whole suburb. Those are kilometres wide, so they are never accepted in bulk — '
-              + 'the map would geofence half of Pune. Place them with <b>Pick on map</b>, or add a street address to the spreadsheet and re-import. '
-            : '')
-          + (counts.notFound ? '<b>' + counts.notFound + '</b> could not be found at all.' : '')
-          + '</p>'
-        : '')
+      + '<h2>' + counts.unconfirmed + ' need you to place them</h2>'
+      + '<div class="banner">The lookup could not identify these, so they are <b>not</b> on the map and are <b>not</b> '
+      + 'counted in any driver\'s kilometres. Most only matched a whole suburb — placing one of those automatically '
+      + 'would make a driver\'s private errand through that suburb look like a delivery.</div>'
+      + '<p class="muted">Click <b>Pick on map</b> and tap the building. '
+      + 'Or add a street address for them in your spreadsheet and upload it again — that usually fixes them in bulk.</p>'
 
       + '<div style="overflow-x:auto;max-height:420px;overflow-y:auto;margin-top:10px"><table><thead><tr>'
       + '<th>Your name for it</th><th>Area</th><th>What was found</th><th>Precision</th><th>Place it</th>'
       + '</tr></thead><tbody>'
-      + awaiting.map(function (p) {
+      + awaiting.filter(function (p) { return p.locationStatus !== 'pending'; }).map(function (p) {
         var g = p.geocode || {};
         var c = p.candidate || null;
         return '<tr>'
@@ -761,9 +844,8 @@ window.DRIVERS_VIEWS = (function () {
           + '</td></tr>';
       }).join('')
       + '</tbody></table></div>'
-      + (counts.total > awaiting.length
-        ? '<p class="tiny">Showing ' + awaiting.length + ' of ' + counts.total
-          + ', the ones a person can act on first. The buttons above work on all of them.</p>'
+      + (counts.unconfirmed > awaiting.length
+        ? '<p class="tiny">Showing the first ' + awaiting.length + ' of ' + counts.unconfirmed + '.</p>'
         : '')
       + '</div>';
   }
@@ -841,105 +923,11 @@ window.DRIVERS_VIEWS = (function () {
     });
   }
 
+  /* What is left after the one button: placing the handful the lookup could
+   * not identify. The lookup, the retry and the bulk accepts all used to be
+   * buttons here; they are one button now, so this binds only the per-row
+   * actions. */
   function bindAwaiting() {
-    // Keeps going by itself. The server does 200 at a time because a thousand
-    // lookups do not fit in one request, but making somebody click sixteen
-    // times is not a design — so this repeats until nothing is pending, shows a
-    // running total, and stops the moment anything goes wrong rather than
-    // hammering a failing API.
-    on('#btnLocate', 'click', function () {
-      var msg = document.getElementById('locMsg');
-      var btn = document.getElementById('btnLocate');
-      var stopBtn = document.getElementById('btnLocateStop');
-      var placed = 0, precise = 0, held = 0, missing = 0, stop = false;
-      var advisory = '';
-      btn.disabled = true;
-      stopBtn.hidden = false;
-      stopBtn.onclick = function () { stop = true; stopBtn.textContent = 'Stopping…'; };
-
-      function tally() {
-        return '<b>' + placed + ' placed</b>'
-          + (precise ? ' (' + precise + ' on the building itself)' : '')
-          + ', ' + held + ' need checking, ' + missing + ' not found.';
-      }
-
-      function done(extra) {
-        btn.disabled = false;
-        stopBtn.hidden = true;
-        stopBtn.textContent = 'Stop';
-        msg.innerHTML = (extra || '') + ' ' + tally() + advisory;
-        setTimeout(render, 1800);
-      }
-
-      function round() {
-        msg.innerHTML = 'Looking up… ' + tally() + advisory;
-        API.locateRestaurants(200).then(function (out) {
-          placed += out.placed; precise += (out.precise || 0);
-          held += out.heldForReview; missing += out.notFound;
-
-          // A key without Places access is a warning, not a reason to stop —
-          // the run carries on using addresses, just far less precisely.
-          var fatal = (out.failures || []).filter(function (f) { return !f.advisory; });
-          var advice = (out.failures || []).filter(function (f) { return f.advisory; });
-          if (advice.length && !advisory) {
-            advisory = '<br><span class="err">' + esc(advice[0].error) + '</span>';
-          }
-          if (fatal.length) return done('<span class="err">Stopped: ' + esc(fatal[0].error) + '.</span>');
-          if (stop) return done('Stopped.');
-          if (out.stillPending > 0 && out.looked > 0) return round();
-          return done('Finished.');
-        }).catch(function (e) {
-          done('<span class="err">' + esc(
-            e.code === 'NO_GEOCODING_KEY'
-              ? 'No lookup key saved yet — add one in the Location lookup key card at the top.'
-              : e.message) + '</span>');
-        });
-      }
-      round();
-    });
-
-    // The two bulk accepts. Each loops, because the server does a thousand at
-    // a time, and says plainly how many went on the map.
-    function bulkAccept(buttonId, kind) {
-      on('#' + buttonId, 'click', function () {
-        var btn = document.getElementById(buttonId);
-        var msg = document.getElementById('accMsg');
-        var total = 0;
-        btn.disabled = true;
-
-        function round() {
-          msg.innerHTML = 'Placing… <b>' + total + '</b> so far.';
-          API.acceptCandidates(kind, 1000).then(function (out) {
-            total += out.accepted;
-            if (out.remaining > 0 && out.accepted > 0) return round();
-            msg.innerHTML = '<span class="ok-msg"><b>' + total + '</b> restaurant(s) are now on the map.</span>';
-            setTimeout(render, 1500);
-            return null;
-          }).catch(function (e) {
-            btn.disabled = false;
-            msg.innerHTML = '<span class="err">' + esc(e.message) + '</span>';
-          });
-        }
-        round();
-      });
-    }
-    bulkAccept('btnAcceptBusiness', 'business');
-    bulkAccept('btnAcceptStreet', 'street');
-
-    on('#btnRetry', 'click', function () {
-      var btn = document.getElementById('btnRetry');
-      var msg = document.getElementById('retryMsg');
-      btn.disabled = true;
-      msg.textContent = ' Queueing…';
-      API.retryUnconfirmed().then(function (out) {
-        msg.innerHTML = ' <span class="ok-msg">' + out.queued + ' queued — run Find locations above.</span>';
-        setTimeout(render, 1200);
-      }).catch(function (e) {
-        btn.disabled = false;
-        msg.innerHTML = ' <span class="err">' + esc(e.message) + '</span>';
-      });
-    });
-
     document.querySelectorAll('.confirm-cand').forEach(function (b) {
       b.addEventListener('click', function () {
         API.confirmLocation(b.getAttribute('data-id'), null, null)
