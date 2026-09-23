@@ -607,7 +607,8 @@ window.DRIVERS_VIEWS = (function () {
       + '<div class="banner">These are <b>not</b> on the map and are <b>not</b> counted in any driver\'s kilometres. '
       + 'A pin in the wrong place would turn a driver\'s own errand into business distance, so a guess is never used until someone confirms it.</div>'
       + (pending ? '<p class="muted">' + pending + ' have never been looked up. '
-          + '<button class="btn-primary btn-sm" id="btnLocate">Find locations (100 at a time)</button> '
+          + '<button class="btn-primary btn-sm" id="btnLocate">Find locations</button> '
+          + '<button class="btn-outline btn-sm" id="btnLocateStop" hidden>Stop</button> '
           + '<span id="locMsg" class="tiny"></span></p>' : '')
 
       + (unconfirmed ? '<p class="muted">' + unconfirmed + ' came back uncertain and need a person to look.</p>' : '')
@@ -649,22 +650,47 @@ window.DRIVERS_VIEWS = (function () {
   }
 
   function bindAwaiting() {
+    // Keeps going by itself. The server does 200 at a time because a thousand
+    // lookups do not fit in one request, but making somebody click sixteen
+    // times is not a design — so this repeats until nothing is pending, shows a
+    // running total, and stops the moment anything goes wrong rather than
+    // hammering a failing API.
     on('#btnLocate', 'click', function () {
       var msg = document.getElementById('locMsg');
       var btn = document.getElementById('btnLocate');
+      var stopBtn = document.getElementById('btnLocateStop');
+      var placed = 0, held = 0, missing = 0, stop = false;
       btn.disabled = true;
-      msg.textContent = 'Looking up…';
-      API.locateRestaurants(100).then(function (out) {
-        msg.innerHTML = '<b>' + out.placed + ' placed</b>, ' + out.heldForReview + ' uncertain, '
-          + out.notFound + ' not found. ' + out.stillPending + ' left.';
-        setTimeout(render, 1500);
-      }).catch(function (e) {
-        msg.innerHTML = '<span class="err">' + esc(
-          e.code === 'NO_GEOCODING_KEY'
-            ? 'No geocoding key is set up yet, so addresses cannot be looked up. Coordinates can still be entered by hand.'
-            : e.message) + '</span>';
+      stopBtn.hidden = false;
+      stopBtn.onclick = function () { stop = true; stopBtn.textContent = 'Stopping…'; };
+
+      function done(extra) {
         btn.disabled = false;
-      });
+        stopBtn.hidden = true;
+        stopBtn.textContent = 'Stop';
+        msg.innerHTML = (extra || '') + ' <b>' + placed + ' placed</b>, '
+          + held + ' need checking, ' + missing + ' not found.';
+        setTimeout(render, 1800);
+      }
+
+      function round() {
+        msg.innerHTML = 'Looking up… <b>' + placed + ' placed</b>, ' + held + ' need checking, ' + missing + ' not found.';
+        API.locateRestaurants(200).then(function (out) {
+          placed += out.placed; held += out.heldForReview; missing += out.notFound;
+          if (out.failures && out.failures.length) {
+            return done('<span class="err">Stopped: ' + esc(out.failures[0].error) + '.</span>');
+          }
+          if (stop) return done('Stopped.');
+          if (out.stillPending > 0 && out.looked > 0) return round();
+          return done('Finished.');
+        }).catch(function (e) {
+          done('<span class="err">' + esc(
+            e.code === 'NO_GEOCODING_KEY'
+              ? 'No lookup key saved yet — add one in the Address lookup key card below. Coordinates can still be typed in by hand.'
+              : e.message) + '</span>');
+        });
+      }
+      round();
     });
 
     document.querySelectorAll('.confirm-cand').forEach(function (b) {
