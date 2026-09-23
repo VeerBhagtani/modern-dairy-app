@@ -9,11 +9,14 @@
 <link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css">
 <script src="vendor/maplibre/maplibre-gl-csp.js" defer></script>
 <style>
+  /* Shares the office dashboard's palette, so the two read as one product,
+     with everything sized up for a thumb in a moving vehicle. */
   :root{
-    --navy:#1B2A6B; --navy-deep:#101B49; --accent:#D7262F;
-    --ok:#1a7a4c; --ok-tint:#e4f4eb; --warn:#8a5f14; --warn-tint:#fdf3df;
-    --bad:#b3261e; --bad-tint:#fceceb;
-    --bg:#f4f5f9; --surface:#fff; --line:#e0e3ec; --ink:#141824; --ink-2:#5a6478;
+    --navy:#1e2a5a; --navy-deep:#141d42; --navy-soft:#eef1fa; --accent:#d7262f;
+    --ok:#0f7a4a; --ok-tint:#e6f5ec; --warn:#8a5a0b; --warn-tint:#fdf3e0;
+    --bad:#b3261e; --bad-tint:#fdeceb;
+    --bg:#f5f6fa; --surface:#fff; --line:#e6e9f0; --ink:#151823; --ink-2:#5d667c;
+    --shadow:0 -6px 24px rgba(21,24,35,.08);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   html,body{height:100%;}
@@ -51,8 +54,11 @@
   .map-empty{flex:1;display:flex;align-items:center;justify-content:center;padding:30px;
              text-align:center;color:var(--ink-2);font-size:.9rem;line-height:1.6;background:#e6e9f2;}
 
-  .panel{background:var(--surface);border-top:1px solid var(--line);
-         padding:13px 14px calc(14px + env(safe-area-inset-bottom));}
+  /* The panel sits over the map as a rounded sheet, so the map reads as the
+     background it is and the controls as the thing on top of it. */
+  .panel{background:var(--surface);border-radius:18px 18px 0 0;margin-top:-16px;
+         position:relative;z-index:2;box-shadow:var(--shadow);
+         padding:16px 16px calc(16px + env(safe-area-inset-bottom));}
 
   .status{display:flex;align-items:center;gap:9px;margin-bottom:11px;}
   .status .dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;background:#9aa3bd;}
@@ -65,16 +71,18 @@
 
   /* Prominent, because it is the one thing this screen is for — but a button,
      not a billboard. */
-  .start{width:100%;padding:15px;border:none;border-radius:10px;background:var(--navy);color:#fff;
-         font-size:1.05rem;font-weight:600;font-family:inherit;cursor:pointer;}
-  .start:active{background:var(--navy-deep);}
-  .start:disabled{background:#98a2c0;}
+  .start{width:100%;padding:17px;border:none;border-radius:13px;background:var(--navy);color:#fff;
+         font-size:1.08rem;font-weight:650;font-family:inherit;cursor:pointer;letter-spacing:-.01em;
+         box-shadow:0 4px 14px rgba(30,42,90,.22);transition:transform .06s ease;}
+  .start:active{background:var(--navy-deep);transform:translateY(1px);}
+  .start:disabled{background:#9aa3c0;box-shadow:none;}
 
   /* Planning a round. Secondary to Start Ride — a driver who is late should
      never have to look past the button that starts recording. */
-  .plan{width:100%;margin-top:10px;padding:12px;border-radius:10px;background:#fff;
-        border:1.5px solid var(--navy);color:var(--navy);font-size:.95rem;font-weight:600;
+  .plan{width:100%;margin-top:10px;padding:13px;border-radius:12px;background:var(--navy-soft);
+        border:1px solid #d5ddf3;color:var(--navy);font-size:.95rem;font-weight:650;
         font-family:inherit;cursor:pointer;}
+  .plan:active{background:#e3e8f7;}
   .plan:disabled{opacity:.55;}
   #planBox{margin-top:12px;}
   .route{list-style:none;margin:0;padding:0;counter-reset:leg;}
@@ -94,13 +102,15 @@
   #pickSearch{width:100%;padding:11px;border:1px solid var(--line);border-radius:9px;
               font-size:.95rem;font-family:inherit;}
 
-  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:11px;}
-  .stat{background:var(--bg);border-radius:8px;padding:9px 6px;text-align:center;}
-  .stat b{display:block;font-size:1.05rem;font-weight:700;line-height:1.15;}
-  .stat span{font-size:.67rem;color:var(--ink-2);}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:13px;}
+  .stat{background:var(--bg);border-radius:11px;padding:11px 6px;text-align:center;}
+  .stat b{display:block;font-size:1.25rem;font-weight:750;line-height:1.1;letter-spacing:-.02em;
+          font-variant-numeric:tabular-nums;}
+  .stat span{font-size:.66rem;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em;
+             font-weight:600;display:block;margin-top:3px;}
 
   .rowbtns{display:flex;gap:8px;margin-top:10px;}
-  .rowbtns button{flex:1;padding:10px;border-radius:8px;font-size:.85rem;font-weight:600;
+  .rowbtns button{flex:1;padding:11px;border-radius:10px;font-size:.85rem;font-weight:600;
                   font-family:inherit;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--ink);}
   .rowbtns button.on{background:var(--warn-tint);border-color:#e3c98d;color:var(--warn);}
 
