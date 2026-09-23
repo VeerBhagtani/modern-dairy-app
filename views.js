@@ -539,14 +539,16 @@ window.DRIVERS_VIEWS = (function () {
     ]).then(function (r) {
       var restaurants = r[0];
       var facilities = r[1];
-      var awaiting = r[2] || [];
+      var await_ = r[2] || {};
+      var awaiting = await_.rows || [];
+      var counts = await_.counts || { total: awaiting.length, pending: 0, unconfirmed: 0, acceptable: 0, areaOnly: 0, notFound: 0 };
       var secrets = r[3] || {};
       // Order matters here. The three things the office actually does — paste
       // the key, upload the file, run the lookup — come first, because the
       // restaurant list below them is three thousand rows long and the buttons
       // were impossible to find underneath it.
       set(geocodingKeyCard(secrets)
-        + awaitingCard(awaiting)
+        + awaitingCard(awaiting, counts)
         + '<div class="card"><h2>Import / export</h2>'
         + '<p class="muted">Upload the Excel file straight from the office — <code>.xlsx</code> or <code>.csv</code>, either works. '
         + 'Only <code>name</code> is required (a column called <code>Customer Name</code> counts). <code>address</code> makes the location lookup far more accurate; '
@@ -649,48 +651,134 @@ window.DRIVERS_VIEWS = (function () {
   // outside the render cycle, and the panel shows what is held.
   var pickedFile = null;
 
-  // Restaurants the engine is ignoring, and the two ways out: look the address
-  // up, or place the pin by hand. Nothing here counts towards any kilometre
-  // until it leaves this list, which is the point of showing it so prominently.
-  function awaitingCard(awaiting) {
-    if (!awaiting.length) return '';
-    var pending = awaiting.filter(function (p) { return p.locationStatus === 'pending'; }).length;
-    var unconfirmed = awaiting.length - pending;
+  // Restaurants the engine is ignoring, and the ways out — none of which is
+  // "type in three thousand pairs of coordinates". Nothing in this list counts
+  // towards any kilometre until it leaves it, which is why it sits at the top.
+  function awaitingCard(awaiting, counts) {
+    if (!counts.total) return '';
 
     return '<div class="card" style="border-color:#efdcb2">'
-      + '<h2>' + awaiting.length + ' restaurant(s) without a confirmed location</h2>'
+      + '<h2>' + counts.total + ' restaurant(s) without a confirmed location</h2>'
       + '<div class="banner">These are <b>not</b> on the map and are <b>not</b> counted in any driver\'s kilometres. '
-      + 'A pin in the wrong place would turn a driver\'s own errand into business distance, so a guess is never used until someone confirms it.</div>'
-      + (pending
+      + 'A pin in the wrong place would turn a driver\'s own errand into business distance, so a guess is never used until someone accepts it.</div>'
+
+      // Step 1 — the lookup.
+      + (counts.pending
         ? '<p style="margin:14px 0"><button class="btn-primary" id="btnLocate" style="width:auto;font-size:1rem;padding:12px 22px">'
-          + 'Find locations for ' + pending + ' restaurant' + (pending === 1 ? '' : 's') + '</button> '
+          + 'Find locations for ' + counts.pending + ' restaurant' + (counts.pending === 1 ? '' : 's') + '</button> '
           + '<button class="btn-outline btn-sm" id="btnLocateStop" hidden>Stop</button></p>'
           + '<p id="locMsg" class="tiny" style="margin:0 0 6px"></p>'
-        : '<p class="muted">Every one of these has been looked up already — they need a person, not another lookup.</p>')
+        : '<p class="muted">Every one of these has been looked up already — they need a decision, not another lookup.</p>')
 
-      + (unconfirmed ? '<p class="muted">' + unconfirmed + ' came back uncertain and need a person to look.</p>' : '')
-      + '<div style="overflow-x:auto;max-height:420px;overflow-y:auto"><table><thead><tr>'
+      // Step 2 — accept the street-level ones together. This is the answer to
+      // "I am not typing coordinates for three thousand restaurants".
+      + (counts.acceptable
+        ? '<div style="border-top:1px solid var(--line);margin-top:16px;padding-top:14px">'
+          + '<p style="margin:0 0 6px"><button class="btn-primary" id="btnAccept" style="width:auto;font-size:1rem;padding:12px 22px">'
+          + 'Accept ' + counts.acceptable + ' street-level match' + (counts.acceptable === 1 ? '' : 'es') + '</button></p>'
+          + '<p class="tiny" style="margin:0">Each of these was found from the address in your spreadsheet and landed on the right road or block — '
+          + 'off by tens of metres at worst. A driver standing there is genuinely at that customer. '
+          + 'Accepting puts them all on the map at once; any one of them can still be corrected afterwards.</p>'
+          + '<p id="accMsg" class="tiny" style="margin:6px 0 0"></p></div>'
+        : '')
+
+      // Step 3 — what is genuinely left for a person, and how few it is.
+      + (counts.areaOnly || counts.notFound
+        ? '<p class="muted" style="margin-top:14px">'
+          + (counts.areaOnly
+            ? '<b>' + counts.areaOnly + '</b> only matched a whole suburb. Those are kilometres wide, so they are never accepted in bulk — '
+              + 'the map would geofence half of Pune. Place them with <b>Pick on map</b>, or add a street address to the spreadsheet and re-import. '
+            : '')
+          + (counts.notFound ? '<b>' + counts.notFound + '</b> could not be found at all.' : '')
+          + '</p>'
+        : '')
+
+      + '<div style="overflow-x:auto;max-height:420px;overflow-y:auto;margin-top:10px"><table><thead><tr>'
       + '<th>Name</th><th>Area</th><th>What the lookup found</th><th>Confidence</th><th>Place it</th>'
       + '</tr></thead><tbody>'
-      + awaiting.slice(0, 200).map(function (p) {
+      + awaiting.map(function (p) {
         var g = p.geocode || {};
         var c = p.candidate || null;
         return '<tr>'
-          + '<td><b>' + esc(p.name) + '</b></td>'
+          + '<td><b>' + esc(p.name) + '</b>' + (p.address ? '<br><span class="tiny">' + esc(p.address) + '</span>' : '') + '</td>'
           + '<td>' + esc(p.area || '—') + '</td>'
           + '<td>' + (g.formattedAddress ? esc(g.formattedAddress) : '<span class="tiny">not looked up yet</span>')
           + (g.alternatives ? '<br><span class="tiny">' + g.alternatives + ' other possible match(es)</span>' : '') + '</td>'
           + '<td>' + (g.confidence ? '<span class="pill ' + (g.confidence === 'NONE' ? 'bad' : 'warn') + '">' + esc(g.confidence) + '</span>' : '—') + '</td>'
-          + '<td>'
+          + '<td style="white-space:nowrap">'
           + (c ? '<button class="btn-outline btn-sm confirm-cand" data-id="' + esc(p.id) + '">Use this</button> ' : '')
-          + '<input class="lat-in" data-id="' + esc(p.id) + '" placeholder="lat" style="width:90px;display:inline-block">'
-          + '<input class="lng-in" data-id="' + esc(p.id) + '" placeholder="lng" style="width:90px;display:inline-block">'
-          + '<button class="btn-outline btn-sm confirm-manual" data-id="' + esc(p.id) + '">Save</button>'
+          // Clicking a map is the only sane way to place a pin by hand. Typing
+          // latitude and longitude is not a fallback anybody actually uses.
+          + '<button class="btn-outline btn-sm pick-map" data-id="' + esc(p.id) + '" data-name="' + esc(p.name) + '"'
+          + (c ? ' data-lat="' + c.lat + '" data-lng="' + c.lng + '"' : '') + '>Pick on map</button>'
           + '</td></tr>';
       }).join('')
       + '</tbody></table></div>'
-      + (awaiting.length > 200 ? '<p class="tiny">Showing the first 200.</p>' : '')
+      + (counts.total > awaiting.length
+        ? '<p class="tiny">Showing ' + awaiting.length + ' of ' + counts.total
+          + ', the ones a person can act on first. The buttons above work on all of them.</p>'
+        : '')
       + '</div>';
+  }
+
+  /* Placing one pin by hand.
+   *
+   * The office was being asked to type a latitude and a longitude, which is not
+   * something anybody can do for a restaurant they know by name — they would
+   * have to go and look it up somewhere else and copy two numbers across. So
+   * this opens the map at the geocoder's best guess and asks for a click.
+   */
+  function pickOnMap(id, name, lat, lng) {
+    var start = (isFinite(lat) && isFinite(lng) && lat) ? [lng, lat] : null;
+    modal('<h3 style="margin:0 0 4px">Where is ' + esc(name) + '?</h3>'
+      + '<p class="tiny" style="margin:0 0 10px">Click the building on the map. '
+      + (start
+        ? 'The pin starts at the geocoder\'s best guess — drag or click to correct it.'
+        : 'Nothing was found for this one, so start by finding the area.')
+      + '</p>'
+      + '<div id="pickMap" style="width:100%;height:420px;border-radius:12px;border:1px solid var(--line);background:#e3e6ef"></div>'
+      + '<p id="pickMsg" class="tiny" style="margin:10px 0 12px">No point chosen yet.</p>'
+      + '<button class="btn-primary" id="pickSave" style="width:auto" disabled>Save this location</button> '
+      + '<button class="btn-outline" id="pickCancel" style="width:auto">Cancel</button>');
+
+    var root = document.getElementById('modal');
+    var chosen = start ? { lat: lat, lng: lng } : null;
+    var saveBtn = document.getElementById('pickSave');
+    var msg = document.getElementById('pickMsg');
+
+    function show() {
+      msg.innerHTML = chosen
+        ? 'Chosen: <b>' + chosen.lat.toFixed(5) + ', ' + chosen.lng.toFixed(5) + '</b>'
+        : 'No point chosen yet.';
+      saveBtn.disabled = !chosen;
+    }
+    show();
+
+    // The modal has only just been written into the page; MapLibre needs the
+    // container to have a size before it measures itself.
+    setTimeout(function () {
+      var m = MAPS.create('pickMap', { center: start || undefined, zoom: start ? 16 : 11 });
+      if (!m) { msg.innerHTML = '<span class="err">The map could not be loaded.</span>'; return; }
+      var marker = null;
+      function place(lngLat) {
+        chosen = { lat: lngLat.lat, lng: lngLat.lng };
+        if (marker) marker.setLngLat(lngLat);
+        else marker = new maplibregl.Marker({ color: '#D7262F', draggable: true }).setLngLat(lngLat).addTo(m);
+        marker.on('dragend', function () { place(marker.getLngLat()); });
+        show();
+      }
+      if (start) place({ lng: start[0], lat: start[1] });
+      m.on('click', function (e) { place(e.lngLat); });
+    }, 60);
+
+    on('#pickCancel', 'click', closeModal, root);
+    on('#pickSave', 'click', function () {
+      if (!chosen) return;
+      saveBtn.disabled = true;
+      API.confirmLocation(id, chosen.lat, chosen.lng)
+        .then(function () { closeModal(); render(); })
+        .catch(function (e) { saveBtn.disabled = false; msg.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
+    }, root);
   }
 
   function bindGeocodingKey() {
@@ -743,8 +831,32 @@ window.DRIVERS_VIEWS = (function () {
         }).catch(function (e) {
           done('<span class="err">' + esc(
             e.code === 'NO_GEOCODING_KEY'
-              ? 'No lookup key saved yet — add one in the Address lookup key card below. Coordinates can still be typed in by hand.'
+              ? 'No lookup key saved yet — add one in the Address lookup key card at the top.'
               : e.message) + '</span>');
+        });
+      }
+      round();
+    });
+
+    // The bulk accept. It also loops, because the server does a thousand at a
+    // time, and it says plainly how many went on the map.
+    on('#btnAccept', 'click', function () {
+      var btn = document.getElementById('btnAccept');
+      var msg = document.getElementById('accMsg');
+      var total = 0;
+      btn.disabled = true;
+
+      function round() {
+        msg.innerHTML = 'Placing… <b>' + total + '</b> so far.';
+        API.acceptCandidates(1000).then(function (out) {
+          total += out.accepted;
+          if (out.remaining > 0 && out.accepted > 0) return round();
+          msg.innerHTML = '<span class="ok-msg"><b>' + total + '</b> restaurant(s) are now on the map.</span>';
+          setTimeout(render, 1500);
+          return null;
+        }).catch(function (e) {
+          btn.disabled = false;
+          msg.innerHTML = '<span class="err">' + esc(e.message) + '</span>';
         });
       }
       round();
@@ -756,14 +868,14 @@ window.DRIVERS_VIEWS = (function () {
           .then(render).catch(function (e) { alert(e.message); });
       });
     });
-    document.querySelectorAll('.confirm-manual').forEach(function (b) {
+    document.querySelectorAll('.pick-map').forEach(function (b) {
       b.addEventListener('click', function () {
-        var id = b.getAttribute('data-id');
-        var lat = document.querySelector('.lat-in[data-id="' + id + '"]').value;
-        var lng = document.querySelector('.lng-in[data-id="' + id + '"]').value;
-        if (!lat || !lng) { alert('Enter both a latitude and a longitude.'); return; }
-        API.confirmLocation(id, Number(lat), Number(lng))
-          .then(render).catch(function (e) { alert(e.message); });
+        pickOnMap(
+          b.getAttribute('data-id'),
+          b.getAttribute('data-name'),
+          Number(b.getAttribute('data-lat')),
+          Number(b.getAttribute('data-lng')),
+        );
       });
     });
   }

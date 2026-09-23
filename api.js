@@ -119,6 +119,9 @@ window.DRIVERS_API = (function () {
     updatePlace: function (kind, id, body) { return request(D + '/' + kind + '/' + id, { method: 'PATCH', body: body }); },
     importRestaurants: function (csv) { return request(D + '/restaurants/import', { method: 'POST', body: { csv: csv } }); },
     awaitingLocation: function () { return request(D + '/restaurants/awaiting-location'); },
+    acceptCandidates: function (limit) {
+      return request(D + '/restaurants/accept-candidates', { method: 'POST', body: { limit: limit || 1000 } });
+    },
     integrationSecrets: function () { return request(D + '/integration/secrets'); },
     setIntegrationSecret: function (alias, value) {
       return request(D + '/integration/secret', { method: 'PUT', body: { alias: alias, value: value } });
