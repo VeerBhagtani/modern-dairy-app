@@ -392,7 +392,9 @@ window.DRIVERS_VIEWS = (function () {
             };
           });
           MAPS.drawRoute(m, 'ride', pts);
-          MAPS.drawPlaces(m, 'restaurants', restaurants.filter(function (x) { return x.active !== false; }), '#D7262F');
+          // A restaurant awaiting a location has no coordinates at all; it is
+          // not on the map, and the engine does not count it either.
+          MAPS.drawPlaces(m, 'restaurants', restaurants.filter(function (x) { return x.active !== false && hasPin(x); }), '#D7262F');
           MAPS.drawPlaces(m, 'facilities', facilities, '#1B2A6B');
           MAPS.fitTo(m, pts.map(function (pt) { return [pt.lng, pt.lat]; }));
         });
@@ -539,17 +541,12 @@ window.DRIVERS_VIEWS = (function () {
       var facilities = r[1];
       var awaiting = r[2] || [];
       var secrets = r[3] || {};
-      set('<div class="card"><h2>Modern Dairy facilities (' + facilities.length + ')</h2>'
-        + placeTable(facilities, 'facilities')
-        + placeForm('facilities')
-        + '</div>'
-        + '<div class="card"><h2>Restaurants and delivery locations (' + restaurants.length + ')</h2>'
-        + '<p class="muted">A geofence hit is evidence that the driver was <b>at</b> a place. It is not proof that a delivery happened — that comes from the order records.</p>'
-        + placeTable(restaurants, 'restaurants')
-        + placeForm('restaurants')
-        + '</div>'
+      // Order matters here. The three things the office actually does — paste
+      // the key, upload the file, run the lookup — come first, because the
+      // restaurant list below them is three thousand rows long and the buttons
+      // were impossible to find underneath it.
+      set(geocodingKeyCard(secrets)
         + awaitingCard(awaiting)
-        + geocodingKeyCard(secrets)
         + '<div class="card"><h2>Import / export</h2>'
         + '<p class="muted">Upload the Excel file straight from the office — <code>.xlsx</code> or <code>.csv</code>, either works. '
         + 'Only <code>name</code> is required (a column called <code>Customer Name</code> counts). <code>address</code> makes the location lookup far more accurate; '
@@ -563,8 +560,22 @@ window.DRIVERS_VIEWS = (function () {
         + '<div><button class="btn-primary" id="btnImport">Import restaurants</button> '
         + '<button class="btn-outline" id="btnExport">Export restaurants CSV</button></div>'
         + '<p id="impMsg" class="muted" style="margin-top:10px"></p>'
+        + '</div>'
+        + '<div class="card"><h2>Restaurants and delivery locations ('
+        + restaurants.filter(hasPin).length + ' on the map'
+        + (restaurants.length - restaurants.filter(hasPin).length
+          ? ', ' + (restaurants.length - restaurants.filter(hasPin).length) + ' still without one'
+          : '') + ')</h2>'
+        + '<p class="muted">A geofence hit is evidence that the driver was <b>at</b> a place. It is not proof that a delivery happened — that comes from the order records.</p>'
+        + placeTable(restaurants, 'restaurants')
+        + placeForm('restaurants')
+        + '</div>'
+        + '<div class="card"><h2>Modern Dairy facilities (' + facilities.length + ')</h2>'
+        + placeTable(facilities, 'facilities')
+        + placeForm('facilities')
         + '</div>');
 
+      bindPlaceTables();
       bindPlaceForms();
       bindAwaiting();
       bindGeocodingKey();
@@ -757,20 +768,82 @@ window.DRIVERS_VIEWS = (function () {
     });
   }
 
+  // A just-imported restaurant has no coordinates yet. That is the normal state
+  // of every row the office uploads, not an error, so the table has to say so
+  // rather than assume a pin is there.
+  function hasPin(p) {
+    return typeof p.lat === 'number' && isFinite(p.lat) && typeof p.lng === 'number' && isFinite(p.lng);
+  }
+
+  // The office's own export is over three thousand rows. Drawing them all at
+  // once locks the browser up, so a page is drawn at a time — and the search
+  // box runs over the whole list, not just over what is on screen.
+  var PLACE_PAGE = 200;
+  var placeCache = {};
+  var placeShown = {};
+
   function placeTable(list, kind) {
+    placeCache[kind] = list;
+    placeShown[kind] = PLACE_PAGE;
     if (!list.length) return '<p class="muted">None yet.</p>';
-    return '<div style="overflow-x:auto"><table><thead><tr><th>Name</th><th>Customer ID</th><th>Area</th><th>Coordinates</th><th>Geofence</th><th>Status</th><th></th></tr></thead><tbody>'
-      + list.map(function (p) {
-        return '<tr>'
-          + '<td><b>' + esc(p.name) + '</b>' + (p.address ? '<br><span class="tiny">' + esc(p.address) + '</span>' : '') + '</td>'
-          + '<td>' + esc(p.customerId || '—') + '</td>'
-          + '<td>' + esc(p.area || '—') + '</td>'
-          + '<td class="tiny">' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5) + '</td>'
-          + '<td>' + (p.radiusM ? p.radiusM + ' m' : 'default') + '</td>'
-          + '<td><span class="pill ' + (p.active === false ? 'idle' : 'active') + '">' + (p.active === false ? 'inactive' : 'active') + '</span></td>'
-          + '<td><button class="btn-outline btn-sm" data-editplace="' + esc(p.id) + '" data-kind="' + kind + '">Edit</button></td>'
-          + '</tr>';
-      }).join('') + '</tbody></table></div>';
+    return (list.length > PLACE_PAGE
+      ? '<input class="place-search" data-kind="' + kind + '" placeholder="Search by name, area or customer ID" style="max-width:360px;margin-bottom:10px">'
+      : '')
+      + '<div style="overflow-x:auto"><table><thead><tr><th>Name</th><th>Customer ID</th><th>Area</th><th>Coordinates</th><th>Geofence</th><th>Status</th><th></th></tr></thead>'
+      + '<tbody data-placebody="' + kind + '"></tbody></table></div>'
+      + '<p class="tiny" data-placefoot="' + kind + '"></p>';
+  }
+
+  function placeMatches(p, q) {
+    if (!q) return true;
+    return ((p.name || '') + ' ' + (p.area || '') + ' ' + (p.customerId || '') + ' ' + (p.address || ''))
+      .toLowerCase().indexOf(q) !== -1;
+  }
+
+  function fillPlaceTable(kind, q) {
+    var body = document.querySelector('[data-placebody="' + kind + '"]');
+    var foot = document.querySelector('[data-placefoot="' + kind + '"]');
+    if (!body) return;
+    var all = (placeCache[kind] || []).filter(function (p) { return placeMatches(p, q); });
+    var rows = all.slice(0, placeShown[kind]);
+    body.innerHTML = rows.map(function (p) {
+      return '<tr>'
+        + '<td><b>' + esc(p.name) + '</b>' + (p.address ? '<br><span class="tiny">' + esc(p.address) + '</span>' : '') + '</td>'
+        + '<td>' + esc(p.customerId || '—') + '</td>'
+        + '<td>' + esc(p.area || '—') + '</td>'
+        + '<td class="tiny">' + (hasPin(p)
+          ? p.lat.toFixed(5) + ', ' + p.lng.toFixed(5)
+          : '<span class="pill warn">no location yet</span>') + '</td>'
+        + '<td>' + (p.radiusM ? p.radiusM + ' m' : 'default') + '</td>'
+        + '<td><span class="pill ' + (p.active === false ? 'idle' : 'active') + '">' + (p.active === false ? 'inactive' : 'active') + '</span></td>'
+        + '<td><button class="btn-outline btn-sm" data-editplace="' + esc(p.id) + '" data-kind="' + kind + '">Edit</button></td>'
+        + '</tr>';
+    }).join('');
+    if (foot) {
+      foot.innerHTML = all.length > rows.length
+        ? 'Showing ' + rows.length + ' of ' + all.length + '. '
+          + '<button class="link-sm" data-placemore="' + kind + '">Show ' + Math.min(PLACE_PAGE, all.length - rows.length) + ' more</button>'
+        : (all.length ? all.length + ' shown.' : 'Nothing matches that search.');
+      var more = foot.querySelector('[data-placemore]');
+      if (more) {
+        more.addEventListener('click', function () {
+          placeShown[kind] += PLACE_PAGE;
+          var input = document.querySelector('.place-search[data-kind="' + kind + '"]');
+          fillPlaceTable(kind, input ? input.value.trim().toLowerCase() : '');
+        });
+      }
+    }
+  }
+
+  function bindPlaceTables() {
+    Object.keys(placeCache).forEach(function (kind) { fillPlaceTable(kind, ''); });
+    document.querySelectorAll('.place-search').forEach(function (input) {
+      input.addEventListener('input', function () {
+        var kind = input.getAttribute('data-kind');
+        placeShown[kind] = PLACE_PAGE;
+        fillPlaceTable(kind, input.value.trim().toLowerCase());
+      });
+    });
   }
 
   function placeForm(kind) {
@@ -802,17 +875,21 @@ window.DRIVERS_VIEWS = (function () {
       err.hidden = true;
       API.createPlace(kind, body).then(render).catch(function (ex) { err.textContent = ex.message; err.hidden = false; });
     });
-    on('[data-editplace]', 'click', function (e) {
-      var id = e.currentTarget.dataset.editplace;
-      var kind = e.currentTarget.dataset.kind;
+    // Delegated: the rows are drawn a page at a time, so the buttons do not all
+    // exist when this runs.
+    view().addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('[data-editplace]') : null;
+      if (!btn) return;
+      var id = btn.dataset.editplace;
+      var kind = btn.dataset.kind;
       API.places(kind).then(function (list) {
         var p = list.find(function (x) { return x.id === id; });
         modal('<h3>Edit ' + esc(p.name) + '</h3>'
           + '<div class="field"><label>Name</label><input id="eName" value="' + esc(p.name) + '"></div>'
           + (kind === 'restaurants' ? '<div class="field"><label>Customer ID</label><input id="eCust" value="' + esc(p.customerId || '') + '"></div>' : '')
           + '<div class="field"><label>Address</label><input id="eAddr" value="' + esc(p.address || '') + '"></div>'
-          + '<div class="row3"><div class="field"><label>Latitude</label><input id="eLat" value="' + p.lat + '"></div>'
-          + '<div class="field"><label>Longitude</label><input id="eLng" value="' + p.lng + '"></div>'
+          + '<div class="row3"><div class="field"><label>Latitude</label><input id="eLat" inputmode="decimal" value="' + (hasPin(p) ? p.lat : '') + '"></div>'
+          + '<div class="field"><label>Longitude</label><input id="eLng" inputmode="decimal" value="' + (hasPin(p) ? p.lng : '') + '"></div>'
           + '<div class="field"><label>Radius (m)</label><input id="eRad" value="' + (p.radiusM || '') + '"></div></div>'
           + '<div class="field"><label>Active</label><select id="eActive"><option value="1"' + (p.active !== false ? ' selected' : '') + '>Active</option><option value="0"' + (p.active === false ? ' selected' : '') + '>Inactive</option></select></div>'
           + '<p class="tiny">Changing a geofence does not change any ride already calculated. Recalculate from Settings if you want past days reworked with the new radius.</p>'

@@ -143,9 +143,13 @@ window.DRIVERS_MAP = (function () {
 
   function drawPlaces(map, sourceId, places, color) {
     if (!map || !map.isStyleLoaded() || !places.length) return;
+    // A place still awaiting a location has no coordinates. One such row would
+    // make the whole layer invalid, so they are dropped here as well.
     var fc = {
       type: 'FeatureCollection',
-      features: places.map(function (p) {
+      features: places.filter(function (p) {
+        return typeof p.lat === 'number' && isFinite(p.lat) && typeof p.lng === 'number' && isFinite(p.lng);
+      }).map(function (p) {
         return { type: 'Feature', geometry: { type: 'Point', coordinates: [p.lng, p.lat] }, properties: { name: p.name } };
       }),
     };
