@@ -74,6 +74,13 @@ test('the query carries the city and country, and does not repeat itself', () =>
   assert.equal(dup.toLowerCase().split('pune').length - 1, 1);
 });
 
+test('a line break in an address does not end up in the query', () => {
+  // Real rows from the office's own export contain CRLF inside the address.
+  const q = geo.buildQuery({ name: 'X', address: '32/A, HADAPSAR ESTATE\r\n,Pune  ,  Maharashtra' });
+  assert.ok(!/[\r\n]/.test(q), 'the query must be one line');
+  assert.ok(!/\s{2,}/.test(q), 'and must not carry runs of spaces');
+});
+
 test('an address is preferred over a name, because it is worth far more', () => {
   const q = geo.buildQuery({ name: 'Hotel Sai', area: 'Kothrud', address: '12 Paud Road' });
   assert.match(q, /12 Paud Road/);

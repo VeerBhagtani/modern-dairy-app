@@ -547,11 +547,12 @@ window.DRIVERS_VIEWS = (function () {
         + awaitingCard(awaiting)
         + geocodingKeyCard()
         + '<div class="card"><h2>Import / export</h2>'
-        + '<p class="muted">Only <code>name</code> is required. <code>area</code> and <code>address</code> make the location lookup far more accurate; '
+        + '<p class="muted">Upload the Excel file straight from the office — <code>.xlsx</code> or <code>.csv</code>, either works. '
+        + 'Only <code>name</code> is required (a column called <code>Customer Name</code> counts). <code>address</code> makes the location lookup far more accurate; '
         + '<code>lat</code> and <code>lng</code> skip it entirely. Other columns: <code>customer_id, radius_m, external_id, schedule, active</code>.</p>'
         + '<p class="muted">Re-upload the same file whenever you add a restaurant. Rows already here are matched by name and area, so only the new ones are added — '
         + 'and <b>a pin you have placed or corrected is never overwritten</b>.</p>'
-        + '<input type="file" id="csvFile" accept=".csv,text/csv" style="margin-bottom:10px">'
+        + '<input type="file" id="csvFile" accept=".csv,.xlsx,text/csv" style="margin-bottom:10px">'
         + '<div><button class="btn-primary" id="btnImport">Import restaurants</button> '
         + '<button class="btn-outline" id="btnExport">Export restaurants CSV</button></div>'
         + '<p id="impMsg" class="muted" style="margin-top:10px"></p>'
@@ -566,9 +567,22 @@ window.DRIVERS_VIEWS = (function () {
       on('#btnImport', 'click', function () {
         var f = document.getElementById('csvFile').files[0];
         var msg = document.getElementById('impMsg');
-        if (!f) { msg.textContent = 'Choose a CSV file first.'; return; }
-        msg.textContent = 'Importing…';
-        f.text().then(function (csv) { return API.importRestaurants(csv); }).then(function (out) {
+        if (!f) { msg.textContent = 'Choose a file first.'; return; }
+        msg.textContent = 'Reading…';
+
+        // An .xlsx is read here rather than asking for a Save As → CSV before
+        // every upload. That step gets forgotten, and then the list stops being
+        // kept up to date — which is worse than a hundred lines of ZIP reader.
+        var read = /\.xlsx$/i.test(f.name)
+          ? f.arrayBuffer()
+              .then(window.DRIVERS_XLSX.readWorkbook)
+              .then(window.DRIVERS_XLSX.toCsv)
+          : f.text();
+
+        read.then(function (csv) {
+          msg.textContent = 'Importing…';
+          return API.importRestaurants(csv);
+        }).then(function (out) {
           msg.innerHTML = '<b>' + out.added + ' added, ' + out.updated + ' already here.</b>'
             + (out.awaitingLocation ? '<br>' + out.awaitingLocation + ' still need a location — use <b>Find locations</b> above.' : '')
             + (out.problems.length ? '<br>' + out.problems.length + ' row(s) skipped:<br><span class="tiny">'

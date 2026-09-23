@@ -36,10 +36,14 @@ function buildQuery({ name, area, address, city = 'Pune', region = 'Maharashtra'
   else if (name && name.trim()) parts.push(name.trim());
   if (area && area.trim()) parts.push(area.trim());
   parts.push(city, region, country);
+  // Addresses copied out of a spreadsheet carry line breaks and runs of spaces
+  // from however they were typed; a query with a newline in the middle of it
+  // is a worse query for no reason.
+  const clean = (v) => String(v).replace(/\s+/g, ' ').trim();
   // Duplicates read badly to a geocoder: "Kothrud, Kothrud, Pune".
   const seen = new Set();
   return parts
-    .map((p) => String(p).trim())
+    .map(clean)
     .filter((p) => p && !seen.has(p.toLowerCase()) && seen.add(p.toLowerCase()))
     .join(', ');
 }
