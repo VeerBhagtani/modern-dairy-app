@@ -16,7 +16,7 @@ const bcrypt = require('bcryptjs');
 const { verifyLogin } = require('../middleware/adminAuth');
 const { placeIdFor } = require('../services/placeKey');
 const geocode = require('../services/geocode');
-const { getSecret, setSecret, KNOWN_SECRETS } = require('../services/secretManager');
+const { getSecret, setSecret, secretStatus, KNOWN_SECRETS } = require('../services/secretManager');
 const {
   isValidId, isBoundedString, isOptionalBoundedString, pickAllowed, hasForbiddenKeys,
 } = require('../middleware/validate');
@@ -735,6 +735,22 @@ router.get('/restaurants/export.csv', requireRole('viewer'), async (req, res) =>
 // ---------------------------------------------------------------------------
 // Orders / integration
 // ---------------------------------------------------------------------------
+
+// GET /admin/integration/secrets
+//
+// Whether each key is set — never what it is. Saving a key into a box that
+// then looks exactly as empty as before gives no reason to believe it worked,
+// and "trust me" is not an answer when the next question is why the lookup is
+// failing. This is the smallest honest thing the screen can show: it asks the
+// place the key actually lives.
+router.get('/integration/secrets', requireRole('admin'), async (req, res) => {
+  try {
+    res.json({ success: true, data: await secretStatus() });
+  } catch (e) {
+    console.error('could not read secret status', e);
+    res.status(500).json({ success: false, message: 'Could not check which keys are saved: ' + e.message });
+  }
+});
 
 // PUT /admin/integration/secret { alias, value }
 //

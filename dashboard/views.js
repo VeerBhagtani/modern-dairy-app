@@ -531,10 +531,14 @@ window.DRIVERS_VIEWS = (function () {
 
   // ── Locations ──────────────────────────────────────────────────────────
   function renderPlaces() {
-    return Promise.all([API.places('restaurants'), API.places('facilities'), API.awaitingLocation()]).then(function (r) {
+    return Promise.all([
+      API.places('restaurants'), API.places('facilities'), API.awaitingLocation(),
+      API.integrationSecrets().catch(function () { return {}; }),
+    ]).then(function (r) {
       var restaurants = r[0];
       var facilities = r[1];
       var awaiting = r[2] || [];
+      var secrets = r[3] || {};
       set('<div class="card"><h2>Modern Dairy facilities (' + facilities.length + ')</h2>'
         + placeTable(facilities, 'facilities')
         + placeForm('facilities')
@@ -545,7 +549,7 @@ window.DRIVERS_VIEWS = (function () {
         + placeForm('restaurants')
         + '</div>'
         + awaitingCard(awaiting)
-        + geocodingKeyCard()
+        + geocodingKeyCard(secrets)
         + '<div class="card"><h2>Import / export</h2>'
         + '<p class="muted">Upload the Excel file straight from the office — <code>.xlsx</code> or <code>.csv</code>, either works. '
         + 'Only <code>name</code> is required (a column called <code>Customer Name</code> counts). <code>address</code> makes the location lookup far more accurate; '
@@ -553,6 +557,9 @@ window.DRIVERS_VIEWS = (function () {
         + '<p class="muted">Re-upload the same file whenever you add a restaurant. Rows already here are matched by name and area, so only the new ones are added — '
         + 'and <b>a pin you have placed or corrected is never overwritten</b>.</p>'
         + '<input type="file" id="csvFile" accept=".csv,.xlsx,text/csv" style="margin-bottom:10px">'
+        + '<p id="pickedMsg" class="tiny" style="margin:0 0 10px">'
+        + (pickedFile ? 'Holding <b>' + esc(pickedFile.name) + '</b> — it stays chosen while you move around.' : 'No file chosen yet.')
+        + '</p>'
         + '<div><button class="btn-primary" id="btnImport">Import restaurants</button> '
         + '<button class="btn-outline" id="btnExport">Export restaurants CSV</button></div>'
         + '<p id="impMsg" class="muted" style="margin-top:10px"></p>'
@@ -564,10 +571,22 @@ window.DRIVERS_VIEWS = (function () {
       on('#btnExport', 'click', function () {
         API.download('/admin/restaurants/export.csv', {}, 'restaurants.csv').catch(function (e) { alert(e.message); });
       });
+      on('#csvFile', 'change', function (ev) {
+        pickedFile = ev.target.files[0] || null;
+        var pm = document.getElementById('pickedMsg');
+        if (pm) {
+          pm.innerHTML = pickedFile
+            ? 'Holding <b>' + esc(pickedFile.name) + '</b> — it stays chosen while you move around.'
+            : 'No file chosen yet.';
+        }
+      });
+
       on('#btnImport', 'click', function () {
-        var f = document.getElementById('csvFile').files[0];
+        var input = document.getElementById('csvFile');
+        var f = (input && input.files[0]) || pickedFile;
         var msg = document.getElementById('impMsg');
         if (!f) { msg.textContent = 'Choose a file first.'; return; }
+        pickedFile = f;
         msg.textContent = 'Reading…';
 
         // An .xlsx is read here rather than asking for a Save As → CSV before
@@ -583,6 +602,7 @@ window.DRIVERS_VIEWS = (function () {
           msg.textContent = 'Importing…';
           return API.importRestaurants(csv);
         }).then(function (out) {
+          pickedFile = null;
           msg.innerHTML = '<b>' + out.added + ' added, ' + out.updated + ' already here.</b>'
             + (out.awaitingLocation ? '<br>' + out.awaitingLocation + ' still need a location — use <b>Find locations</b> above.' : '')
             + (out.problems.length ? '<br>' + out.problems.length + ' row(s) skipped:<br><span class="tiny">'
@@ -593,8 +613,12 @@ window.DRIVERS_VIEWS = (function () {
     });
   }
 
-  function geocodingKeyCard() {
+  function geocodingKeyCard(secrets) {
+    var saved = secrets && secrets.geocoding === 'configured';
     return '<div class="card"><h2>Address lookup key</h2>'
+      + (saved
+        ? '<p class="ok-msg" style="margin:0 0 10px">✓ A key is saved. The server checked Secret Manager just now — this is not remembered in the browser.</p>'
+        : '<p class="err" style="margin:0 0 10px">No key saved yet. Address lookup will not run until one is.</p>')
       + '<p class="muted">Turning a restaurant\'s address into a point on the map uses Google\'s Geocoding API, which needs a key. '
       + 'Paste it once. It is stored in Google Secret Manager, never in this site and never shown again — if you lose it, make a new one.</p>'
       + '<p class="tiny">Create it at <b>APIs &amp; Services → Credentials → Create credentials → API key</b>, '
@@ -603,10 +627,16 @@ window.DRIVERS_VIEWS = (function () {
       + 'Roughly ₹450 per thousand lookups, once.</p>'
       + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
       + '<input id="geoKey" type="password" autocomplete="off" placeholder="AIzaSy…" style="max-width:420px">'
-      + '<button class="btn-outline btn-sm" id="btnGeoKey">Save key</button>'
+      + '<button class="btn-outline btn-sm" id="btnGeoKey">' + (saved ? 'Replace key' : 'Save key') + '</button>'
       + '</div><p id="geoKeyMsg" class="tiny" style="margin-top:8px"></p>'
       + '</div>';
   }
+
+  // A re-render replaces the whole panel, and with it the <input type="file">
+  // and whatever was chosen in it — so picking a file and then touching
+  // anything else silently threw the file away. It is kept here instead,
+  // outside the render cycle, and the panel shows what is held.
+  var pickedFile = null;
 
   // Restaurants the engine is ignoring, and the two ways out: look the address
   // up, or place the pin by hand. Nothing here counts towards any kilometre
@@ -620,10 +650,12 @@ window.DRIVERS_VIEWS = (function () {
       + '<h2>' + awaiting.length + ' restaurant(s) without a confirmed location</h2>'
       + '<div class="banner">These are <b>not</b> on the map and are <b>not</b> counted in any driver\'s kilometres. '
       + 'A pin in the wrong place would turn a driver\'s own errand into business distance, so a guess is never used until someone confirms it.</div>'
-      + (pending ? '<p class="muted">' + pending + ' have never been looked up. '
-          + '<button class="btn-primary btn-sm" id="btnLocate">Find locations</button> '
-          + '<button class="btn-outline btn-sm" id="btnLocateStop" hidden>Stop</button> '
-          + '<span id="locMsg" class="tiny"></span></p>' : '')
+      + (pending
+        ? '<p style="margin:14px 0"><button class="btn-primary" id="btnLocate" style="width:auto;font-size:1rem;padding:12px 22px">'
+          + 'Find locations for ' + pending + ' restaurant' + (pending === 1 ? '' : 's') + '</button> '
+          + '<button class="btn-outline btn-sm" id="btnLocateStop" hidden>Stop</button></p>'
+          + '<p id="locMsg" class="tiny" style="margin:0 0 6px"></p>'
+        : '<p class="muted">Every one of these has been looked up already — they need a person, not another lookup.</p>')
 
       + (unconfirmed ? '<p class="muted">' + unconfirmed + ' came back uncertain and need a person to look.</p>' : '')
       + '<div style="overflow-x:auto;max-height:420px;overflow-y:auto"><table><thead><tr>'
