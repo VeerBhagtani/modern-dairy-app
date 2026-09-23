@@ -113,6 +113,15 @@
   .banner.info{background:var(--navy-tint);border-color:#ccd4ee;color:var(--navy);}
   .link-sm{background:none;border:none;color:var(--navy);font-size:.75rem;font-weight:700;
            text-decoration:underline;padding:4px 0;}
+  /* A folded-away panel. Everything that is not the main job of a screen goes
+     behind one of these: the office should see the one thing to do, not the
+     twelve things the software is capable of. */
+  details.card>summary.disclose{cursor:pointer;font-size:.88rem;font-weight:700;color:var(--ink);
+                                list-style:none;display:flex;align-items:center;gap:8px;}
+  details.card>summary.disclose::-webkit-details-marker{display:none;}
+  details.card>summary.disclose::before{content:'\25B8';color:var(--ink-2);font-size:.85rem;}
+  details.card[open]>summary.disclose::before{content:'\25BE';}
+  details.card>summary.disclose:hover{color:var(--navy);}
   [hidden]{display:none!important;}
 </style>
 </head>
