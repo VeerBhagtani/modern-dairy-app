@@ -16,6 +16,7 @@ const bcrypt = require('bcryptjs');
 const { verifyLogin } = require('../middleware/adminAuth');
 const { placeIdFor } = require('../services/placeKey');
 const geocode = require('../services/geocode');
+const places = require('../services/places');
 const { getSecret, setSecret, secretStatus, KNOWN_SECRETS } = require('../services/secretManager');
 const {
   isValidId, isBoundedString, isOptionalBoundedString, pickAllowed, hasForbiddenKeys,
@@ -614,57 +615,102 @@ router.get('/restaurants/awaiting-location', requireRole('viewer'), async (req, 
   const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
   const counts = {
-    total: rows.length, pending: 0, unconfirmed: 0, acceptable: 0, areaOnly: 0, notFound: 0,
+    total: rows.length,
+    pending: 0,
+    unconfirmed: 0,
+    business: 0,   // a real business was found, but under a different name
+    street: 0,     // the right road, from an address in the spreadsheet
+    areaOnly: 0,   // the middle of a suburb — never acceptable in bulk
+    notFound: 0,
   };
   for (const p of rows) {
     if (p.locationStatus === 'pending') { counts.pending += 1; continue; }
     counts.unconfirmed += 1;
     const c = p.candidate && p.candidate.confidence;
-    if (c === geocode.CONFIDENCE.APPROXIMATE) counts.acceptable += 1;
+    if (c === BULK.business) counts.business += 1;
+    else if (c === BULK.street) counts.street += 1;
     else if (c === geocode.CONFIDENCE.AREA_ONLY) counts.areaOnly += 1;
     else counts.notFound += 1;
   }
 
-  // Street-level candidates first: those are the ones a person can act on in
-  // bulk, and burying them under the hopeless rows is what made this screen
-  // feel like three thousand forms to fill in.
-  const order = { APPROXIMATE: 0, AREA_ONLY: 1 };
+  // The rows a person can decide in a second come first — a named business
+  // they will recognise, then a street. Burying those under the hopeless ones
+  // is what made this screen feel like three thousand forms to fill in.
+  const order = { BUSINESS_UNSURE: 0, APPROXIMATE: 1, AREA_ONLY: 2 };
   rows.sort((a, b) => {
-    const ra = a.locationStatus === 'pending' ? 3 : (order[a.candidate?.confidence] ?? 2);
-    const rb = b.locationStatus === 'pending' ? 3 : (order[b.candidate?.confidence] ?? 2);
+    const ra = a.locationStatus === 'pending' ? 4 : (order[a.candidate?.confidence] ?? 3);
+    const rb = b.locationStatus === 'pending' ? 4 : (order[b.candidate?.confidence] ?? 3);
     return ra - rb;
   });
 
   res.json({ success: true, data: { counts, rows: rows.slice(0, 200) } });
 });
 
-// POST /admin/restaurants/accept-candidates { limit }
+// POST /admin/restaurants/retry-unconfirmed
+//
+// Puts the held rows back in the queue so the next run looks at them again.
+//
+// This exists because the lookup got better after the first run. Rows held as
+// "the right road" or "a whole suburb" were answered by the address lookup
+// alone; asking Places for the business by name may well find the building.
+// Without this the only way to benefit would be to delete and re-import,
+// which would throw away every pin the office had already placed.
+//
+// A row somebody has confirmed is never touched: this moves 'unconfirmed' back
+// to 'pending' and nothing else.
+router.post('/restaurants/retry-unconfirmed', requireRole('admin'), writeLimiter, async (req, res) => {
+  const snap = await repo.C.restaurants().where('locationStatus', '==', 'unconfirmed').get();
+  let queued = 0;
+  for (let i = 0; i < snap.docs.length; i += 400) {
+    const batch = db.batch();
+    for (const doc of snap.docs.slice(i, i + 400)) {
+      batch.set(doc.ref, { locationStatus: 'pending' }, { merge: true });
+      queued += 1;
+    }
+    /* eslint-disable-next-line no-await-in-loop */
+    await batch.commit();
+  }
+  await repo.writeAudit({ adminId: req.adminId, action: 'restaurants.retry_unconfirmed', after: { queued } });
+  res.json({ success: true, data: { queued } });
+});
+
+// POST /admin/restaurants/accept-candidates { kind, limit }
 //
 // Nobody is going to type three thousand pairs of coordinates, and asking them
 // to is how a list like this quietly stops being kept up to date — which costs
-// more accuracy in the end than the thing the caution was protecting.
+// more accuracy in the end than the caution was protecting.
 //
-// So the street-level candidates can be accepted together, by a person who has
-// been told plainly what they are accepting. What this refuses is the point:
+// So candidates can be accepted together. But "accept the uncertain ones" is
+// not one decision, it is two, with different things going wrong in each, so
+// the caller has to say which:
 //
-//   accepted  APPROXIMATE — the right road or block, found from an address the
-//             office typed. Tens of metres out at worst, and a driver standing
-//             on that road is genuinely there on Modern Dairy business.
+//   kind=business  A real business at its own building, but Google names it
+//                  something else — "Sai Restaurant" where the file says "Sai
+//                  Palace". Precise if it is the same shop, several hundred
+//                  metres out if it is the one next door.
 //
-//   refused   AREA_ONLY — the centre of a suburb. Kilometres wide. Accepting
-//             these in bulk would geofence half of Pune and turn every private
-//             errand through it into billable distance. They wait for a person
-//             to place them, and no button here will ever do it for them.
+//   kind=street    The right road, from an address the office typed. Tens of
+//                  metres out at worst, and a driver standing on that road is
+//                  genuinely there on Modern Dairy business.
 //
-//   refused   rows with no candidate at all — there is nothing to accept.
+// Neither will ever include AREA_ONLY: that is the centre of a suburb,
+// kilometres wide, and accepting those in bulk would geofence half of Pune and
+// turn every private errand through it into billable distance. They wait for a
+// person, and no button here will do it for them. Rows with no candidate have
+// nothing to accept.
+const BULK = { business: 'BUSINESS_UNSURE', street: geocode.CONFIDENCE.APPROXIMATE };
+
 router.post('/restaurants/accept-candidates', requireRole('admin'), writeLimiter, async (req, res) => {
   const limit = Math.min(Math.max(Number(req.body?.limit) || 500, 1), 1000);
+  const wanted = BULK[String(req.body?.kind || 'street')];
+  if (!wanted) return bad(res, 'Unknown kind of candidate');
+
   const snap = await repo.C.restaurants().where('locationStatus', '==', 'unconfirmed').get();
 
   const eligible = snap.docs.filter((d) => {
     const c = d.data().candidate;
     return !!c
-      && c.confidence === geocode.CONFIDENCE.APPROXIMATE
+      && c.confidence === wanted
       && Number.isFinite(c.lat) && Number.isFinite(c.lng);
   });
 
@@ -678,7 +724,7 @@ router.post('/restaurants/accept-candidates', requireRole('admin'), writeLimiter
         lat: c.lat,
         lng: c.lng,
         locationStatus: 'confirmed',
-        locationSource: 'geocoded_accepted_in_bulk',
+        locationSource: `accepted_in_bulk_${wanted}`,
         confirmedBy: req.adminId,
         confirmedAt: Date.now(),
       }, { merge: true });
@@ -692,17 +738,32 @@ router.post('/restaurants/accept-candidates', requireRole('admin'), writeLimiter
   await repo.writeAudit({
     adminId: req.adminId,
     action: 'restaurants.accept_candidates',
-    after: { accepted, remaining: eligible.length - accepted },
+    after: { kind: wanted, accepted, remaining: eligible.length - accepted },
   });
   res.json({ success: true, data: { accepted, remaining: eligible.length - accepted } });
 });
 
 // POST /admin/restaurants/locate { limit }
 //
-// Geocodes a batch of the pending rows. A batch rather than all of them: a
+// Finds a batch of the pending rows. A batch rather than all of them: three
 // thousand lookups do not fit in one HTTP request, and a run that times out
 // half way through is worse than one that says how far it got. Call it again
 // until nothing is pending.
+//
+// Two different questions get asked, in this order, because they are not
+// equally good:
+//
+//   1. Places — "where is this business?" It knows the restaurant by name and
+//      returns the building it occupies, plus the name Google holds for it.
+//      When that name agrees with the office's, the pin is precise and it is
+//      placed. This is the answer we want for almost every row.
+//
+//   2. Geocoding — "where is this address?" Only asked when Places found
+//      nothing. With a real street address it lands on the right road; that is
+//      good enough to place, and it is the case the bulk accept covers.
+//
+// Anything neither could settle is held with whatever was found, so the person
+// looking at it sees a business name rather than a pair of numbers.
 router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (req, res) => {
   const limit = Math.min(Math.max(Number(req.body?.limit) || 100, 1), 200);
   const apiKey = await getSecret('geocoding');
@@ -710,50 +771,99 @@ router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (re
     return res.status(400).json({
       success: false,
       code: 'NO_GEOCODING_KEY',
-      message: 'No geocoding key is configured, so locations cannot be looked up yet.',
+      message: 'No lookup key is configured, so locations cannot be looked up yet.',
     });
   }
 
   const snap = await repo.C.restaurants().where('locationStatus', '==', 'pending').limit(limit).get();
   let placed = 0; let heldForReview = 0; let notFound = 0;
+  let precise = 0;
   const failures = [];
+  // If the key has no access to Places, every row would raise the same error.
+  // Report it once, then carry on with geocoding for the rest of the batch.
+  let placesOff = false;
 
   for (const doc of snap.docs) {
     const p = doc.data();
-    const query = geocode.buildQuery({ name: p.name, area: p.area, address: p.address });
-    let out;
-    try {
-      /* eslint-disable-next-line no-await-in-loop */
-      out = await geocode.geocodeOne(query, apiKey, {
-        hasStreetAddress: geocode.looksLikeStreetAddress(p.address),
-      });
-    } catch (e) {
-      failures.push({ name: p.name, error: e.message });
-      if (e.message === 'OVER_QUERY_LIMIT') break;   // stop rather than burn the quota
-      /* eslint-disable-next-line no-await-in-loop */
-      continue;
+    const row = { name: p.name, area: p.area, address: p.address };
+
+    // ── 1. the business itself ────────────────────────────────────────────
+    let hit = null;
+    if (!placesOff) {
+      try {
+        /* eslint-disable-next-line no-await-in-loop */
+        hit = await places.searchOne(row, apiKey);
+      } catch (e) {
+        if (e.notEnabled) {
+          placesOff = true;
+          failures.push({
+            name: p.name,
+            error: 'The key cannot use the Places API yet, so restaurants are being '
+              + 'located from their addresses only, which is far less precise. '
+              + 'Enable "Places API (New)" on this key in the Google Cloud console.',
+            advisory: true,
+          });
+        } else if (e.overQuota) {
+          failures.push({ name: p.name, error: e.message });
+          break;
+        } else {
+          failures.push({ name: p.name, error: e.message });
+        }
+        hit = null;
+      }
     }
 
+    // ── 2. the address, only if that found nothing ────────────────────────
+    let geo = null;
+    if (!hit || !hit.point) {
+      const query = geocode.buildQuery(row);
+      try {
+        /* eslint-disable-next-line no-await-in-loop */
+        geo = await geocode.geocodeOne(query, apiKey, {
+          hasStreetAddress: geocode.looksLikeStreetAddress(p.address),
+        });
+      } catch (e) {
+        failures.push({ name: p.name, error: e.message });
+        if (e.message === 'OVER_QUERY_LIMIT') break;   // stop rather than burn the quota
+        /* eslint-disable-next-line no-await-in-loop */
+        continue;
+      }
+    }
+
+    const found = (hit && hit.point) ? hit : geo;
     const patch = {
       geocode: {
-        query,
-        confidence: out.confidence,
-        alternatives: out.alternatives,
-        formattedAddress: out.point ? out.point.formattedAddress : null,
+        source: found === hit ? 'places' : 'geocoding',
+        query: found ? found.query : null,
+        // One vocabulary for the screen: PRECISE beats a street, a street beats
+        // a suburb, and "found something, unsure which" is its own case.
+        confidence: found === hit
+          ? (hit.match === places.MATCH.STRONG ? 'PRECISE' : 'BUSINESS_UNSURE')
+          : (geo ? geo.confidence : geocode.CONFIDENCE.NONE),
+        match: hit ? hit.match : null,
+        displayName: (found && found.point && found.point.displayName) || null,
+        alternatives: found ? found.alternatives : 0,
+        formattedAddress: (found && found.point) ? found.point.formattedAddress : null,
         at: Date.now(),
       },
     };
 
-    if (out.autoPlace && out.point) {
-      patch.lat = out.point.lat;
-      patch.lng = out.point.lng;
+    if (found && found.autoPlace && found.point) {
+      patch.lat = found.point.lat;
+      patch.lng = found.point.lng;
       patch.locationStatus = 'confirmed';
-      patch.locationSource = 'geocoded';
+      patch.locationSource = found === hit ? 'places' : 'geocoded';
       placed += 1;
-    } else if (out.point) {
+      if (found === hit) precise += 1;
+    } else if (found && found.point) {
       // A candidate, not a location. Kept off lat/lng on purpose: the engine
       // reads lat/lng, and a guess must not reach it.
-      patch.candidate = { lat: out.point.lat, lng: out.point.lng, confidence: out.confidence };
+      patch.candidate = {
+        lat: found.point.lat,
+        lng: found.point.lng,
+        confidence: patch.geocode.confidence,
+        displayName: found.point.displayName || null,
+      };
       patch.locationStatus = 'unconfirmed';
       heldForReview += 1;
     } else {
@@ -769,9 +879,12 @@ router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (re
   await repo.writeAudit({
     adminId: req.adminId,
     action: 'restaurants.locate',
-    after: { placed, heldForReview, notFound, stillPending },
+    after: { placed, precise, heldForReview, notFound, stillPending },
   });
-  res.json({ success: true, data: { looked: snap.size, placed, heldForReview, notFound, stillPending, failures } });
+  res.json({
+    success: true,
+    data: { looked: snap.size, placed, precise, heldForReview, notFound, stillPending, failures },
+  });
 });
 
 // POST /admin/restaurants/:id/confirm-location { lat, lng }
