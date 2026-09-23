@@ -750,17 +750,22 @@ router.post('/restaurants/accept-candidates', requireRole('admin'), writeLimiter
 // half way through is worse than one that says how far it got. Call it again
 // until nothing is pending.
 //
-// Two different questions get asked, in this order, because they are not
-// equally good:
+// Two different questions get asked, cheapest first, because they cost very
+// different amounts and often give the same answer:
 //
-//   1. Places — "where is this business?" It knows the restaurant by name and
-//      returns the building it occupies, plus the name Google holds for it.
-//      When that name agrees with the office's, the pin is precise and it is
-//      placed. This is the answer we want for almost every row.
+//   1. Geocoding — "where is this address?" Most rows in the office's export
+//      carry a real street address, and for those the geocoder returns the
+//      building itself (ROOFTOP). That is already precise, and it is the cheap
+//      lookup, so there is nothing to gain by paying for more.
 //
-//   2. Geocoding — "where is this address?" Only asked when Places found
-//      nothing. With a real street address it lands on the right road; that is
-//      good enough to place, and it is the case the bulk accept covers.
+//   2. Places — "where is this business?" Asked only when the geocoder could
+//      not find a building: no address in the row, or an address that only
+//      resolved to a road or a suburb. Places knows the restaurant by name and
+//      returns the building it occupies, plus the name Google holds for it —
+//      which is what makes it safe to place automatically.
+//
+// Asking Places for every row would cost several times as much and would not
+// improve a single row the geocoder had already pinned to a building.
 //
 // Anything neither could settle is held with whatever was found, so the person
 // looking at it sees a business name rather than a pair of numbers.
@@ -780,16 +785,36 @@ router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (re
   let precise = 0;
   const failures = [];
   // If the key has no access to Places, every row would raise the same error.
-  // Report it once, then carry on with geocoding for the rest of the batch.
+  // Report it once, then carry on with geocoding alone for the rest.
   let placesOff = false;
 
   for (const doc of snap.docs) {
     const p = doc.data();
     const row = { name: p.name, area: p.area, address: p.address };
 
-    // ── 1. the business itself ────────────────────────────────────────────
+    // ── 1. the address (cheap) ────────────────────────────────────────────
+    let geo = null;
+    const query = geocode.buildQuery(row);
+    try {
+      /* eslint-disable-next-line no-await-in-loop */
+      geo = await geocode.geocodeOne(query, apiKey, {
+        hasStreetAddress: geocode.looksLikeStreetAddress(p.address),
+      });
+    } catch (e) {
+      failures.push({ name: p.name, error: e.message });
+      if (e.message === 'OVER_QUERY_LIMIT') break;   // stop rather than burn the quota
+      /* eslint-disable-next-line no-await-in-loop */
+      continue;
+    }
+
+    // ── 2. the business itself, only when that did not find a building ────
+    //
+    // A ROOFTOP geocode already IS the building. Paying Places to confirm it
+    // would buy nothing. Everything else — a road, a suburb, nothing at all —
+    // is worth asking about by name.
     let hit = null;
-    if (!placesOff) {
+    const geocoderFoundTheBuilding = geo && geo.confidence === geocode.CONFIDENCE.EXACT;
+    if (!geocoderFoundTheBuilding && !placesOff) {
       try {
         /* eslint-disable-next-line no-await-in-loop */
         hit = await places.searchOne(row, apiKey);
@@ -798,8 +823,8 @@ router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (re
           placesOff = true;
           failures.push({
             name: p.name,
-            error: 'The key cannot use the Places API yet, so restaurants are being '
-              + 'located from their addresses only, which is far less precise. '
+            error: 'The key cannot use the Places API yet, so restaurants without a usable '
+              + 'street address cannot be found by name. '
               + 'Enable "Places API (New)" on this key in the Google Cloud console.',
             advisory: true,
           });
@@ -813,24 +838,10 @@ router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (re
       }
     }
 
-    // ── 2. the address, only if that found nothing ────────────────────────
-    let geo = null;
-    if (!hit || !hit.point) {
-      const query = geocode.buildQuery(row);
-      try {
-        /* eslint-disable-next-line no-await-in-loop */
-        geo = await geocode.geocodeOne(query, apiKey, {
-          hasStreetAddress: geocode.looksLikeStreetAddress(p.address),
-        });
-      } catch (e) {
-        failures.push({ name: p.name, error: e.message });
-        if (e.message === 'OVER_QUERY_LIMIT') break;   // stop rather than burn the quota
-        /* eslint-disable-next-line no-await-in-loop */
-        continue;
-      }
-    }
-
-    const found = (hit && hit.point) ? hit : geo;
+    // Prefer whichever actually identified a building. A named business beats a
+    // road; a rooftop geocode beats a business whose name does not match.
+    const placesIsBetter = hit && hit.point && !geocoderFoundTheBuilding;
+    const found = placesIsBetter ? hit : (geo && geo.point ? geo : (hit || geo));
     const patch = {
       geocode: {
         source: found === hit ? 'places' : 'geocoding',
@@ -854,7 +865,9 @@ router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (re
       patch.locationStatus = 'confirmed';
       patch.locationSource = found === hit ? 'places' : 'geocoded';
       placed += 1;
-      if (found === hit) precise += 1;
+      // "Precise" means the building itself, however it was found: a named
+      // business, or an address the geocoder resolved to a rooftop.
+      if (found === hit || geocoderFoundTheBuilding) precise += 1;
     } else if (found && found.point) {
       // A candidate, not a location. Kept off lat/lng on purpose: the engine
       // reads lat/lng, and a guess must not reach it.
