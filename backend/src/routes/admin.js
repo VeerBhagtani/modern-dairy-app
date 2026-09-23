@@ -526,6 +526,7 @@ for (const [path, colName, isFacility] of [['restaurants', 'restaurants', false]
 // touched: once the office has placed or corrected a pin, re-importing the
 // spreadsheet must not undo that work.
 router.post('/restaurants/import', requireRole('admin'), writeLimiter, async (req, res) => {
+  if (await refuseIfLocked(req, res)) return;
   const { csv } = req.body || {};
   if (!isBoundedString(csv, { min: 1, max: 2_000_000 })) return bad(res, 'csv is required');
   const rows = manual.parseCsv(csv);
@@ -682,6 +683,7 @@ router.get('/restaurants/awaiting-location', requireRole('viewer'), async (req, 
 // A row somebody has confirmed is never touched: this moves 'unconfirmed' back
 // to 'pending' and nothing else.
 router.post('/restaurants/retry-unconfirmed', requireRole('admin'), writeLimiter, async (req, res) => {
+  if (await refuseIfLocked(req, res)) return;
   const snap = await repo.C.restaurants().where('locationStatus', '==', 'unconfirmed').get();
   let queued = 0;
   for (let i = 0; i < snap.docs.length; i += 400) {
@@ -716,14 +718,38 @@ router.post('/restaurants/retry-unconfirmed', requireRole('admin'), writeLimiter
 //                  metres out at worst, and a driver standing on that road is
 //                  genuinely there on Modern Dairy business.
 //
-// Neither will ever include AREA_ONLY: that is the centre of a suburb,
-// kilometres wide, and accepting those in bulk would geofence half of Pune and
-// turn every private errand through it into billable distance. They wait for a
-// person, and no button here will do it for them. Rows with no candidate have
-// nothing to accept.
-const BULK = { business: 'BUSINESS_UNSURE', street: geocode.CONFIDENCE.APPROXIMATE };
+//   kind=area      The office's explicit override, and the one to understand
+//                  before using. The geocoder found only a suburb, so the pin
+//                  sits at the middle of Kothrud rather than at the shop.
+//
+//                  What that costs is not a wide geofence — the geofence is
+//                  the usual 80 m. It is that the pin is in the WRONG PLACE,
+//                  which cuts both ways: a driver standing at the real
+//                  restaurant triggers nothing, and a driver merely passing
+//                  the middle of the suburb on a private errand triggers a
+//                  visit that never happened.
+//
+//                  It is offered because a restaurant with no pin at all is
+//                  invisible to everything — no geofence, no visit, no
+//                  kilometres — and the office judged a rough pin better than
+//                  none. That is their call to make. These rows are written
+//                  with locationSource 'accepted_in_bulk_AREA_ONLY' so they
+//                  can be listed and corrected properly later, and the screen
+//                  makes the choice explicit rather than hiding it in a count.
+//
+// Rows with no candidate at all have nothing to accept.
+// 'area' is the office's own override. It is not offered alongside the other
+// two and it is not reachable by accident: the screen makes you tick a box
+// that says what you are accepting before the button exists. See the comment
+// on the route below for why it is kept at arm's length.
+const BULK = {
+  business: 'BUSINESS_UNSURE',
+  street: geocode.CONFIDENCE.APPROXIMATE,
+  area: geocode.CONFIDENCE.AREA_ONLY,
+};
 
 router.post('/restaurants/accept-candidates', requireRole('admin'), writeLimiter, async (req, res) => {
+  if (await refuseIfLocked(req, res)) return;
   const limit = Math.min(Math.max(Number(req.body?.limit) || 500, 1), 1000);
   const wanted = BULK[String(req.body?.kind || 'street')];
   if (!wanted) return bad(res, 'Unknown kind of candidate');
@@ -793,6 +819,7 @@ router.post('/restaurants/accept-candidates', requireRole('admin'), writeLimiter
 // Anything neither could settle is held with whatever was found, so the person
 // looking at it sees a business name rather than a pair of numbers.
 router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (req, res) => {
+  if (await refuseIfLocked(req, res)) return;
   const limit = Math.min(Math.max(Number(req.body?.limit) || 100, 1), 200);
   const apiKey = await getSecret('geocoding');
   if (!apiKey) {
@@ -927,6 +954,38 @@ router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (re
     data: { looked: snap.size, placed, precise, heldForReview, notFound, stillPending, failures },
   });
 });
+
+// GET / PUT /admin/locations-lock
+//
+// The latch on the restaurant list. See repo.getLocationsLock for why.
+//
+// Note what it does NOT cover: putting supply on hold, and moving a single
+// pin. Those are the daily work, and locking them would mean unlocking the
+// screen every time an invoice runs late — which is how a lock ends up
+// permanently off.
+router.get('/locations-lock', requireRole('viewer'), async (req, res) => {
+  res.json({ success: true, data: await repo.getLocationsLock() });
+});
+
+router.put('/locations-lock', requireRole('admin'), writeLimiter, async (req, res) => {
+  const locked = req.body?.locked === true;
+  res.json({ success: true, data: await repo.setLocationsLock(locked, req.adminId) });
+});
+
+// Guard for the bulk operations. A greyed-out button is a suggestion; this is
+// the rule, and it sits in front of every route that can rewrite the list.
+async function refuseIfLocked(req, res) {
+  const { locked, lockedBy, lockedAt } = await repo.getLocationsLock();
+  if (!locked) return false;
+  res.status(409).json({
+    success: false,
+    code: 'LOCATIONS_LOCKED',
+    message: 'The restaurant list is locked'
+      + (lockedBy ? ` (by ${lockedBy}` + (lockedAt ? ` on ${new Date(lockedAt).toDateString()})` : ')') : '')
+      + '. Unlock it on the Locations screen before importing or re-running the lookup.',
+  });
+  return true;
+}
 
 // POST /admin/restaurants/:id/hold { on, reason }
 //

@@ -64,6 +64,44 @@ async function setConfigOverrides(overrides, adminId) {
   return { config, rejected };
 }
 
+/* The Locations lock.
+ *
+ * Once the restaurant list is right, the office wants it to stay right. The
+ * expensive mistakes on that screen are all one click and thousands of rows
+ * wide — re-importing an old spreadsheet, re-running a lookup that moves pins
+ * somebody spent an afternoon placing. This is the latch that stops a passing
+ * hand from doing any of them.
+ *
+ * Enforced on the server, not by disabling buttons: a greyed-out button is a
+ * suggestion, and this needs to be a rule.
+ */
+async function getLocationsLock() {
+  const doc = await C.config().get();
+  const d = doc.exists ? doc.data() : {};
+  return {
+    locked: d.locationsLocked === true,
+    lockedAt: d.locationsLockedAt || null,
+    lockedBy: d.locationsLockedBy || null,
+  };
+}
+
+async function setLocationsLock(locked, adminId) {
+  const before = await getLocationsLock();
+  await C.config().set({
+    locationsLocked: !!locked,
+    locationsLockedAt: locked ? Date.now() : null,
+    locationsLockedBy: locked ? adminId : null,
+  }, { merge: true });
+  await writeAudit({
+    adminId,
+    action: locked ? 'locations.lock' : 'locations.unlock',
+    target: 'drivers_config',
+    before: { locked: before.locked },
+    after: { locked: !!locked },
+  });
+  return getLocationsLock();
+}
+
 // ---------------------------------------------------------------------------
 // Audit / events / alerts
 // ---------------------------------------------------------------------------
@@ -607,6 +645,7 @@ module.exports = {
   ingestPoints, loadPoints,
   loadPlaces, invalidatePlaceCache,
   loadDriverLegs, recordDriverLegs, loadFleetLegs, invalidateFleetLegs,
+  getLocationsLock, setLocationsLock,
   ordersForRide, declarationsForRide, reviewsForRide, addReview, revertReview,
   saveProcessing, loadProcessing,
   admin,
