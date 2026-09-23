@@ -878,6 +878,16 @@
           + '</span></li>';
       }).join('')
       + '</ol>'
+      // A stop that quietly disappears from the round is how a driver ends up
+      // ringing the office. Both reasons are named.
+      + (plan.onHold && plan.onHold.length
+        ? '<div class="planhead" style="background:var(--warn-tint);color:var(--warn);margin-top:10px">'
+          + '<b>Do not go to ' + plan.onHold.map(function (h) { return esc(h.name); }).join(', ') + '.</b><br>'
+          + 'Supply is on hold'
+          + (plan.onHold[0].reason ? ' — ' + esc(plan.onHold[0].reason) : '')
+          + '. Left out of this round. Call the office if you think this is wrong.'
+          + '</div>'
+        : '')
       + (plan.unplaceable && plan.unplaceable.length
         ? '<p style="color:var(--bad);font-size:.82rem;margin-top:10px;font-weight:600">'
           + plan.unplaceable.length + ' of the places you picked have no location yet, so they were left out. '

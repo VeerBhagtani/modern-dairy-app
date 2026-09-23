@@ -462,7 +462,7 @@ router.post('/reviews/:reviewId/revert', requireRole('manager'), writeLimiter, a
 // ---------------------------------------------------------------------------
 
 function validatePlace(body, { isFacility }) {
-  const p = pickAllowed(body, ['name', 'customerId', 'address', 'lat', 'lng', 'radiusM', 'active', 'area', 'schedule', 'externalId', 'isStartPoint', 'notes']);
+  const p = pickAllowed(body, ['name', 'customerId', 'address', 'lat', 'lng', 'radiusM', 'active', 'area', 'schedule', 'externalId', 'isStartPoint', 'notes', 'supplyHold', 'holdReason']);
   if (!isBoundedString(p.name, { min: 1, max: 150 })) return { error: 'A name is required' };
   if (!Number.isFinite(p.lat) || p.lat < -90 || p.lat > 90) return { error: 'A valid latitude is required' };
   if (!Number.isFinite(p.lng) || p.lng < -180 || p.lng > 180) return { error: 'A valid longitude is required' };
@@ -926,6 +926,53 @@ router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (re
     success: true,
     data: { looked: snap.size, placed, precise, heldForReview, notFound, stillPending, failures },
   });
+});
+
+// POST /admin/restaurants/:id/hold { on, reason }
+//
+// Supply on hold. A restaurant on hold is not offered to any driver and cannot
+// be put into a round — unpaid account, a dispute, a shop shut for a month.
+//
+// Deliberately NOT the same thing as 'active'. Inactive means the customer is
+// gone and the row is history; on hold means stop supplying today and expect
+// to resume, which is a decision somebody makes and unmakes weekly. Rolling
+// them together would mean deleting and re-adding a customer every time an
+// invoice is late, and losing every pin and learned road with it.
+//
+// The geofence stays. If a driver goes anyway the visit is still recorded —
+// the office needs to see that far more than it needs a clean map, and a
+// silently missing geofence would just look like the driver went nowhere.
+router.post('/restaurants/:id/hold', requireRole('manager'), writeLimiter, async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) return bad(res, 'Invalid id');
+  const on = req.body?.on !== false;
+  const reason = req.body?.reason == null ? null : String(req.body.reason).slice(0, 300);
+  if (on && !isBoundedString(reason || '', { min: 1, max: 300 })) {
+    // A hold with no reason is one nobody can lift with any confidence a week
+    // later, and the driver's screen has nothing to show them.
+    return bad(res, 'Say why supply is on hold — the drivers and the next person to look will need it.');
+  }
+
+  const ref = repo.C.restaurants().doc(id);
+  const doc = await ref.get();
+  if (!doc.exists) return res.status(404).json({ success: false, message: 'Not found' });
+
+  await ref.set({
+    supplyHold: on,
+    holdReason: on ? reason : null,
+    holdSetBy: on ? req.adminId : null,
+    holdSetAt: on ? Date.now() : null,
+    holdLiftedAt: on ? null : Date.now(),
+  }, { merge: true });
+  repo.invalidatePlaceCache();
+  await repo.writeAudit({
+    adminId: req.adminId,
+    action: on ? 'restaurants.hold' : 'restaurants.unhold',
+    target: id,
+    before: { supplyHold: doc.data().supplyHold === true },
+    after: { supplyHold: on, reason: on ? reason : null },
+  });
+  res.json({ success: true, data: { id, supplyHold: on, holdReason: on ? reason : null } });
 });
 
 // POST /admin/restaurants/:id/confirm-location { lat, lng }

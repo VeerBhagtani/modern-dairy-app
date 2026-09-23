@@ -17,6 +17,7 @@ const { isValidId, isBoundedString, isOptionalBoundedString, hasForbiddenKeys } 
 const { normaliseIncomingPoint } = require('../drivers/validation');
 const { ALERT } = require('../drivers/alerts');
 const tripPlanner = require('../services/tripPlanner');
+const { canVisit } = require('../drivers/eligibility');
 
 // Shown in the app before the driver registers, and again on the main
 // screen whenever tracking is on. Kept here, server-side, so the wording can be
@@ -331,7 +332,9 @@ router.get('/stops', async (req, res) => {
   }
 
   const stops = restaurants
-    .filter((p) => p.active !== false)
+    // The same test the planner applies, so the list and the plan can never
+    // disagree about where a driver may be sent.
+    .filter(canVisit)
     .map((p) => ({
       id: p.id,
       name: p.name,

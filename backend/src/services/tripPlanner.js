@@ -14,6 +14,7 @@ const repo = require('./repo');
 const legCost = require('../drivers/legCost');
 const tour = require('../drivers/tour');
 const routeMatrix = require('./routeMatrix');
+const { stopEligibility, INELIGIBLE } = require('../drivers/eligibility');
 const { getSecret } = require('./secretManager');
 
 /* Plan one trip.
@@ -27,20 +28,33 @@ async function planTrip(driverId, { start, stopIds, returnTo = null, useRoadApi 
   const { restaurants, facilities } = await repo.loadPlaces();
   const byId = new Map([...restaurants, ...facilities].map((p) => [p.id, p]));
 
-  // A restaurant with no confirmed location cannot be routed to. Say which,
-  // rather than quietly planning a trip to the wrong number of places.
+  // Two reasons a stop cannot go into a round, kept apart because they need
+  // different things said about them. No location is our problem to fix; on
+  // hold is a decision the office has already made, and the driver needs to be
+  // told which restaurant and why rather than watching it vanish.
   const stops = [];
   const unplaceable = [];
+  const onHold = [];
   for (const id of stopIds) {
     const p = byId.get(id);
-    if (p && Number.isFinite(p.lat) && Number.isFinite(p.lng)) {
+    const verdict = stopEligibility(p);
+    if (verdict.ok) {
       stops.push({ id: p.id, name: p.name, lat: p.lat, lng: p.lng });
+    } else if (verdict.reason === INELIGIBLE.ON_HOLD) {
+      onHold.push({ id, name: p.name, reason: p.holdReason || null });
     } else {
       unplaceable.push(id);
     }
   }
   if (stops.length < 2) {
-    return { error: 'At least two stops with confirmed locations are needed to plan a route.', unplaceable };
+    return {
+      error: onHold.length
+        ? 'Supply is on hold for ' + onHold.map((h) => h.name).join(', ')
+          + ', so there are not enough stops left to plan a round.'
+        : 'At least two stops with confirmed locations are needed to plan a route.',
+      unplaceable,
+      onHold,
+    };
   }
 
   const all = [{ id: start.id, name: start.name || 'Start', lat: start.lat, lng: start.lng }, ...stops];
@@ -110,6 +124,7 @@ async function planTrip(driverId, { start, stopIds, returnTo = null, useRoadApi 
     habitRuns: habit ? habit.times : 0,
     learnedLegs: legs.filter((l) => l.runs > 0).length,
     unplaceable,
+    onHold,
     roadApi,
   };
 }

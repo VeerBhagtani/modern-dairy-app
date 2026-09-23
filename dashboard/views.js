@@ -568,6 +568,7 @@ window.DRIVERS_VIEWS = (function () {
         || { total: awaiting.length, pending: 0, unconfirmed: 0, business: 0, street: 0, areaOnly: 0, notFound: 0 };
       var secrets = r[3] || {};
       var onMap = restaurants.filter(hasPin).length;
+      var held = restaurants.filter(function (p) { return p.supplyHold === true; });
 
       // This screen does two things: take the office's spreadsheet, and get
       // those restaurants onto the map. It had grown a button for every state
@@ -576,6 +577,7 @@ window.DRIVERS_VIEWS = (function () {
       // One button now runs the whole sequence; everything else is folded away
       // until it is actually needed.
       set(summaryCard(restaurants.length, onMap, counts, secrets)
+        + heldCard(held)
         + needsYouCard(awaiting, counts)
         // With nothing imported yet, the upload panel IS the screen, so it
         // opens itself rather than making somebody hunt for it.
@@ -612,6 +614,7 @@ window.DRIVERS_VIEWS = (function () {
         d.addEventListener('toggle', function () { if (d.open) bindPlaceTables(); }, { once: true });
       });
       bindPlaceForms();
+      bindHoldButtons();
       bindOneButton(counts, secrets);
       bindAwaiting();
       bindGeocodingKey();
@@ -819,6 +822,33 @@ window.DRIVERS_VIEWS = (function () {
     return 'warn';
   }
 
+  /* Supply currently stopped.
+   *
+   * On its own card, at the top, and only when there is something on it. A
+   * hold is a decision somebody made on a Tuesday and meant to lift on the
+   * Friday; buried in a three-thousand-row table it becomes a customer nobody
+   * has supplied for four months and nobody can explain.
+   */
+  function heldCard(held) {
+    if (!held.length) return '';
+    return '<div class="card" style="border-color:#f0c9c6">'
+      + '<h2>Supply on hold (' + held.length + ')</h2>'
+      + '<p class="muted">Not offered to any driver and cannot go into a round. '
+      + 'The geofence stays on, so if somebody goes anyway the visit is still recorded.</p>'
+      + '<div style="overflow-x:auto;max-height:320px;overflow-y:auto"><table><thead><tr>'
+      + '<th>Restaurant</th><th>Why</th><th>Since</th><th></th></tr></thead><tbody>'
+      + held.map(function (p) {
+        return '<tr><td><b>' + esc(p.name) + '</b>'
+          + (p.area ? '<br><span class="tiny">' + esc(p.area) + '</span>' : '') + '</td>'
+          + '<td>' + esc(p.holdReason || '—') + '</td>'
+          + '<td class="tiny">' + (p.holdSetAt ? dateTime(p.holdSetAt) : '—')
+          + (p.holdSetBy ? '<br>' + esc(p.holdSetBy) : '') + '</td>'
+          + '<td><button class="btn-outline btn-sm" data-hold="' + esc(p.id) + '" data-on="0"'
+          + ' data-name="' + esc(p.name) + '">Resume supply</button></td></tr>';
+      }).join('')
+      + '</tbody></table></div></div>';
+  }
+
   /* The only restaurants that genuinely need a person.
    *
    * This card used to carry every button in the process. They have all moved
@@ -1016,8 +1046,18 @@ window.DRIVERS_VIEWS = (function () {
           ? p.lat.toFixed(5) + ', ' + p.lng.toFixed(5)
           : '<span class="pill warn">no location yet</span>') + '</td>'
         + '<td>' + (p.radiusM ? p.radiusM + ' m' : 'default') + '</td>'
-        + '<td><span class="pill ' + (p.active === false ? 'idle' : 'active') + '">' + (p.active === false ? 'inactive' : 'active') + '</span></td>'
-        + '<td><button class="btn-outline btn-sm" data-editplace="' + esc(p.id) + '" data-kind="' + kind + '">Edit</button></td>'
+        + '<td>' + (p.supplyHold === true
+          ? '<span class="pill bad">supply on hold</span>'
+            + (p.holdReason ? '<br><span class="tiny">' + esc(p.holdReason) + '</span>' : '')
+          : '<span class="pill ' + (p.active === false ? 'idle' : 'active') + '">'
+            + (p.active === false ? 'inactive' : 'active') + '</span>') + '</td>'
+        + '<td style="white-space:nowrap">'
+        + (kind === 'restaurants'
+          ? '<button class="btn-outline btn-sm" data-hold="' + esc(p.id) + '" data-on="'
+            + (p.supplyHold === true ? '0' : '1') + '" data-name="' + esc(p.name) + '">'
+            + (p.supplyHold === true ? 'Resume supply' : 'Hold supply') + '</button> '
+          : '')
+        + '<button class="btn-outline btn-sm" data-editplace="' + esc(p.id) + '" data-kind="' + kind + '">Edit</button></td>'
         + '</tr>';
     }).join('');
     if (foot) {
@@ -1034,6 +1074,42 @@ window.DRIVERS_VIEWS = (function () {
         });
       }
     }
+  }
+
+  /* Putting a restaurant's supply on hold, and taking it off again.
+   *
+   * Delegated from the view, because the rows are drawn a page at a time and
+   * redrawn on every search. A reason is required going on and not coming off:
+   * a hold nobody explained is one nobody can lift with any confidence a week
+   * later, and it is what the driver sees on their phone.
+   */
+  function bindHoldButtons() {
+    view().addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('[data-hold]') : null;
+      if (!btn) return;
+      var id = btn.getAttribute('data-hold');
+      var name = btn.getAttribute('data-name');
+      var turningOn = btn.getAttribute('data-on') === '1';
+
+      if (!turningOn) {
+        if (!confirm('Resume supply to ' + name + '? Drivers will be able to choose it again.')) return;
+        btn.disabled = true;
+        API.setHold(id, false, null).then(render).catch(function (ex) {
+          btn.disabled = false; alert(ex.message);
+        });
+        return;
+      }
+
+      var reason = prompt('Why is supply to ' + name + ' on hold?\n\n'
+        + 'The drivers see this, and so does whoever lifts it later.\n'
+        + 'For example: payment overdue, shop closed for renovation, account under dispute.');
+      if (reason === null) return;
+      if (!reason.trim()) { alert('A reason is needed.'); return; }
+      btn.disabled = true;
+      API.setHold(id, true, reason.trim()).then(render).catch(function (ex) {
+        btn.disabled = false; alert(ex.message);
+      });
+    });
   }
 
   function bindPlaceTables() {
