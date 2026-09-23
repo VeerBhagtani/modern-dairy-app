@@ -16,6 +16,7 @@ const { registerLimiter, gpsIngestLimiter, writeLimiter } = require('../middlewa
 const { isValidId, isBoundedString, isOptionalBoundedString, hasForbiddenKeys } = require('../middleware/validate');
 const { normaliseIncomingPoint } = require('../drivers/validation');
 const { ALERT } = require('../drivers/alerts');
+const tripPlanner = require('../services/tripPlanner');
 
 // Shown in the app before the driver registers, and again on the main
 // screen whenever tracking is on. Kept here, server-side, so the wording can be
@@ -304,6 +305,86 @@ router.post('/rides/:rideId/stop', async (req, res) => {
     code: 'RIDE_STOP_NOT_PERMITTED',
     message: 'Only the Modern Dairy office can stop a ride. Please call the office.',
   });
+});
+
+// ---------------------------------------------------------------------------
+// Planning a round
+// ---------------------------------------------------------------------------
+
+// GET /driver/stops — the restaurants a driver can pick from.
+//
+// Only ones with a confirmed location: a restaurant the office has not placed
+// yet cannot be routed to, and offering it would produce a plan that quietly
+// skipped a stop. The driver's own recent stops come first, because after a
+// week that is almost always what they are reaching for.
+router.get('/stops', async (req, res) => {
+  const [{ restaurants }, own] = await Promise.all([
+    repo.loadPlaces(),
+    repo.loadDriverLegs(req.driverId),
+  ]);
+
+  const lastSeen = new Map();
+  for (const s of own.sequences || []) {
+    for (const id of s.order || []) {
+      if (!lastSeen.has(id)) lastSeen.set(id, s.at || 0);
+    }
+  }
+
+  const stops = restaurants
+    .filter((p) => p.active !== false)
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      area: p.area || null,
+      lastVisitedAt: lastSeen.get(p.id) || null,
+    }))
+    .sort((a, b) => (b.lastVisitedAt || 0) - (a.lastVisitedAt || 0)
+      || String(a.name).localeCompare(String(b.name)));
+
+  res.json({ success: true, data: { stops, recentCount: lastSeen.size } });
+});
+
+// POST /driver/plan { stopIds, from: { lat, lng }, returnToStart }
+//
+// The order to visit them in. What makes this worth having is not the ordering
+// — three stops is six possibilities, and any computer can try all six — but
+// that the distances are this driver's own, learned from their past rides, so
+// the answer reflects the roads they actually use rather than the ones a map
+// would pick for a stranger.
+router.post('/plan', writeLimiter, async (req, res) => {
+  const body = req.body || {};
+  if (hasForbiddenKeys(body)) return res.status(400).json({ success: false, message: 'Bad request' });
+
+  const stopIds = [...new Set(
+    (Array.isArray(body.stopIds) ? body.stopIds : []).filter(isValidId),
+  )].slice(0, 12);
+  if (stopIds.length < 2) {
+    return res.status(400).json({ success: false, message: 'Pick at least two restaurants.' });
+  }
+
+  // Where the driver is now. Without it there is no "first stop", only a loop
+  // with no beginning, so this is a refusal rather than a guess at the depot.
+  const lat = Number(body.from && body.from.lat);
+  const lng = Number(body.from && body.from.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    return res.status(400).json({
+      success: false,
+      code: 'NO_START_LOCATION',
+      message: 'Your current location is needed to work out which stop comes first.',
+    });
+  }
+
+  try {
+    const plan = await tripPlanner.planTrip(req.driverId, {
+      start: { id: '__start__', name: 'Where you are now', lat, lng },
+      stopIds,
+      returnTo: body.returnToStart ? '__start__' : null,
+    });
+    if (plan.error) return res.status(400).json({ success: false, message: plan.error, data: plan });
+    return res.json({ success: true, data: plan });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: 'The route could not be worked out just now.' });
+  }
 });
 
 module.exports = { router, PRIVACY_NOTICE };

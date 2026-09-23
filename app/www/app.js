@@ -667,6 +667,11 @@
     show($('rideBtns'), riding());
     show($('statsBox'), riding());
 
+    // Planning needs the office system: the restaurant list and the driver's
+    // own learned distances both live there. Offline, the button would only
+    // ever produce an error, so it is not offered.
+    show($('btnPlan'), HAS_SERVER && !!state.tokens);
+
     // The map is up as soon as there is anything true to draw on it.
     var wantMap = riding() || !!state.lastFix;
     show($('map'), wantMap);
@@ -722,6 +727,175 @@
     $('sheetBg').classList.add('on');
   }
 
+  // ── planning a round ───────────────────────────────────────────────────
+  //
+  // The driver ticks where they are going; the server works out the order.
+  // What makes the answer worth reading is not the ordering — with three stops
+  // there are six possibilities — but that the distances behind it are this
+  // driver's own, learned from their past rides. So it usually agrees with
+  // what they already do, and it says so when it does.
+
+  var stopsCache = null;
+  var picked = {};
+
+  function km(m) { return (m / 1000).toFixed(1) + ' km'; }
+  function mins(s) {
+    var m = Math.round(s / 60);
+    return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min';
+  }
+
+  function openPlanPicker() {
+    $('sheetTitle').textContent = 'Where are you going?';
+    $('sheetBody').innerHTML = '<p class="muted">Loading your restaurants…</p>';
+    $('sheetBg').classList.add('on');
+
+    var load = stopsCache ? Promise.resolve(stopsCache) : apiFetch('/driver/stops');
+    load.then(function (d) {
+      stopsCache = d;
+      renderPicker('');
+    }).catch(function (e) {
+      $('sheetBody').innerHTML = '<p style="color:var(--bad);font-weight:600">' + esc(e.message) + '</p>';
+    });
+  }
+
+  function renderPicker(q) {
+    var all = (stopsCache && stopsCache.stops) || [];
+    if (!all.length) {
+      $('sheetBody').innerHTML = '<p class="muted">The office has not placed any restaurants on the map yet, '
+        + 'so there is nothing to plan a route between.</p>';
+      return;
+    }
+    var needle = String(q || '').toLowerCase();
+    var rows = all.filter(function (s) {
+      return !needle || ((s.name + ' ' + (s.area || '')).toLowerCase().indexOf(needle) !== -1);
+    }).slice(0, 80);
+
+    $('sheetBody').innerHTML = '<input id="pickSearch" placeholder="Search" value="' + esc(q || '') + '">'
+      + '<div class="picklist">'
+      + rows.map(function (s) {
+        return '<label><input type="checkbox" data-pick="' + esc(s.id) + '"'
+          + (picked[s.id] ? ' checked' : '') + '>'
+          + '<span>' + esc(s.name)
+          + (s.area ? '<span class="ar">' + esc(s.area) + '</span>' : '')
+          + '</span></label>';
+      }).join('')
+      + (rows.length ? '' : '<p class="muted" style="padding:12px 4px">Nothing matches that.</p>')
+      + '</div>'
+      + '<p id="pickCount" class="muted" style="margin:10px 0 0;font-size:.85rem"></p>'
+      + '<button id="pickGo" class="start" style="margin-top:10px">Work out the best order</button>';
+
+    var search = $('pickSearch');
+    search.addEventListener('input', function () {
+      // Re-rendering the list must not interrupt somebody halfway through
+      // typing a restaurant's name, so the caret goes back where it was.
+      var v = search.value;
+      renderPicker(v);
+      var again = $('pickSearch');
+      again.focus();
+      try { again.setSelectionRange(v.length, v.length); } catch (e) { /* not a text input */ }
+    });
+
+    document.querySelectorAll('[data-pick]').forEach(function (box) {
+      box.addEventListener('change', function () {
+        var id = box.getAttribute('data-pick');
+        if (box.checked) picked[id] = true; else delete picked[id];
+        countPicked();
+      });
+    });
+    $('pickGo').addEventListener('click', requestPlan);
+    countPicked();
+  }
+
+  function countPicked() {
+    var n = Object.keys(picked).length;
+    var el = $('pickCount');
+    if (el) el.textContent = n < 2 ? 'Tick at least two.' : n + ' picked.';
+    var go = $('pickGo');
+    if (go) go.disabled = n < 2;
+  }
+
+  function requestPlan() {
+    var ids = Object.keys(picked);
+    var go = $('pickGo');
+    go.disabled = true;
+    go.textContent = 'Working it out…';
+
+    // The plan starts from where the driver is standing, so a fresh fix is
+    // taken rather than reusing one from an hour ago.
+    readOneFix().then(function (fix) {
+      state.lastFix = fix;
+      return apiFetch('/driver/plan', {
+        method: 'POST',
+        body: { stopIds: ids, from: { lat: fix.lat, lng: fix.lng } },
+      });
+    }).then(function (plan) {
+      $('sheetBg').classList.remove('on');
+      showPlan(plan);
+    }).catch(function (e) {
+      go.disabled = false;
+      go.textContent = 'Work out the best order';
+      var msg = e.code === 'NO_START_LOCATION' || /geolocation|timeout|position/i.test(e.message || '')
+        ? 'Your location could not be read. Step outside for a moment and try again.'
+        : e.message;
+      var c = $('pickCount');
+      if (c) c.innerHTML = '<span style="color:var(--bad)">' + esc(msg) + '</span>';
+    });
+  }
+
+  function showPlan(plan) {
+    var box = $('planBox');
+
+    // Say plainly where the answer came from. A driver being told to change
+    // their route deserves to know whether the app is repeating their own
+    // experience back to them or guessing from a map.
+    var headline = plan.followed === 'driver'
+      ? '<b>Your usual order is the best one.</b><br>'
+        + (plan.alternative && plan.alternative.savingM > 0
+          ? 'Another order would save about ' + km(plan.alternative.savingM) + ' — not worth changing for.'
+          : 'Nothing shorter was found.')
+      : '<b>' + km(plan.totalDistanceM) + ' · about ' + mins(plan.totalDurationS) + '</b><br>'
+        + (plan.savingM > 0
+          ? 'About ' + km(plan.savingM) + ' shorter than your usual order.'
+          : 'Best order for these stops.');
+
+    var learned = plan.learnedLegs
+      ? plan.learnedLegs + ' of these ' + plan.legs.length + ' journeys are measured from your own past trips.'
+      : 'Estimated for now — this gets more accurate as you drive these roads.';
+
+    box.innerHTML = '<div class="planhead">' + headline
+      + '<span style="display:block;margin-top:6px;font-size:.76rem;color:var(--ink-2)">'
+      + esc(learned) + '</span></div>'
+      + '<ol class="route">'
+      + plan.stops.map(function (s, i) {
+        var leg = plan.legs[i - 1];
+        return '<li><span class="n">' + (i === 0 ? '•' : i) + '</span><span>'
+          + '<span class="nm">' + esc(s.name) + '</span>'
+          + (leg
+            ? '<span class="sub">' + km(leg.distanceM) + ' · ' + mins(leg.durationS)
+              + (leg.runs ? ' · from your ' + leg.runs + ' past trip' + (leg.runs === 1 ? '' : 's') : '')
+              + '</span>'
+            : '')
+          + '</span></li>';
+      }).join('')
+      + '</ol>'
+      + (plan.unplaceable && plan.unplaceable.length
+        ? '<p style="color:var(--bad);font-size:.82rem;margin-top:10px;font-weight:600">'
+          + plan.unplaceable.length + ' of the places you picked have no location yet, so they were left out. '
+          + 'Ask the office to place them.</p>'
+        : '')
+      + (plan.roadApi && plan.roadApi.error
+        ? '<p style="font-size:.74rem;color:var(--ink-2);margin-top:8px">' + esc(plan.roadApi.error) + '</p>'
+        : '')
+      + '<button id="planClear" class="plan" style="margin-top:12px">Clear</button>';
+
+    show(box, true);
+    $('planClear').addEventListener('click', function () {
+      picked = {};
+      show(box, false);
+      box.innerHTML = '';
+    });
+  }
+
   // ── boot ───────────────────────────────────────────────────────────────
   (function branding() {
     var t = (BRAND.theme) || {};
@@ -742,6 +916,7 @@
   $('btnCentre').addEventListener('click', function () { followMap = true; drawRoute(); });
   $('btnWhy').addEventListener('click', openSheet);
   $('btnWhy2').addEventListener('click', openSheet);
+  $('btnPlan').addEventListener('click', openPlanPicker);
   $('sheetClose').addEventListener('click', function () { $('sheetBg').classList.remove('on'); });
   $('sheetBg').addEventListener('click', function (e) { if (e.target === $('sheetBg')) $('sheetBg').classList.remove('on'); });
   window.addEventListener('online', function () { sync(); render(); });

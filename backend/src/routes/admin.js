@@ -16,7 +16,8 @@ const bcrypt = require('bcryptjs');
 const { verifyLogin } = require('../middleware/adminAuth');
 const { placeIdFor } = require('../services/placeKey');
 const geocode = require('../services/geocode');
-const places = require('../services/places');
+const placesApi = require('../services/places');
+const legObservations = require('../drivers/legObservations');
 const { getSecret, setSecret, secretStatus, KNOWN_SECRETS } = require('../services/secretManager');
 const {
   isValidId, isBoundedString, isOptionalBoundedString, pickAllowed, hasForbiddenKeys,
@@ -320,6 +321,28 @@ async function processOne(rideId) {
     nowMs: Date.now(),
   });
   await repo.saveProcessing(rideId, result);
+
+  // Learn this driver's roads from the ride that just finished. Every leg
+  // between two restaurants they actually drove is a measurement of how far
+  // apart those two places are FOR THEM — which is what the trip planner uses
+  // instead of asking a map that does not know their shortcuts.
+  //
+  // Never allowed to fail the processing run: the kilometre figures are the
+  // point of this endpoint, and a routing convenience must not endanger them.
+  try {
+    const { observations, sequence } = legObservations.legsFromVisits(result.visits);
+    if (observations.length || sequence.length >= 2) {
+      await repo.recordDriverLegs(ride.driverId, observations, sequence);
+      repo.invalidateFleetLegs();
+    }
+  } catch (e) {
+    await repo.writeEvent({
+      driverId: ride.driverId,
+      rideId,
+      kind: 'leg_learning_failed',
+      detail: { error: String(e.message || e).slice(0, 200) },
+    }).catch(() => {});
+  }
 
   const existing = await repo.openAlerts({ driverId: ride.driverId });
   const desired = evaluateResultAlerts(ride, result, config);
@@ -817,7 +840,7 @@ router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (re
     if (!geocoderFoundTheBuilding && !placesOff) {
       try {
         /* eslint-disable-next-line no-await-in-loop */
-        hit = await places.searchOne(row, apiKey);
+        hit = await placesApi.searchOne(row, apiKey);
       } catch (e) {
         if (e.notEnabled) {
           placesOff = true;
@@ -849,7 +872,7 @@ router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (re
         // One vocabulary for the screen: PRECISE beats a street, a street beats
         // a suburb, and "found something, unsure which" is its own case.
         confidence: found === hit
-          ? (hit.match === places.MATCH.STRONG ? 'PRECISE' : 'BUSINESS_UNSURE')
+          ? (hit.match === placesApi.MATCH.STRONG ? 'PRECISE' : 'BUSINESS_UNSURE')
           : (geo ? geo.confidence : geocode.CONFIDENCE.NONE),
         match: hit ? hit.match : null,
         displayName: (found && found.point && found.point.displayName) || null,

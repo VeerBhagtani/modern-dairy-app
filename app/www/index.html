@@ -70,6 +70,30 @@
   .start:active{background:var(--navy-deep);}
   .start:disabled{background:#98a2c0;}
 
+  /* Planning a round. Secondary to Start Ride — a driver who is late should
+     never have to look past the button that starts recording. */
+  .plan{width:100%;margin-top:10px;padding:12px;border-radius:10px;background:#fff;
+        border:1.5px solid var(--navy);color:var(--navy);font-size:.95rem;font-weight:600;
+        font-family:inherit;cursor:pointer;}
+  .plan:disabled{opacity:.55;}
+  #planBox{margin-top:12px;}
+  .route{list-style:none;margin:0;padding:0;counter-reset:leg;}
+  .route li{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line);}
+  .route li:last-child{border-bottom:none;}
+  .route .n{flex:none;width:24px;height:24px;border-radius:50%;background:var(--navy);color:#fff;
+            font-size:.78rem;font-weight:700;display:flex;align-items:center;justify-content:center;}
+  .route .nm{font-weight:600;font-size:.92rem;line-height:1.3;}
+  .route .sub{font-size:.74rem;color:var(--ink-2);margin-top:2px;}
+  .planhead{background:var(--bg);border-radius:10px;padding:11px 12px;margin-bottom:10px;font-size:.86rem;line-height:1.5;}
+  .planhead b{font-size:1.02rem;}
+  .picklist{max-height:46vh;overflow:auto;margin:6px 0 0;}
+  .picklist label{display:flex;gap:10px;align-items:center;padding:11px 4px;border-bottom:1px solid var(--line);
+                  font-size:.92rem;cursor:pointer;}
+  .picklist input{width:20px;height:20px;flex:none;}
+  .picklist .ar{display:block;font-size:.73rem;color:var(--ink-2);}
+  #pickSearch{width:100%;padding:11px;border:1px solid var(--line);border-radius:9px;
+              font-size:.95rem;font-family:inherit;}
+
   .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:11px;}
   .stat{background:var(--bg);border-radius:8px;padding:9px 6px;text-align:center;}
   .stat b{display:block;font-size:1.05rem;font-weight:700;line-height:1.15;}
@@ -159,6 +183,9 @@
     <div id="rideBtns" class="rowbtns" hidden>
       <button id="btnCentre">Centre map</button>
     </div>
+
+    <button id="btnPlan" class="plan">Plan my round</button>
+    <div id="planBox" hidden></div>
 
     <p class="foot" id="footNote">Only the office can stop a ride.</p>
   </div>

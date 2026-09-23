@@ -412,6 +412,106 @@ async function loadPlaces({ fresh = false } = {}) {
 function invalidatePlaceCache() { placeCache = { at: 0, facilities: null, restaurants: null }; }
 
 // ---------------------------------------------------------------------------
+// Learned road knowledge
+// ---------------------------------------------------------------------------
+//
+// What each driver's own trips have taught us about the roads between two
+// restaurants, and the orders they habitually visit them in. This is written
+// once per ride, when the ride is processed, and read when a driver asks for a
+// plan — so planning stays a couple of document reads rather than a scan of a
+// year of GPS.
+//
+// Kept per driver on purpose. The whole value of it is that driver 12 and
+// driver 31 do not drive the same roads, and averaging them away would leave
+// exactly the fleet-wide answer Google already gives for free.
+
+const LEG_LIMIT_PER_DRIVER = 400;   // a driver covering 400 distinct legs is not real
+const RUNS_KEPT_PER_LEG = 12;       // enough for a stable median, cheap to store
+const SEQUENCES_KEPT = 60;          // roughly three months of working days
+
+function legsDoc(driverId) { return db.collection('driver_legs').doc(driverId); }
+
+async function loadDriverLegs(driverId) {
+  const doc = await legsDoc(driverId).get();
+  if (!doc.exists) return { legs: {}, sequences: [] };
+  const d = doc.data();
+  return { legs: d.legs || {}, sequences: d.sequences || [] };
+}
+
+/* Fold one ride's observations into what we know about this driver.
+ *
+ * Only the most recent runs of each leg are kept. A driver's roads change —
+ * a flyover opens, a shift moves to mornings — and an estimate that averages
+ * in last year's traffic is not the estimate to plan tomorrow around.
+ */
+async function recordDriverLegs(driverId, observations, sequence) {
+  if (!driverId) return { legs: 0, sequences: 0 };
+  const current = await loadDriverLegs(driverId);
+  const legs = { ...current.legs };
+
+  for (const o of observations || []) {
+    const key = `${o.from}>${o.to}`;
+    const runs = [...(legs[key] || []), { distanceM: o.distanceM, durationS: o.durationS, at: o.at }];
+    runs.sort((a, b) => (b.at || 0) - (a.at || 0));
+    legs[key] = runs.slice(0, RUNS_KEPT_PER_LEG);
+  }
+
+  // If a driver somehow exceeds the cap, drop the legs nobody has driven
+  // lately rather than refusing to learn anything new.
+  const keys = Object.keys(legs);
+  if (keys.length > LEG_LIMIT_PER_DRIVER) {
+    const freshest = (k) => Math.max(0, ...legs[k].map((r) => r.at || 0));
+    for (const k of keys.sort((a, b) => freshest(a) - freshest(b)).slice(0, keys.length - LEG_LIMIT_PER_DRIVER)) {
+      delete legs[k];
+    }
+  }
+
+  const sequences = [...current.sequences];
+  if (sequence && sequence.length >= 2) {
+    sequences.unshift({ order: sequence, at: Date.now() });
+  }
+
+  await legsDoc(driverId).set({
+    legs,
+    sequences: sequences.slice(0, SEQUENCES_KEPT),
+    updatedAt: Date.now(),
+  }, { merge: true });
+
+  return { legs: Object.keys(legs).length, sequences: sequences.length };
+}
+
+/* What the rest of the fleet knows about a leg this driver has never driven.
+ *
+ * A weaker signal than the driver's own history — somebody else's shortcut may
+ * not be one they can use — but far better than a straight line, and it costs
+ * nothing. Cached: it changes slowly and is read on every plan.
+ */
+let fleetCache = { at: 0, value: null };
+const FLEET_TTL_MS = 30 * 60 * 1000;
+
+async function loadFleetLegs({ fresh = false } = {}) {
+  if (!fresh && fleetCache.value && Date.now() - fleetCache.at < FLEET_TTL_MS) return fleetCache.value;
+  const snap = await db.collection('driver_legs').get();
+  const acc = {};
+  for (const doc of snap.docs) {
+    for (const [key, runs] of Object.entries(doc.data().legs || {})) {
+      (acc[key] = acc[key] || []).push(...runs);
+    }
+  }
+  const out = {};
+  for (const [key, runs] of Object.entries(acc)) {
+    const d = runs.map((r) => r.distanceM).sort((a, b) => a - b);
+    const t = runs.map((r) => r.durationS).sort((a, b) => a - b);
+    const mid = (arr) => (arr.length % 2 ? arr[arr.length >> 1] : (arr[(arr.length >> 1) - 1] + arr[arr.length >> 1]) / 2);
+    out[key] = { distanceM: mid(d), durationS: mid(t), runs: runs.length };
+  }
+  fleetCache = { at: Date.now(), value: out };
+  return out;
+}
+
+function invalidateFleetLegs() { fleetCache = { at: 0, value: null }; }
+
+// ---------------------------------------------------------------------------
 // Orders, declarations, reviews, processing results
 // ---------------------------------------------------------------------------
 
@@ -506,6 +606,7 @@ module.exports = {
   startRide, stopRide, getRide, activeRides, listRides,
   ingestPoints, loadPoints,
   loadPlaces, invalidatePlaceCache,
+  loadDriverLegs, recordDriverLegs, loadFleetLegs, invalidateFleetLegs,
   ordersForRide, declarationsForRide, reviewsForRide, addReview, revertReview,
   saveProcessing, loadProcessing,
   admin,
