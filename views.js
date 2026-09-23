@@ -541,7 +541,8 @@ window.DRIVERS_VIEWS = (function () {
       var facilities = r[1];
       var await_ = r[2] || {};
       var awaiting = await_.rows || [];
-      var counts = await_.counts || { total: awaiting.length, pending: 0, unconfirmed: 0, acceptable: 0, areaOnly: 0, notFound: 0 };
+      var counts = await_.counts
+        || { total: awaiting.length, pending: 0, unconfirmed: 0, business: 0, street: 0, areaOnly: 0, notFound: 0 };
       var secrets = r[3] || {};
       // Order matters here. The three things the office actually does — paste
       // the key, upload the file, run the lookup — come first, because the
@@ -628,16 +629,20 @@ window.DRIVERS_VIEWS = (function () {
 
   function geocodingKeyCard(secrets) {
     var saved = secrets && secrets.geocoding === 'configured';
-    return '<div class="card"><h2>Address lookup key</h2>'
+    return '<div class="card"><h2>Location lookup key</h2>'
       + (saved
         ? '<p class="ok-msg" style="margin:0 0 10px">✓ A key is saved. The server checked Secret Manager just now — this is not remembered in the browser.</p>'
-        : '<p class="err" style="margin:0 0 10px">No key saved yet. Address lookup will not run until one is.</p>')
-      + '<p class="muted">Turning a restaurant\'s address into a point on the map uses Google\'s Geocoding API, which needs a key. '
-      + 'Paste it once. It is stored in Google Secret Manager, never in this site and never shown again — if you lose it, make a new one.</p>'
-      + '<p class="tiny">Create it at <b>APIs &amp; Services → Credentials → Create credentials → API key</b>, '
-      + 'restrict it to the <b>Geocoding API</b>, and leave <b>Application restrictions</b> set to <b>None</b> '
-      + '(the lookup runs on the server, which has no fixed IP — any other setting blocks it). '
-      + 'Roughly ₹450 per thousand lookups, once.</p>'
+        : '<p class="err" style="margin:0 0 10px">No key saved yet. The lookup will not run until one is.</p>')
+      + '<p class="muted">Finding a restaurant uses two of Google\'s APIs, and it matters that the key can reach both. '
+      + '<b>Places</b> answers "where is this business?" and returns the building itself — that is the precise one. '
+      + '<b>Geocoding</b> answers "where is this address?" and is only used when Places finds nothing. '
+      + 'Paste the key once. It is stored in Google Secret Manager, never in this site and never shown again.</p>'
+      + '<p class="tiny">Create it at <b>APIs &amp; Services → Credentials → Create credentials → API key</b>. '
+      + 'Under <b>API restrictions</b> tick <b>both</b> <b>Places API (New)</b> and <b>Geocoding API</b> — with only Geocoding ticked '
+      + 'every restaurant falls back to a road or a suburb, which is the imprecision you are trying to avoid. '
+      + 'Leave <b>Application restrictions</b> set to <b>None</b>: the lookup runs on the server, which has no fixed IP, '
+      + 'and any other setting blocks it. Both APIs must also be switched on under <b>APIs &amp; Services → Enabled APIs</b>. '
+      + 'Places costs more per lookup than Geocoding — check the current rate in the console\'s pricing page before running all of them.</p>'
       + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
       + '<input id="geoKey" type="password" autocomplete="off" placeholder="AIzaSy…" style="max-width:420px">'
       + '<button class="btn-outline btn-sm" id="btnGeoKey">' + (saved ? 'Replace key' : 'Save key') + '</button>'
@@ -651,6 +656,24 @@ window.DRIVERS_VIEWS = (function () {
   // outside the render cycle, and the panel shows what is held.
   var pickedFile = null;
 
+  // The lookup's own vocabulary, in words the office uses. "AREA_ONLY" tells
+  // nobody anything; "a whole suburb" says exactly what is wrong with it.
+  function confidenceLabel(c) {
+    return {
+      PRECISE: 'the building',
+      BUSINESS_UNSURE: 'a business, different name',
+      EXACT: 'the building',
+      APPROXIMATE: 'the right road',
+      AREA_ONLY: 'a whole suburb',
+      NONE: 'nothing found',
+    }[c] || c;
+  }
+  function confidencePill(c) {
+    if (c === 'PRECISE' || c === 'EXACT') return 'ok';
+    if (c === 'NONE' || c === 'AREA_ONLY') return 'bad';
+    return 'warn';
+  }
+
   // Restaurants the engine is ignoring, and the ways out — none of which is
   // "type in three thousand pairs of coordinates". Nothing in this list counts
   // towards any kilometre until it leaves it, which is why it sits at the top.
@@ -660,7 +683,8 @@ window.DRIVERS_VIEWS = (function () {
     return '<div class="card" style="border-color:#efdcb2">'
       + '<h2>' + counts.total + ' restaurant(s) without a confirmed location</h2>'
       + '<div class="banner">These are <b>not</b> on the map and are <b>not</b> counted in any driver\'s kilometres. '
-      + 'A pin in the wrong place would turn a driver\'s own errand into business distance, so a guess is never used until someone accepts it.</div>'
+      + 'Anything found precisely — the business at its own building, under your own name for it — went straight onto the map and is not listed here. '
+      + 'What is left is what the lookup could not settle on its own.</div>'
 
       // Step 1 — the lookup.
       + (counts.pending
@@ -670,16 +694,36 @@ window.DRIVERS_VIEWS = (function () {
           + '<p id="locMsg" class="tiny" style="margin:0 0 6px"></p>'
         : '<p class="muted">Every one of these has been looked up already — they need a decision, not another lookup.</p>')
 
-      // Step 2 — accept the street-level ones together. This is the answer to
-      // "I am not typing coordinates for three thousand restaurants".
-      + (counts.acceptable
+      // The lookup itself got better after the first run, so the rows it held
+      // then deserve another go before anybody starts clicking through them.
+      + (counts.unconfirmed
+        ? '<p style="margin:10px 0 0"><button class="btn-outline btn-sm" id="btnRetry">'
+          + 'Look up the ' + counts.unconfirmed + ' held row' + (counts.unconfirmed === 1 ? '' : 's') + ' again</button> '
+          + '<span class="tiny">Use this after enabling Places on the key: it asks for the business by name, '
+          + 'which finds the building where an address lookup could only find the road. Pins you have already placed are untouched.</span>'
+          + '<span id="retryMsg" class="tiny"></span></p>'
+        : '')
+
+      // Step 2 — the two bulk decisions. They are separate buttons because
+      // they are separate risks, and rolling them into one "accept all" would
+      // hide the difference behind a number.
+      + ((counts.business || counts.street)
         ? '<div style="border-top:1px solid var(--line);margin-top:16px;padding-top:14px">'
-          + '<p style="margin:0 0 6px"><button class="btn-primary" id="btnAccept" style="width:auto;font-size:1rem;padding:12px 22px">'
-          + 'Accept ' + counts.acceptable + ' street-level match' + (counts.acceptable === 1 ? '' : 'es') + '</button></p>'
-          + '<p class="tiny" style="margin:0">Each of these was found from the address in your spreadsheet and landed on the right road or block — '
-          + 'off by tens of metres at worst. A driver standing there is genuinely at that customer. '
-          + 'Accepting puts them all on the map at once; any one of them can still be corrected afterwards.</p>'
-          + '<p id="accMsg" class="tiny" style="margin:6px 0 0"></p></div>'
+          + (counts.business
+            ? '<p style="margin:0 0 4px"><button class="btn-primary" id="btnAcceptBusiness" style="width:auto;font-size:1rem;padding:12px 22px">'
+              + 'Accept ' + counts.business + ' business match' + (counts.business === 1 ? '' : 'es') + '</button></p>'
+              + '<p class="tiny" style="margin:0 0 14px">A real restaurant was found at its own building — precise — but Google names it '
+              + 'differently from your file (it found "Sai Restaurant" where you wrote "Sai Palace"). '
+              + 'Usually the same shop written another way; occasionally the one next door. '
+              + 'The table below shows each name, so you can scan them first.</p>'
+            : '')
+          + (counts.street
+            ? '<p style="margin:0 0 4px"><button class="btn-outline" id="btnAcceptStreet" style="width:auto;font-size:1rem;padding:12px 22px">'
+              + 'Accept ' + counts.street + ' street-level match' + (counts.street === 1 ? '' : 'es') + '</button></p>'
+              + '<p class="tiny" style="margin:0">No business was found, so these came from the address in your spreadsheet and landed on the '
+              + 'right road or block — tens of metres out at worst. A driver standing there is genuinely at that customer.</p>'
+            : '')
+          + '<p id="accMsg" class="tiny" style="margin:8px 0 0"></p></div>'
         : '')
 
       // Step 3 — what is genuinely left for a person, and how few it is.
@@ -694,7 +738,7 @@ window.DRIVERS_VIEWS = (function () {
         : '')
 
       + '<div style="overflow-x:auto;max-height:420px;overflow-y:auto;margin-top:10px"><table><thead><tr>'
-      + '<th>Name</th><th>Area</th><th>What the lookup found</th><th>Confidence</th><th>Place it</th>'
+      + '<th>Your name for it</th><th>Area</th><th>What was found</th><th>Precision</th><th>Place it</th>'
       + '</tr></thead><tbody>'
       + awaiting.map(function (p) {
         var g = p.geocode || {};
@@ -702,9 +746,12 @@ window.DRIVERS_VIEWS = (function () {
         return '<tr>'
           + '<td><b>' + esc(p.name) + '</b>' + (p.address ? '<br><span class="tiny">' + esc(p.address) + '</span>' : '') + '</td>'
           + '<td>' + esc(p.area || '—') + '</td>'
-          + '<td>' + (g.formattedAddress ? esc(g.formattedAddress) : '<span class="tiny">not looked up yet</span>')
+          // The business name is the whole decision for a person scanning this
+          // list, so it leads, in the same weight as their own name above.
+          + '<td>' + (g.displayName ? '<b>' + esc(g.displayName) + '</b><br>' : '')
+          + (g.formattedAddress ? '<span class="tiny">' + esc(g.formattedAddress) + '</span>' : (g.displayName ? '' : '<span class="tiny">not looked up yet</span>'))
           + (g.alternatives ? '<br><span class="tiny">' + g.alternatives + ' other possible match(es)</span>' : '') + '</td>'
-          + '<td>' + (g.confidence ? '<span class="pill ' + (g.confidence === 'NONE' ? 'bad' : 'warn') + '">' + esc(g.confidence) + '</span>' : '—') + '</td>'
+          + '<td>' + (g.confidence ? '<span class="pill ' + confidencePill(g.confidence) + '">' + esc(confidenceLabel(g.confidence)) + '</span>' : '—') + '</td>'
           + '<td style="white-space:nowrap">'
           + (c ? '<button class="btn-outline btn-sm confirm-cand" data-id="' + esc(p.id) + '">Use this</button> ' : '')
           // Clicking a map is the only sane way to place a pin by hand. Typing
@@ -804,62 +851,93 @@ window.DRIVERS_VIEWS = (function () {
       var msg = document.getElementById('locMsg');
       var btn = document.getElementById('btnLocate');
       var stopBtn = document.getElementById('btnLocateStop');
-      var placed = 0, held = 0, missing = 0, stop = false;
+      var placed = 0, precise = 0, held = 0, missing = 0, stop = false;
+      var advisory = '';
       btn.disabled = true;
       stopBtn.hidden = false;
       stopBtn.onclick = function () { stop = true; stopBtn.textContent = 'Stopping…'; };
+
+      function tally() {
+        return '<b>' + placed + ' placed</b>'
+          + (precise ? ' (' + precise + ' on the building itself)' : '')
+          + ', ' + held + ' need checking, ' + missing + ' not found.';
+      }
 
       function done(extra) {
         btn.disabled = false;
         stopBtn.hidden = true;
         stopBtn.textContent = 'Stop';
-        msg.innerHTML = (extra || '') + ' <b>' + placed + ' placed</b>, '
-          + held + ' need checking, ' + missing + ' not found.';
+        msg.innerHTML = (extra || '') + ' ' + tally() + advisory;
         setTimeout(render, 1800);
       }
 
       function round() {
-        msg.innerHTML = 'Looking up… <b>' + placed + ' placed</b>, ' + held + ' need checking, ' + missing + ' not found.';
+        msg.innerHTML = 'Looking up… ' + tally() + advisory;
         API.locateRestaurants(200).then(function (out) {
-          placed += out.placed; held += out.heldForReview; missing += out.notFound;
-          if (out.failures && out.failures.length) {
-            return done('<span class="err">Stopped: ' + esc(out.failures[0].error) + '.</span>');
+          placed += out.placed; precise += (out.precise || 0);
+          held += out.heldForReview; missing += out.notFound;
+
+          // A key without Places access is a warning, not a reason to stop —
+          // the run carries on using addresses, just far less precisely.
+          var fatal = (out.failures || []).filter(function (f) { return !f.advisory; });
+          var advice = (out.failures || []).filter(function (f) { return f.advisory; });
+          if (advice.length && !advisory) {
+            advisory = '<br><span class="err">' + esc(advice[0].error) + '</span>';
           }
+          if (fatal.length) return done('<span class="err">Stopped: ' + esc(fatal[0].error) + '.</span>');
           if (stop) return done('Stopped.');
           if (out.stillPending > 0 && out.looked > 0) return round();
           return done('Finished.');
         }).catch(function (e) {
           done('<span class="err">' + esc(
             e.code === 'NO_GEOCODING_KEY'
-              ? 'No lookup key saved yet — add one in the Address lookup key card at the top.'
+              ? 'No lookup key saved yet — add one in the Location lookup key card at the top.'
               : e.message) + '</span>');
         });
       }
       round();
     });
 
-    // The bulk accept. It also loops, because the server does a thousand at a
-    // time, and it says plainly how many went on the map.
-    on('#btnAccept', 'click', function () {
-      var btn = document.getElementById('btnAccept');
-      var msg = document.getElementById('accMsg');
-      var total = 0;
-      btn.disabled = true;
+    // The two bulk accepts. Each loops, because the server does a thousand at
+    // a time, and says plainly how many went on the map.
+    function bulkAccept(buttonId, kind) {
+      on('#' + buttonId, 'click', function () {
+        var btn = document.getElementById(buttonId);
+        var msg = document.getElementById('accMsg');
+        var total = 0;
+        btn.disabled = true;
 
-      function round() {
-        msg.innerHTML = 'Placing… <b>' + total + '</b> so far.';
-        API.acceptCandidates(1000).then(function (out) {
-          total += out.accepted;
-          if (out.remaining > 0 && out.accepted > 0) return round();
-          msg.innerHTML = '<span class="ok-msg"><b>' + total + '</b> restaurant(s) are now on the map.</span>';
-          setTimeout(render, 1500);
-          return null;
-        }).catch(function (e) {
-          btn.disabled = false;
-          msg.innerHTML = '<span class="err">' + esc(e.message) + '</span>';
-        });
-      }
-      round();
+        function round() {
+          msg.innerHTML = 'Placing… <b>' + total + '</b> so far.';
+          API.acceptCandidates(kind, 1000).then(function (out) {
+            total += out.accepted;
+            if (out.remaining > 0 && out.accepted > 0) return round();
+            msg.innerHTML = '<span class="ok-msg"><b>' + total + '</b> restaurant(s) are now on the map.</span>';
+            setTimeout(render, 1500);
+            return null;
+          }).catch(function (e) {
+            btn.disabled = false;
+            msg.innerHTML = '<span class="err">' + esc(e.message) + '</span>';
+          });
+        }
+        round();
+      });
+    }
+    bulkAccept('btnAcceptBusiness', 'business');
+    bulkAccept('btnAcceptStreet', 'street');
+
+    on('#btnRetry', 'click', function () {
+      var btn = document.getElementById('btnRetry');
+      var msg = document.getElementById('retryMsg');
+      btn.disabled = true;
+      msg.textContent = ' Queueing…';
+      API.retryUnconfirmed().then(function (out) {
+        msg.innerHTML = ' <span class="ok-msg">' + out.queued + ' queued — run Find locations above.</span>';
+        setTimeout(render, 1200);
+      }).catch(function (e) {
+        btn.disabled = false;
+        msg.innerHTML = ' <span class="err">' + esc(e.message) + '</span>';
+      });
     });
 
     document.querySelectorAll('.confirm-cand').forEach(function (b) {
