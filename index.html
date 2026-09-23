@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Modern Drivers</title>
 <link rel="icon" href="mark.png">
-<link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css?v=00e2b85">
+<link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css?v=6549efd">
 <script src="vendor/maplibre/maplibre-gl-csp.js" defer></script>
 <style>
   /* Modern Drivers has its own look: navy ground, white surfaces, one accent.
@@ -113,6 +113,16 @@
   .banner.info{background:var(--navy-tint);border-color:#ccd4ee;color:var(--navy);}
   .link-sm{background:none;border:none;color:var(--navy);font-size:.75rem;font-weight:700;
            text-decoration:underline;padding:4px 0;}
+  /* The type-ahead over the map's own restaurants. */
+  .findhits{position:absolute;top:100%;left:0;right:0;z-index:5;background:#fff;
+            border:1px solid var(--line);border-radius:10px;margin-top:4px;overflow:hidden;
+            box-shadow:0 8px 28px rgba(20,24,36,.16);max-height:300px;overflow-y:auto;}
+  .findhits button{display:block;width:100%;text-align:left;background:none;border:none;
+                   border-bottom:1px solid var(--line);padding:9px 12px;font-size:.87rem;border-radius:0;}
+  .findhits button:last-child{border-bottom:none;}
+  .findhits button:hover{background:var(--navy-tint);}
+  .findhits button span{display:block;font-size:.73rem;color:var(--ink-2);margin-top:1px;}
+
   /* A folded-away panel. Everything that is not the main job of a screen goes
      behind one of these: the office should see the one thing to do, not the
      twelve things the software is capable of. */
@@ -166,11 +176,11 @@
 
 <div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
 
-<script src="config.js?v=00e2b85"></script>
+<script src="config.js?v=6549efd"></script>
 <script src="xlsx.js"></script>
-<script src="api.js?v=00e2b85"></script>
-<script src="map.js?v=00e2b85"></script>
-<script src="views.js?v=00e2b85"></script>
-<script src="app.js?v=00e2b85"></script>
+<script src="api.js?v=6549efd"></script>
+<script src="map.js?v=6549efd"></script>
+<script src="views.js?v=6549efd"></script>
+<script src="app.js?v=6549efd"></script>
 </body>
 </html>
