@@ -22,6 +22,7 @@ window.DRIVERS_VIEWS = (function () {
     map: null,
     markers: {},
     replay: null,
+    tracksMap: null,
     currentRide: null,
   };
 
@@ -76,7 +77,10 @@ window.DRIVERS_VIEWS = (function () {
 
   function go(tab) {
     state.tab = tab;
-    state.map = null; state.markers = {}; state.replay = null;
+    // Every map object belongs to a DOM node that is about to be replaced.
+    // Keeping a reference would leave the next render talking to a container
+    // that is no longer on the page.
+    state.map = null; state.markers = {}; state.replay = null; state.tracksMap = null;
     renderTabs();
     render();
   }
@@ -92,7 +96,19 @@ window.DRIVERS_VIEWS = (function () {
 
   // ── Live fleet ─────────────────────────────────────────────────────────
   function renderFleet() {
-    return API.dashboard().then(function (d) {
+    // The restaurants come along for the ride so the live map shows the
+    // customers as well as the drivers. Seeing a driver adrift in an area with
+    // no customers in it is the single most useful thing this map can tell the
+    // office, and it cannot say it without the pins. A failure to load them
+    // must not take the fleet map down with it.
+    return Promise.all([
+      API.dashboard(),
+      API.places('restaurants').catch(function () { return []; }),
+      API.places('facilities').catch(function () { return []; }),
+    ]).then(function (r) {
+      var d = r[0];
+      var restaurants = r[1];
+      var facilities = r[2];
       state.dashboard = d;
       state.staleAfterSec = d.staleAfterSec;
       var m = d.metrics;
@@ -130,6 +146,8 @@ window.DRIVERS_VIEWS = (function () {
         + '      <span><i style="background:#1a7a4c"></i>Live</span>'
         + '      <span><i style="background:#8a5f14"></i>Last known (stale)</span>'
         + '      <span><i style="background:#98a2b3"></i>No position</span>'
+        + '      <span><i style="background:#D7262F"></i>Restaurant (' + restaurants.filter(hasPin).length + ')</span>'
+        + '      <span><i style="background:#1B2A6B"></i>Depot</span>'
         + '    </div>'
         + '  </div>'
         + '</div>');
@@ -150,6 +168,11 @@ window.DRIVERS_VIEWS = (function () {
       state.markers = {};
       if (state.map) {
         state.map.once('load', function () {
+          // Customers first, drivers on top: a driver must never be hidden
+          // under a restaurant pin.
+          MAPS.drawPlaces(state.map, 'restaurants',
+            restaurants.filter(function (x) { return x.active !== false && hasPin(x); }), '#D7262F');
+          MAPS.drawPlaces(state.map, 'facilities', facilities.filter(hasPin), '#1B2A6B');
           MAPS.syncMarkers({ map: state.map, markers: state.markers }, d.drivers, openDriver);
           var coords = d.drivers.filter(function (x) { return x.lastLocation; }).map(function (x) { return [x.lastLocation.lng, x.lastLocation.lat]; });
           MAPS.fitTo(state.map, coords);
@@ -1183,13 +1206,129 @@ window.DRIVERS_VIEWS = (function () {
         + '<div><button class="btn-outline" id="btnXls">Excel</button></div>'
         + '<div><button class="btn-outline" id="btnPrint">Print</button></div>'
         + '</div></div>'
-        + '<div id="reportOut"></div>');
+        + '<div id="reportOut"></div>'
+
+        // Where they actually drove. Folded away and loaded on request: it
+        // costs one request per ride, which is not something to spend every
+        // time somebody changes a date filter.
+        + '<details class="card"><summary class="disclose">Show where they drove on a map</summary>'
+        + '<div style="margin-top:14px">'
+        + '<p class="muted">Draws the routes for the rides in the period above — the same rides the table is built from. '
+        + 'Restaurants are shown in red so you can see which journeys went to a customer and which did not.</p>'
+        + '<p><button class="btn-primary" id="btnTracks" style="width:auto">Draw the routes</button> '
+        + '<span id="tracksMsg" class="tiny"></span></p>'
+        + '<div id="tracksMap" style="width:100%;height:520px;border-radius:14px;border:1px solid var(--line);background:#e3e6ef"></div>'
+        + '<div id="tracksLegend" class="legend"></div>'
+        + '</div></details>');
 
       on('#btnRun', 'click', runReport);
       on('#btnCsv', 'click', function () { exportReport('csv'); });
       on('#btnXls', 'click', function () { exportReport('xls'); });
       on('#btnPrint', 'click', function () { window.print(); });
+      on('#btnTracks', 'click', drawReportTracks);
       runReport();
+    });
+  }
+
+  // One colour per driver, cycled. Eight is enough to tell apart at a glance;
+  // beyond that the legend is doing the work anyway.
+  var TRACK_COLOURS = ['#1B2A6B', '#D7262F', '#1a7a4c', '#8a5f14', '#6b2fb3', '#0f7b8a', '#b3263f', '#3d4a5c'];
+
+  // Each ride's GPS has to be fetched separately, so this is capped. Twenty
+  // routes is already a busy picture; two hundred would be a smear and a
+  // minute of waiting.
+  var MAX_TRACKS = 20;
+
+  function drawReportTracks() {
+    var btn = document.getElementById('btnTracks');
+    var msg = document.getElementById('tracksMsg');
+    var legend = document.getElementById('tracksLegend');
+    btn.disabled = true;
+    msg.textContent = ' Finding the rides…';
+
+    var params = reportParams();
+    API.rides({ from: params.from, to: params.to, driverId: params.driverId }).then(function (rides) {
+      var list = (rides || []).slice(0, MAX_TRACKS);
+      if (!list.length) {
+        msg.textContent = ' No rides in this period.';
+        btn.disabled = false;
+        return null;
+      }
+
+      // Sequential on purpose: twenty parallel point downloads from forty
+      // drivers' worth of GPS is a good way to be rate-limited by our own API.
+      var tracks = [];
+      var colourOf = {};
+      var next = 0;
+      function step() {
+        if (next >= list.length) return Promise.resolve();
+        var r = list[next];
+        next += 1;
+        msg.textContent = ' Loading ride ' + next + ' of ' + list.length + '…';
+        return API.ride(r.id, true).then(function (full) {
+          var pts = (full.points || []).filter(function (p) {
+            return Number.isFinite(p.lat) && Number.isFinite(p.lng) && p.countDistance !== false;
+          });
+          if (pts.length > 1) {
+            if (!colourOf[r.driverId]) {
+              colourOf[r.driverId] = TRACK_COLOURS[Object.keys(colourOf).length % TRACK_COLOURS.length];
+            }
+            tracks.push({
+              rideId: r.id,
+              label: (r.driverName || r.driverId) + ' · ' + (r.dayKey || ''),
+              color: colourOf[r.driverId],
+              coords: pts.map(function (p) { return [p.lng, p.lat]; }),
+              driverId: r.driverId,
+              driverName: r.driverName || r.driverId,
+            });
+          }
+          return step();
+        }).catch(function () { return step(); });   // one bad ride must not stop the picture
+      }
+
+      return step().then(function () {
+        if (!tracks.length) {
+          msg.textContent = ' These rides have no usable GPS.';
+          btn.disabled = false;
+          return;
+        }
+        msg.innerHTML = ' <b>' + tracks.length + ' route(s) drawn.</b>'
+          + (rides.length > MAX_TRACKS ? ' Showing the first ' + MAX_TRACKS + ' of ' + rides.length + '.' : '');
+
+        var map = state.tracksMap;
+        if (!map) {
+          map = MAPS.create('tracksMap');
+          state.tracksMap = map;
+        }
+        if (!map) { msg.textContent = ' The map could not be loaded.'; btn.disabled = false; return; }
+
+        var paint = function () {
+          MAPS.clearLayer(map, 'tracks');
+          MAPS.drawTracks(map, 'tracks', tracks);
+          API.places('restaurants').then(function (rs) {
+            MAPS.clearLayer(map, 'tracks-places');
+            MAPS.drawPlaces(map, 'tracks-places',
+              rs.filter(function (p) { return p.active !== false && hasPin(p); }), '#D7262F');
+          }).catch(function () { /* the routes are the point; pins are a bonus */ });
+          var all = [];
+          tracks.forEach(function (t) { all.push(t.coords[0], t.coords[t.coords.length - 1]); });
+          MAPS.fitTo(map, all);
+        };
+        if (map.isStyleLoaded()) paint(); else map.once('load', paint);
+
+        var seen = {};
+        legend.innerHTML = tracks.filter(function (t) {
+          if (seen[t.driverId]) return false;
+          seen[t.driverId] = true;
+          return true;
+        }).map(function (t) {
+          return '<span><i style="background:' + t.color + '"></i>' + esc(t.driverName) + '</span>';
+        }).join('');
+        btn.disabled = false;
+      });
+    }).catch(function (e) {
+      msg.innerHTML = ' <span class="err">' + esc(e.message) + '</span>';
+      btn.disabled = false;
     });
   }
 
@@ -1279,22 +1418,74 @@ window.DRIVERS_VIEWS = (function () {
   }
 
   // ── Settings ───────────────────────────────────────────────────────────
+  /* What each threshold actually means, in the office's language.
+   *
+   * These numbers decide how many kilometres a driver is paid for, and the
+   * screen was showing them as bare variable names — "stopMinDwellSec" tells
+   * nobody anything. Each line below says what the setting does and, more
+   * usefully, what goes wrong if it is moved the wrong way, because that is
+   * the question somebody about to change one is really asking.
+   */
+  var SETTING_HELP = {
+    rejectAccuracyM: ['How vague a GPS fix can be before it is thrown out',
+      'Lower: you lose real travel recorded indoors and at loading bays. Higher: phone noise turns into kilometres.'],
+    warnAccuracyM: ['Above this a fix is kept but flagged as poor quality',
+      'Only affects the GPS reliability report. It never changes a distance.'],
+    maxSpeedMps: ['Faster than this between two fixes is a GPS jump, not a vehicle',
+      '33 m/s is about 120 km/h. A bike in Pune traffic will never reach it.'],
+    clockSkewMin: ['How far a phone\'s clock may be wrong before its points are refused',
+      'Phones drift, and some are set by hand.'],
+    minMoveM: ['Movement smaller than this is treated as a parked phone twitching',
+      'Lower: a phone sitting at a restaurant invents hundreds of metres. Higher: slow crawling traffic stops being counted.'],
+    gapSeconds: ['A silence longer than this is a tracking gap, not travel',
+      'Distance across a gap is reported separately as an estimate and never counted as measured.'],
+    stopRadiusM: ['How tightly the phone must stay put for it to count as a stop', ''],
+    stopMinDwellSec: ['And for how long, before it is a stop rather than a traffic light',
+      'Lower and every red signal becomes a "visit". 180 s keeps deliveries and excludes junctions.'],
+    geofenceDefaultRadiusM: ['How close to a restaurant counts as being at it',
+      'Used when a restaurant has no radius of its own. Wider means more visits credited, including wrong ones.'],
+    facilityRadiusM: ['The same, for a Modern Dairy depot',
+      'Larger because a depot is a yard, a loading bay and a car park, not a doorway.'],
+    visitMinDwellSec: ['How long a driver must be inside a geofence for it to be a visit',
+      'Parked outside a restaurant for 40 seconds is not evidence of a delivery.'],
+    matchRadiusM: ['How far a stop may be from the order\'s address and still match it', ''],
+    matchTimeToleranceMin: ['How far outside the delivery window a visit can still be a possible match',
+      'Inside the window it is a match; outside but within this, a possible one.'],
+    autoStopAfterHours: ['A ride nobody stopped is closed automatically after this long',
+      'Recorded as auto-closed with the threshold that did it — never silently.'],
+    staleLocationSec: ['After this, a position on the live map is labelled "last known" instead of "live"', ''],
+    gpsMissingAlertMin: ['No GPS at all for this long during a ride raises an alert', ''],
+    longRideAlertHours: ['A ride still running after this long raises an alert', 'Comes before the hard auto-stop above.'],
+    maxBatchPoints: ['How many GPS points the phone may upload at once', ''],
+    sampleIntervalSec: ['How often the phone records a position',
+      'Lower is more accurate and uses more battery and more database writes. 30 s is about 1,440 points per driver per day.'],
+  };
+
   function renderSettings() {
     return Promise.all([API.config(), API.audit()]).then(function (r) {
       var c = r[0];
       var audit = r[1];
       var keys = Object.keys(c.defaults).filter(function (k) { return k !== 'retention'; });
       set('<div class="card"><h2>Processing thresholds</h2>'
-        + '<p class="muted">These decide what the system concludes. Changing one does <b>not</b> change any ride already calculated — use Recalculate below for that. Every change is audit-logged, and the thresholds used are stored on each result.</p>'
+        + '<p class="muted">These decide what the system concludes from the GPS — what counts as a stop, as a visit, as business distance. '
+        + 'Changing one does <b>not</b> change any ride already calculated; use <b>Recalculate</b> below for that. '
+        + 'Every change is written to the audit log, and the thresholds in force are stored on each result, so an old report can always be explained.</p>'
+        + '<div class="banner info">If you are not sure, leave them alone. The defaults are tuned for Pune traffic on ordinary Android phones, '
+        + 'and the <b>Default</b> column always shows what to put back.</div>'
         + (c.rejected && c.rejected.length ? '<div class="banner">Ignored: ' + esc(c.rejected.map(function (x) { return x.key + ' (' + x.reason + ')'; }).join(', ')) + '</div>' : '')
         + '<div style="overflow-x:auto"><table><thead><tr><th>Setting</th><th>Value</th><th>Default</th><th>Allowed range</th></tr></thead><tbody>'
         + keys.map(function (k) {
           var range = c.ranges[k];
-          return '<tr><td>' + esc(k) + '</td>'
-            + '<td><input data-cfg="' + esc(k) + '" value="' + esc(String(c.config[k])) + '" style="max-width:120px"></td>'
+          var help = SETTING_HELP[k] || [];
+          return '<tr><td><b>' + esc(help[0] || k) + '</b>'
+            + (help[1] ? '<br><span class="tiny">' + esc(help[1]) + '</span>' : '')
+            + '<br><span class="tiny" style="opacity:.7">' + esc(k) + '</span></td>'
+            + '<td><input data-cfg="' + esc(k) + '" value="' + esc(String(c.config[k])) + '" style="max-width:110px"></td>'
             + '<td class="tiny">' + esc(String(c.defaults[k])) + '</td>'
             + '<td class="tiny">' + (range ? range[0] + ' – ' + range[1] : '—') + '</td></tr>';
         }).join('') + '</tbody></table></div>'
+        + '<p class="tiny" style="margin-top:10px"><b>How long records are kept</b>, in days. '
+        + 'Raw GPS is deleted first and only once the ride has been calculated, so the reports stay auditable after the point-by-point trail is gone.</p>'
         + '<div class="row3" style="margin-top:12px">'
         + Object.keys(c.defaults.retention).map(function (k) {
           return '<div class="field"><label>retention.' + esc(k) + ' (days)</label><input data-ret="' + esc(k) + '" value="' + esc(String(c.config.retention[k])) + '"></div>';
