@@ -333,7 +333,10 @@ async function processOne(rideId) {
   try {
     const { observations, sequence } = legObservations.legsFromVisits(result.visits);
     if (observations.length || sequence.length >= 2) {
-      await repo.recordDriverLegs(ride.driverId, observations, sequence);
+      // The ride id is what lets a reprocess replace this ride's observations
+      // instead of appending a second copy — a recalculation must not turn one
+      // trip into five and tell the driver a leg is measured from five.
+      await repo.recordDriverLegs(ride.driverId, observations, sequence, { rideId });
       repo.invalidateFleetLegs();
     }
   } catch (e) {

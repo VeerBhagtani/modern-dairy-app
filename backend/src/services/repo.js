@@ -482,14 +482,28 @@ async function loadDriverLegs(driverId) {
  * a flyover opens, a shift moves to mornings — and an estimate that averages
  * in last year's traffic is not the estimate to plan tomorrow around.
  */
-async function recordDriverLegs(driverId, observations, sequence) {
+async function recordDriverLegs(driverId, observations, sequence, { rideId = null } = {}) {
   if (!driverId) return { legs: 0, sequences: 0 };
   const current = await loadDriverLegs(driverId);
   const legs = { ...current.legs };
 
   for (const o of observations || []) {
     const key = `${o.from}>${o.to}`;
-    const runs = [...(legs[key] || []), { distanceM: o.distanceM, durationS: o.durationS, at: o.at }];
+    const run = { distanceM: o.distanceM, durationS: o.durationS, at: o.at };
+    if (rideId) run.rideId = rideId;
+
+    // A ride is processed more than once: on finishing, on a manual
+    // recalculation, and again after every segment review. Appending blindly
+    // meant one trip could become five identical observations, and five is
+    // exactly the count at which legCost stops blending and starts telling the
+    // driver a leg is "measured from your 5 past trips". A recalculation must
+    // not manufacture confidence, so an observation replaces the one it is a
+    // re-reading of rather than joining it.
+    const kept = (legs[key] || []).filter((r) => (
+      rideId && r.rideId ? r.rideId !== rideId : !(r.at === run.at && r.distanceM === run.distanceM)
+    ));
+
+    const runs = [...kept, run];
     runs.sort((a, b) => (b.at || 0) - (a.at || 0));
     legs[key] = runs.slice(0, RUNS_KEPT_PER_LEG);
   }
@@ -504,9 +518,12 @@ async function recordDriverLegs(driverId, observations, sequence) {
     }
   }
 
-  const sequences = [...current.sequences];
+  // Same for the visit order: a reprocess must not make one day's round look
+  // like a habit repeated three times, because that is what the planner reads
+  // to decide whether to leave a driver's routine alone.
+  const sequences = [...current.sequences].filter((s) => !(rideId && s.rideId === rideId));
   if (sequence && sequence.length >= 2) {
-    sequences.unshift({ order: sequence, at: Date.now() });
+    sequences.unshift({ order: sequence, at: Date.now(), rideId: rideId || null });
   }
 
   await legsDoc(driverId).set({

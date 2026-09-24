@@ -181,6 +181,9 @@ router.post('/rides/:rideId/points', gpsIngestLimiter, async (req, res) => {
     await repo.writeEvent({ driverId: req.driverId, rideId, kind: 'cross_driver_upload_blocked', detail: { ownedBy: ride.driverId } });
     return res.status(403).json({ success: false, message: 'That ride does not belong to this account.' });
   }
+  // Points the phone sent that belong after the stop. Collected here so they
+  // can be reported back as rejected rather than vanishing — see below.
+  let afterStop = [];
   if (ride.status !== 'active') {
     // Late points for a stopped ride are ACCEPTED if they were recorded before
     // the stop — a phone that was offline when the office stopped the ride
@@ -191,12 +194,22 @@ router.post('/rides/:rideId/points', gpsIngestLimiter, async (req, res) => {
     if (!inWindow.length) {
       return res.status(409).json({ success: false, code: 'RIDE_STOPPED', message: 'This ride has been stopped by the office.', data: { stoppedAt: ride.stoppedAt, reason: ride.stopReason } });
     }
+    // Points recorded AFTER the stop are refused — that is correct, the ride
+    // was over — but they must be named in the reply. The app only deletes a
+    // queued point the server has accounted for, so a point that is silently
+    // dropped stays in the phone's queue and is uploaded again into the
+    // driver's NEXT ride, adding yesterday's travel and a phantom gap to
+    // tomorrow's kilometres.
+    afterStop = body.points.filter((p) => Number(p?.deviceTs) > cutoff);
     body.points = inWindow;
   }
 
   const nowMs = Date.now();
   const accepted = [];
-  const rejected = [];
+  const rejected = afterStop.map((p) => ({
+    clientPointId: p?.clientPointId ?? null,
+    error: 'recorded after the office stopped this ride',
+  }));
   for (const raw of body.points) {
     const { point, error } = normaliseIncomingPoint(raw, { nowMs, clockSkewMin: config.clockSkewMin });
     if (error) { rejected.push({ clientPointId: raw?.clientPointId ?? null, error }); continue; }

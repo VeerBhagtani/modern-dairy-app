@@ -49,15 +49,34 @@ app.use((req, res, next) => {
   next();
 });
 
-// Allowlist CORS. Requests with no Origin (the Android app, curl,
-// server-to-server) are always allowed, since CORS is a browser-only concept.
+// Allowlist CORS. Requests with no Origin at all (curl, server-to-server) are
+// allowed, since CORS is a browser-only concept and a client that sends no
+// Origin was never subject to it.
+//
+// The Android app IS subject to it. It is a WebView, not a native HTTP client,
+// so it sends an Origin like any browser — "https://localhost" on Android under
+// Capacitor's https scheme. That origin has to be in the list or the phone's own
+// browser refuses the call before it leaves the device. An earlier version of
+// this comment claimed the app sent no Origin; it was wrong, and the cost was a
+// fleet of phones that could not start a ride.
+//
 // Unset means "no browser origin allowed", which is the safe default until the
-// dashboard's real origin is known.
+// real origins are known.
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
 app.use(cors({
   origin(origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-    callback(new Error('Not allowed by CORS'));
+    // A refused origin is invisible from the outside: the browser reports only
+    // "Failed to fetch" — no status, no body, nothing in the network tab that
+    // names the cause. So the server says out loud what it refused and what it
+    // would have accepted. Neither is a secret; the client that sent the origin
+    // already knows it, and the allowlist is in a public workflow file.
+    console.warn(
+      '[cors] refused origin %s — allowed: %s',
+      origin,
+      allowedOrigins.join(', ') || '(none configured)',
+    );
+    callback(new Error(`Origin ${origin} is not allowed to call this API.`));
   },
 }));
 

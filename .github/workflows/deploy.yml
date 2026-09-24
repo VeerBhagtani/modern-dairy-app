@@ -176,8 +176,22 @@ jobs:
           # The office dashboard is served from GitHub Pages, so that origin is
           # the one the browser will send. The Firebase Hosting origins stay in
           # the list in case the dashboard is ever served from there too.
+          #
+          # And the driver app, which is the one that is easy to forget. It is
+          # not a website and has no domain: Capacitor serves it from inside the
+          # APK, and with androidScheme "https" the WebView's origin is literally
+          # "https://localhost" (iOS would be "capacitor://localhost"). Omitting
+          # those makes nothing safer — it means every call from every phone is
+          # refused by the browser before it reaches this service, and the driver
+          # sees "Failed to fetch" with nothing to go on.
+          #
+          # CORS is not the security boundary here and must not be mistaken for
+          # one. It decides which web pages a browser will let talk to this API;
+          # the signed driver token decides who may actually do anything. A
+          # hostile page on localhost gains nothing without a token it has no way
+          # to obtain.
           OWNER="${GITHUB_REPOSITORY%%/*}"
-          ORIGINS="https://${OWNER,,}.github.io,https://${P}.web.app,https://${P}.firebaseapp.com"
+          ORIGINS="https://${OWNER,,}.github.io,https://${P}.web.app,https://${P}.firebaseapp.com,https://localhost,capacitor://localhost"
 
           # The first office login, seeded by the service on startup because the
           # deploy account can manage Firestore indexes but not write documents,
