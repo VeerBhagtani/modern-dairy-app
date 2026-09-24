@@ -20,6 +20,7 @@ const { placeIdFor } = require('../services/placeKey');
 const geocode = require('../services/geocode');
 const mobileVendor = require('../drivers/mobileVendor');
 const placesApi = require('../services/places');
+const googleCheck = require('../services/googleCheck');
 const maintenance = require('../services/maintenance');
 const { getSecret, setSecret, secretStatus, KNOWN_SECRETS } = require('../services/secretManager');
 const {
@@ -310,12 +311,21 @@ router.get('/rides/:rideId', requireRole('viewer'), async (req, res) => {
 // log is exactly the kind of record that cannot be defended later.
 router.post('/rides/:rideId/stop', requireRole('manager'), writeLimiter, async (req, res) => {
   const { rideId } = req.params;
-  const { reason, emergency } = req.body || {};
+  const { reason, emergency, stoppedByName } = req.body || {};
   if (!isValidId(rideId)) return bad(res, 'Invalid ride id');
   if (!isBoundedString(reason, { min: 3, max: 300 })) return bad(res, 'Give a reason for stopping this ride (at least 3 characters).');
+  // Who stopped it: one of the office's names. Checked against the list so a
+  // typo cannot become a new "person" in the audit log.
+  let byName = null;
+  if (stoppedByName != null && stoppedByName !== '') {
+    const names = await repo.getStopNames();
+    byName = names.find((n) => n.toLowerCase() === String(stoppedByName).trim().toLowerCase()) || null;
+    if (!byName) return bad(res, 'Choose who is stopping this ride from the list, or add their name first.');
+  }
   try {
     const out = await repo.stopRide(rideId, {
       by: `admin:${req.adminId}`,
+      byName,
       reason: emergency === true ? `EMERGENCY STOP: ${reason}` : reason,
       kind: emergency === true ? 'emergency' : 'admin',
     });
@@ -332,6 +342,22 @@ router.post('/rides/:rideId/stop', requireRole('manager'), writeLimiter, async (
     if (e.code === 'NO_RIDE') return res.status(404).json({ success: false, message: 'Ride not found' });
     throw e;
   }
+});
+
+// The names offered as "stopped by" when a ride is stopped.
+router.get('/stop-names', requireRole('viewer'), async (req, res) => {
+  res.json({ success: true, data: { names: await repo.getStopNames() } });
+});
+router.post('/stop-names', requireRole('manager'), writeLimiter, async (req, res) => {
+  try {
+    res.json({ success: true, data: { names: await repo.addStopName((req.body || {}).name, req.adminId) } });
+  } catch (e) {
+    if (e.code === 'BAD_NAME' || e.code === 'FULL') return bad(res, e.message);
+    throw e;
+  }
+});
+router.delete('/stop-names', requireRole('manager'), writeLimiter, async (req, res) => {
+  res.json({ success: true, data: { names: await repo.removeStopName((req.body || {}).name, req.adminId) } });
 });
 
 // ---------------------------------------------------------------------------
@@ -1171,6 +1197,99 @@ router.post('/restaurants/:id/confirm-location', requireRole('admin'), writeLimi
   repo.invalidatePlaceCache();
   await repo.writeAudit({ adminId: req.adminId, action: 'restaurants.confirm_location', target: id, after: { lat, lng } });
   res.json({ success: true, data: { id, lat, lng } });
+});
+
+// POST /admin/restaurants/google-check { limit, recheck }
+//
+// Check restaurants' pins against Google Maps, a batch at a time: the
+// dashboard calls this repeatedly until nothing is left, so no single request
+// runs long and the office sees it progress. See services/googleCheck.js for
+// what each verdict means. Never moves a pin.
+router.post('/restaurants/google-check', requireRole('admin'), writeLimiter, async (req, res) => {
+  const apiKey = await getSecret('geocoding');
+  if (!apiKey) {
+    return res.status(400).json({ success: false, code: 'NO_GEOCODING_KEY', message: 'No Google key is configured, so restaurants cannot be checked yet.' });
+  }
+  const limit = Math.min(Math.max(Number(req.body?.limit) || 60, 1), 120);
+  // A "check all again" run: the first batch sends recheck:true and gets back
+  // the server's own start time; every later batch sends that time back, so
+  // each picks up where the last left off and the run ends. The server's clock,
+  // never the office PC's — a PC clock running ahead would make restaurants
+  // just checked look older than the run, and the run would never finish.
+  const before = req.body?.recheck === true ? Date.now()
+    : Number.isFinite(Number(req.body?.recheckBefore)) ? Number(req.body.recheckBefore) : null;
+
+  const snap = await repo.C.restaurants().get();
+  const due = snap.docs.filter((d) => googleCheck.needsCheck(d.data(), { before }));
+  const batch = due.slice(0, limit);
+
+  const counts = { confirmed: 0, moved: 0, name_differs: 0, not_found: 0, failed: 0 };
+  let stoppedFor = null;
+  // A few at a time: fast enough to get through thousands of restaurants in a
+  // few minutes, gentle enough not to trip Google's per-second limits.
+  const CONCURRENCY = 4;
+  for (let i = 0; i < batch.length && !stoppedFor; i += CONCURRENCY) {
+    // eslint-disable-next-line no-await-in-loop
+    await Promise.all(batch.slice(i, i + CONCURRENCY).map(async (doc) => {
+      const place = doc.data();
+      try {
+        const verdict = await googleCheck.checkOne(place, apiKey);
+        // The pin this verdict is about, so a later move of the pin is known
+        // to make the check stale.
+        await doc.ref.set({ googleCheck: { ...verdict, pinLat: place.lat, pinLng: place.lng } }, { merge: true });
+        counts[verdict.status] += 1;
+      } catch (e) {
+        counts.failed += 1;
+        if (e.notEnabled) stoppedFor = 'The Google key cannot use the Places API. Enable "Places API (New)" on it in the Google Cloud console.';
+        else if (e.overQuota) stoppedFor = 'Google\'s rate limit was reached. Wait a minute and carry on — nothing is lost.';
+      }
+    }));
+  }
+  // Checked means a verdict was written; failed and unattempted (the batch
+  // stopped early) both still count as remaining.
+  const checked = counts.confirmed + counts.moved + counts.name_differs + counts.not_found;
+  const remaining = due.length - checked;
+  // The whole list's standing, for the screen's summary.
+  const totals = { confirmed: 0, moved: 0, name_differs: 0, not_found: 0, unchecked: 0 };
+  for (const d of snap.docs) {
+    const p = d.data();
+    if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng) || p.active === false || p.mobile === true) continue;
+    const st = p.googleCheck && p.googleCheck.status;
+    if (batch.some((b) => b.id === d.id)) continue;
+    if (st && totals[st] != null) totals[st] += 1; else totals.unchecked += 1;
+  }
+  for (const k of ['confirmed', 'moved', 'name_differs', 'not_found']) totals[k] += counts[k];
+  totals.unchecked += batch.length - checked;
+
+  await repo.writeAudit({ adminId: req.adminId, action: 'restaurants.google_check', after: { checked, counts, remaining } });
+  res.json({ success: true, data: { checked, counts, remaining: Math.max(0, remaining), totals, stoppedFor, recheckBefore: before } });
+});
+
+// POST /admin/restaurants/:id/use-google-pin — move the pin to where Google
+// Maps has the business. The office's decision, one restaurant at a time.
+router.post('/restaurants/:id/use-google-pin', requireRole('admin'), writeLimiter, async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) return bad(res, 'Invalid id');
+  const doc = await repo.C.restaurants().doc(id).get();
+  if (!doc.exists) return res.status(404).json({ success: false, message: 'Not found' });
+  const before = doc.data();
+  const c = before.googleCheck || {};
+  if (!Number.isFinite(c.googleLat) || !Number.isFinite(c.googleLng)) {
+    return bad(res, 'Google Maps has no position for this restaurant. Run the check first.');
+  }
+  await doc.ref.set({
+    lat: c.googleLat,
+    lng: c.googleLng,
+    locationStatus: 'confirmed',
+    locationSource: 'google_maps',
+    confirmedBy: req.adminId,
+    confirmedAt: Date.now(),
+    // The pin is now Google's own, so the check stands as confirmed against it.
+    googleCheck: { ...c, status: googleCheck.STATUS.CONFIRMED, distanceM: 0, pinLat: c.googleLat, pinLng: c.googleLng, detail: 'Pin moved to Google Maps\' position by the office.' },
+  }, { merge: true });
+  repo.invalidatePlaceCache();
+  await repo.writeAudit({ adminId: req.adminId, action: 'restaurants.use_google_pin', target: id, before: { lat: before.lat, lng: before.lng }, after: { lat: c.googleLat, lng: c.googleLng } });
+  res.json({ success: true, data: { id, lat: c.googleLat, lng: c.googleLng } });
 });
 
 router.get('/restaurants/export.csv', requireRole('viewer'), async (req, res) => {

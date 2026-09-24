@@ -102,6 +102,54 @@ async function setLocationsLock(locked, adminId) {
   return getLocationsLock();
 }
 
+/* The people who stop rides.
+ *
+ * Stopping a ride asks who did it, from a list the office keeps: the
+ * signed-in account says which login was used, not which person at the desk
+ * pressed the button, and a shared office login is normal here. Kept on the
+ * config document with the other office settings.
+ */
+const MAX_STOP_NAMES = 100;
+const cleanName = (n) => String(n || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+
+async function getStopNames() {
+  const doc = await C.config().get();
+  const list = doc.exists && Array.isArray(doc.data().stopNames) ? doc.data().stopNames : [];
+  return list.filter((n) => typeof n === 'string' && n.trim());
+}
+
+async function addStopName(name, adminId) {
+  const clean = cleanName(name);
+  if (clean.length < 2) throw Object.assign(new Error('Enter a name of at least two letters.'), { code: 'BAD_NAME' });
+  const names = await db.runTransaction(async (tx) => {
+    const ref = C.config();
+    const doc = await tx.get(ref);
+    const list = doc.exists && Array.isArray(doc.data().stopNames) ? doc.data().stopNames : [];
+    // The same person typed twice, in another case, is one person.
+    if (list.some((n) => n.toLowerCase() === clean.toLowerCase())) return list;
+    if (list.length >= MAX_STOP_NAMES) throw Object.assign(new Error('The list is full. Remove a name first.'), { code: 'FULL' });
+    const next = [...list, clean].sort((a, b) => a.localeCompare(b));
+    tx.set(ref, { stopNames: next }, { merge: true });
+    return next;
+  });
+  await writeAudit({ adminId, action: 'stop_names.add', target: 'drivers_config', after: { name: clean } });
+  return names;
+}
+
+async function removeStopName(name, adminId) {
+  const clean = cleanName(name);
+  const names = await db.runTransaction(async (tx) => {
+    const ref = C.config();
+    const doc = await tx.get(ref);
+    const list = doc.exists && Array.isArray(doc.data().stopNames) ? doc.data().stopNames : [];
+    const next = list.filter((n) => n.toLowerCase() !== clean.toLowerCase());
+    tx.set(ref, { stopNames: next }, { merge: true });
+    return next;
+  });
+  await writeAudit({ adminId, action: 'stop_names.remove', target: 'drivers_config', before: { name: clean } });
+  return names;
+}
+
 // ---------------------------------------------------------------------------
 // Audit / events / alerts
 // ---------------------------------------------------------------------------
@@ -377,7 +425,7 @@ async function startRide(driverId, meta = {}) {
 // office's decision nor a timeout, and reports say which it was.
 const STOP_STATUS = { timeout: 'auto_closed', day_end: 'day_closed' };
 
-async function stopRide(rideId, { by, reason, kind = 'admin', stoppedAt = null }) {
+async function stopRide(rideId, { by, reason, kind = 'admin', stoppedAt = null, byName = null }) {
   // A day-end close is stamped at the end of the ride's day, not at the moment
   // somebody happened to notice the day was over: points recorded up to
   // midnight belong to that day, and anything later is refused from it.
@@ -389,13 +437,14 @@ async function stopRide(rideId, { by, reason, kind = 'admin', stoppedAt = null }
     const ride = doc.data();
     if (ride.status !== 'active') return { rideId, ...ride, alreadyStopped: true };
     const status = STOP_STATUS[kind] || 'stopped';
-    tx.update(ref, { status, stoppedAt: now, stoppedBy: by, stopReason: reason, stopKind: kind });
+    // byName: the person at the office who stopped it, chosen from the list.
+    tx.update(ref, { status, stoppedAt: now, stoppedBy: by, stoppedByName: byName, stopReason: reason, stopKind: kind });
     tx.update(C.drivers().doc(ride.driverId), { activeRideId: null });
     return { rideId, ...ride, status, stoppedAt: now, stopKind: kind, alreadyStopped: false };
   });
   if (!result.alreadyStopped) {
-    await writeAudit({ adminId: by, action: kind === 'timeout' ? 'ride.auto_close' : kind === 'day_end' ? 'ride.day_end' : 'ride.stop', target: rideId, after: { reason, kind } });
-    await writeEvent({ driverId: result.driverId, rideId, kind: 'ride_stopped', detail: { by, reason, kind } });
+    await writeAudit({ adminId: by, action: kind === 'timeout' ? 'ride.auto_close' : kind === 'day_end' ? 'ride.day_end' : 'ride.stop', target: rideId, after: { reason, kind, byName } });
+    await writeEvent({ driverId: result.driverId, rideId, kind: 'ride_stopped', detail: { by, byName, reason, kind } });
   }
   return result;
 }
@@ -793,6 +842,7 @@ async function loadProcessing(rideId, { withSegments = true } = {}) {
 }
 
 module.exports = {
+  getStopNames, addStopName, removeStopName,
   C, dayKeyFor, endOfDayMs, closeIfDayOver, acquireCalcLease, releaseCalcLease, markCalcFailed, markInputsChanged,
   getConfig, setConfigOverrides,
   writeAudit, writeEvent, openAlerts, applyAlertDiff, raiseAlertOnce,
