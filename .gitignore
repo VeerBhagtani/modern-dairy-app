@@ -4,6 +4,9 @@ node_modules/
 # Capacitor bump. scripts/patch-manifest.js applies the one thing cap add does
 # not know about.
 app/android/
+# Copied from node_modules/@capacitor/core at build time (see release.yml), so
+# its version always matches the native runtime.
+app/www/capacitor.js
 app/ios/
 *.log
 .env

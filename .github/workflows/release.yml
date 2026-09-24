@@ -61,6 +61,17 @@ jobs:
             echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # The APK shipped for days without this file. Android injects only
+      # Capacitor's low-level bridge; registerPlugin, which every GPS call goes
+      # through, is in @capacitor/core's browser bundle, and an app with no
+      # bundler has to load it itself. Without it the app reported "not running
+      # inside the app" from inside the app. Copied from the installed package so
+      # it can never drift from the native side's version. cp fails the build if
+      # the file is missing, which is the point.
+      - name: Add Capacitor's JavaScript runtime
+        working-directory: app
+        run: cp node_modules/@capacitor/core/dist/capacitor.js www/capacitor.js
+
       - name: Generate the native project
         working-directory: app
         run: npx cap add android

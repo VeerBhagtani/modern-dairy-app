@@ -214,6 +214,11 @@
   </div>
 </div>
 
+<!-- Capacitor's JavaScript runtime. Android injects only the low-level bridge;
+     registerPlugin — which every plugin call in app.js goes through — lives
+     here. Without it the app cannot reach GPS at all. Copied from
+     node_modules at build time so it always matches the native side. -->
+<script src="capacitor.js"></script>
 <script src="branding.js"></script>
 <script src="config.js"></script>
 <script src="app.js"></script>

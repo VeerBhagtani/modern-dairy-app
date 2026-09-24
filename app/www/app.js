@@ -432,9 +432,18 @@
    * now names itself.
    */
   function locationTrouble() {
-    if (!window.Capacitor || !window.Capacitor.registerPlugin) {
+    // Two different faults, which this used to report as one. Android's bridge
+    // defines window.Capacitor; registerPlugin comes from capacitor.js, which
+    // the app loads itself. Bridge present without registerPlugin means the
+    // APK was built without that file — the app IS the app, and telling the
+    // driver to "open the app instead of a browser" was false.
+    if (!window.Capacitor) {
       return 'This page is not running inside the Modern Drivers app, so it cannot use GPS. '
         + 'Open the app from the phone\'s home screen rather than a browser tab.';
+    }
+    if (!window.Capacitor.registerPlugin) {
+      return 'This copy of the app is missing part of itself and cannot reach GPS. '
+        + 'The office needs to send a new APK.';
     }
     if (!bg()) return 'The location service is missing from this build. The office needs a new APK.';
     return null;
@@ -912,7 +921,8 @@
    * only way to find out why a phone will not track is to have the phone.
    */
   function openDiagnostics() {
-    var inApp = !!(window.Capacitor && window.Capacitor.registerPlugin);
+    var inApp = !!window.Capacitor;
+    var runtime = !!(window.Capacitor && window.Capacitor.registerPlugin);
     var row = function (label, ok, detail) {
       return '<tr><td style="padding:7px 0;vertical-align:top">' + esc(label) + '</td>'
         + '<td style="padding:7px 0 7px 10px;text-align:right;white-space:nowrap;font-weight:600;color:'
@@ -925,6 +935,7 @@
       + 'Read this out to the office.</p>'
       + '<table style="width:100%;font-size:.86rem;border-collapse:collapse">'
       + row('Running inside the app', inApp, inApp ? 'yes' : 'NO — opened in a browser')
+      + row('App runtime loaded', runtime, runtime ? 'yes' : 'NO — needs a new APK')
       + row('Location service present', !!bg(), bg() ? 'yes' : 'NO — needs a new APK')
       + row('Phone\'s location switch', state.permission !== 'device-off',
         state.permission === 'device-off' ? 'OFF' : (state.lastFix ? 'on' : 'not known yet'))
@@ -1275,8 +1286,14 @@
     if (HAS_SERVER) { checkRide(); sync(); }
     else if (state.localRide) { initMap(); startWatcher(); }
   }
-  if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
-    window.Capacitor.Plugins.App.addListener('appStateChange', function (s) { if (s.isActive) resume(); });
+  // Through registerPlugin like every other plugin. Capacitor.Plugins.App is
+  // only filled in by older runtimes, so the old check here was silently false
+  // and "come back from Settings and it retries" never fired through this path.
+  if (window.Capacitor && window.Capacitor.registerPlugin) {
+    try {
+      window.Capacitor.registerPlugin('App')
+        .addListener('appStateChange', function (s) { if (s.isActive) resume(); });
+    } catch (e) { /* visibilitychange below still covers resume */ }
   }
   document.addEventListener('visibilitychange', function () { if (!document.hidden) resume(); });
 
