@@ -631,16 +631,30 @@ async function saveProcessing(rideId, result) {
   await C.processing().doc(rideId).set({ ...head, processedAt: Date.now() }, { merge: false });
   // Segments live in a sub-collection: a ride can have hundreds, and Firestore
   // caps a document at 1 MiB.
+  //
+  // Segment ids are positional (seg_0000, seg_0001, …), so a recalculation
+  // that finds fewer segments than last time would leave the old tail behind,
+  // and the ride view would show segments from a result that no longer
+  // exists. Rides are now recalculated repeatedly while they run, so that tail
+  // is removed: anything not in the new result is deleted.
+  const segIds = new Set(segments.map((seg) => seg.id));
+  const oldSegs = await C.segments(rideId).select().get();
   const writer = db.bulkWriter();
   for (const seg of segments) writer.set(C.segments(rideId).doc(seg.id), seg, { merge: false });
+  for (const d of oldSegs.docs) if (!segIds.has(d.id)) writer.delete(d.ref);
   await writer.close();
   await C.rides().doc(rideId).update({ processedAt: Date.now(), calcVersion: result.calcVersion });
 
-  // Matches are queryable on their own for the matching report.
+  // Matches are queryable on their own for the matching report. The same rule
+  // applies: a match the new result no longer makes must not survive in it.
+  const matchId = (m) => `${rideId}_${m.segmentId}_${m.orderId}`;
+  const keep = new Set(result.matching.matches.map(matchId));
+  const oldMatches = await C.matches().where('rideId', '==', rideId).select().get();
   const mWriter = db.bulkWriter();
   for (const m of result.matching.matches) {
-    mWriter.set(C.matches().doc(`${rideId}_${m.segmentId}_${m.orderId}`), { rideId, driverId: result.driverId, ...m }, { merge: false });
+    mWriter.set(C.matches().doc(matchId(m)), { rideId, driverId: result.driverId, ...m }, { merge: false });
   }
+  for (const d of oldMatches.docs) if (!keep.has(d.id)) mWriter.delete(d.ref);
   await mWriter.close();
 }
 

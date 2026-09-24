@@ -30,6 +30,20 @@ const { evaluateResultAlerts } = require('../drivers/alerts');
 const reports = require('../drivers/reports');
 const orderSource = require('../services/orderSource');
 const manual = require('../services/orderSource/manual');
+const freshness = require('../services/freshness');
+const { autoCloseStaleRides } = require('../jobs/maintenance');
+
+// Nothing used to calculate kilometres unless somebody pressed a button, and
+// the one automatic close-out lived inside a maintenance run nobody ran. Both
+// now happen whenever the office looks — see services/freshness.js.
+const housekeeping = freshness.makeHousekeeper(async (nowMs) => {
+  const { config } = await repo.getConfig();
+  return autoCloseStaleRides(config, nowMs);
+});
+function bringUpToDate(rides, opts) {
+  // processOne is declared further down; it is hoisted.
+  return freshness.keepCurrent(rides, { processOne }, opts);
+}
 
 // The role was established at sign-in and is carried in the admin token, which
 // requireAdmin() has already verified, so this is a comparison rather than a
@@ -100,12 +114,20 @@ router.get('/dashboard', requireRole('viewer'), async (req, res) => {
   const now = Date.now();
   const today = repo.dayKeyFor(now);
 
-  const [drivers, rides, liveSnap, alerts] = await Promise.all([
+  await housekeeping(now);
+  const [drivers, todays, running, liveSnap, alerts] = await Promise.all([
     repo.listDrivers({ includeInactive: true }),
     repo.listRides({ from: Date.parse(`${today}T00:00:00+05:30`), limit: 500 }),
+    // A ride still running from an earlier day is today's work too. Listing
+    // only rides that STARTED today hid every driver whose ride nobody had
+    // stopped: their points arrived, and the dashboard showed nothing.
+    repo.activeRides(),
     repo.C.live().get(),
     repo.openAlerts(),
   ]);
+  const seen = new Set(todays.map((r) => r.id));
+  const rides = todays.concat(running.filter((r) => !seen.has(r.id)));
+  const calculation = await bringUpToDate(rides);
   const live = new Map(liveSnap.docs.map((d) => [d.id, d.data()]));
   const ridesByDriver = new Map();
   for (const r of rides) {
@@ -164,6 +186,8 @@ router.get('/dashboard', requireRole('viewer'), async (req, res) => {
     data: {
       serverTime: now,
       staleAfterSec: config.staleLocationSec,
+      // What this request calculated, and what it left for the next one.
+      calculation: { calculated: calculation.calculated.length, deferred: calculation.deferred, failed: calculation.failed },
       drivers: rows,
       metrics: {
         activeDrivers: rows.filter((r) => r.rideStatus === 'active').length,
@@ -247,8 +271,12 @@ router.get('/rides/active', requireRole('viewer'), async (req, res) => {
 router.get('/rides/:rideId', requireRole('viewer'), async (req, res) => {
   const { rideId } = req.params;
   if (!isValidId(rideId)) return bad(res, 'Invalid ride id');
-  const ride = await repo.getRide(rideId);
+  let ride = await repo.getRide(rideId);
   if (!ride) return res.status(404).json({ success: false, message: 'Ride not found' });
+  // Opening a ride shows its kilometres as of now, not as of whenever it was
+  // last calculated.
+  const fresh = await bringUpToDate([{ id: rideId, ...ride }], { maxRides: 1 });
+  if (fresh.calculated.length) ride = await repo.getRide(rideId);
   const [processing, points, declarations, reviews] = await Promise.all([
     repo.loadProcessing(rideId),
     req.query.points === '1' ? repo.loadPoints(rideId) : Promise.resolve(null),
@@ -286,6 +314,11 @@ router.post('/rides/:rideId/stop', requireRole('manager'), writeLimiter, async (
     // Mark the live document so the map stops showing an active marker even
     // before the phone next checks in.
     await repo.C.live().doc(out.driverId).set({ rideStatus: 'stopped', rideStoppedAt: Date.now() }, { merge: true }).catch(() => {});
+    // A stopped ride is complete: calculate it now, so its kilometres are
+    // there the moment anybody looks. Never allowed to fail the stop itself.
+    try { await processOne(rideId); } catch (err) {
+      await repo.writeEvent({ driverId: out.driverId, rideId, kind: 'processing_failed', detail: { error: String(err.message || err).slice(0, 200) } }).catch(() => {});
+    }
     res.json({ success: true, data: out });
   } catch (e) {
     if (e.code === 'NO_RIDE') return res.status(404).json({ success: false, message: 'Ride not found' });
@@ -1284,7 +1317,13 @@ router.get('/orders', requireRole('viewer'), async (req, res) => {
 
 // Load every processed ride in a window, with its driver, ready for reporting.
 async function collectResults({ from, to, driverId }) {
-  const rides = await repo.listRides({ from, to, driverId, limit: 500 });
+  await housekeeping();
+  let rides = await repo.listRides({ from, to, driverId, limit: 500 });
+  // A report is only as good as the rides calculated for it. A larger budget
+  // than the dashboard's, because somebody asking for a report is waiting for
+  // exactly this; anything still left is named in the report's note.
+  const fresh = await bringUpToDate(rides, { maxRides: 20, budgetMs: 15000 });
+  if (fresh.calculated.length) rides = await repo.listRides({ from, to, driverId, limit: 500 });
   const drivers = await repo.listDrivers({ includeInactive: true });
   const byId = new Map(drivers.map((d) => [d.id, d]));
   const out = [];
