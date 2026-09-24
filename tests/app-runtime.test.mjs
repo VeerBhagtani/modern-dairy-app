@@ -59,3 +59,47 @@ test('the app tells "opened in a browser" apart from "APK missing its runtime"',
   assert.match(fn, /if \(!window\.Capacitor\) \{[\s\S]*?browser tab/, 'no bridge at all → browser');
   assert.match(fn, /if \(!window\.Capacitor\.registerPlugin\) \{[\s\S]*?new APK/, 'bridge without runtime → new APK');
 });
+
+// ── the app's own native code ──────────────────────────────────────────────
+
+test('the release build installs the app\'s native plugin before Gradle compiles', () => {
+  const yml = read('.github/workflows/release.yml');
+  const add = yml.indexOf('node scripts/add-native.js');
+  assert.notEqual(add, -1, 'release.yml must run add-native.js');
+  assert.ok(yml.indexOf('npx cap add android') < add, 'after cap add, which creates MainActivity');
+  assert.ok(add < yml.indexOf('./gradlew assembleDebug'), 'before the APK is compiled');
+  assert.ok(JSON.parse(read('package.json')).scripts.apk.includes('add-native.js'), 'and in npm run apk');
+});
+
+test('the battery exemption dialog is declared in the manifest', () => {
+  // Without the permission, Android ignores the request and shows nothing.
+  assert.match(read('scripts/patch-manifest.js'), /REQUEST_IGNORE_BATTERY_OPTIMIZATIONS/);
+});
+
+test('add-native.js installs and registers the plugin in a generated project', async () => {
+  const os = await import('node:os');
+  const { execFileSync } = await import('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'md-android-'));
+  try {
+    // What `npx cap add android` leaves behind, from Capacitor's own template.
+    const pkgDir = path.join(dir, 'app/src/main/java/in/moderndairy/drivers');
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(path.join(pkgDir, 'MainActivity.java'),
+      'package in.moderndairy.drivers;\n\nimport com.getcapacitor.BridgeActivity;\n\npublic class MainActivity extends BridgeActivity {}\n');
+
+    const run = () => execFileSync('node', [path.join(ROOT, 'scripts/add-native.js'), dir], { stdio: 'pipe' });
+    run();
+    const first = fs.readFileSync(path.join(pkgDir, 'MainActivity.java'), 'utf8');
+    run();   // twice, as a re-run of the build step would
+    const second = fs.readFileSync(path.join(pkgDir, 'MainActivity.java'), 'utf8');
+
+    assert.ok(fs.existsSync(path.join(pkgDir, 'BatteryOptimisationPlugin.java')));
+    assert.equal(first, second, 'idempotent');
+    // Registration must come before super.onCreate, when the bridge fixes its
+    // plugin list; after it, the plugin silently does not exist.
+    assert.ok(first.indexOf('registerPlugin(BatteryOptimisationPlugin.class)') < first.indexOf('super.onCreate'));
+    assert.equal((first.match(/registerPlugin\(/g) || []).length, 1, 'registered once');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -71,6 +71,10 @@
     // driver has foreground permission only, which still records while the app
     // is open — worth saying, not worth blocking over.
     backgroundTracking: false,
+    // true/false once the phone has answered; null while unknown, which is also
+    // the permanent answer on a build without the battery plugin.
+    batteryExempt: null,
+    phoneMaker: null,
     stoppedInfo: null,
     route: [],          // [lng,lat] for the map line
   };
@@ -383,13 +387,21 @@
   function primeLocation() {
     if (primed) return Promise.resolve();
     primed = true;
-    var p = geoPlugin();
-    var ask = p ? p.requestPermissions({ permissions: ['location'] }) : Promise.resolve(null);
-    return ask.catch(function () { return null; }).then(function (res) {
-      if (res && res.location === 'denied') {
+    return ensureLocationPermission().then(function (perm) {
+      // The plugin refuses to even ask while the phone's location switch is
+      // off. That used to be swallowed here, and the driver was told to "move
+      // somewhere with a clear view of the sky" — advice for a different fault.
+      if (perm === 'device-off') {
+        state.permission = 'device-off';
+        primed = false;
+        text('mapEmptyText', 'The phone\'s location is off. Turn Location on in quick settings.');
+        render();
+        return null;
+      }
+      if (perm === 'denied') {
         state.permission = 'denied';
-        // Not latched: the driver may go and allow it, and coming back must ask
-        // the phone again rather than assume the answer from a minute ago.
+        // Not latched: the driver may go and allow it in Settings, and coming
+        // back must look again rather than assume the answer from a minute ago.
         primed = false;
         text('mapEmptyText', 'Location is blocked. Allow location for this app in Android settings.');
         render();
@@ -438,6 +450,14 @@
     // APK was built without that file — the app IS the app, and telling the
     // driver to "open the app instead of a browser" was false.
     if (!window.Capacitor) {
+      // "; wv)" is how Android's WebView marks itself in the user agent, so
+      // this page IS inside the app and Android failed to hand it the bridge.
+      // The usual cause is an outdated "Android System WebView", which is
+      // updated from the Play Store like any app.
+      if (/; wv\)/.test(navigator.userAgent || '')) {
+        return 'The app could not connect to the phone\'s location service. Open the Play Store, '
+          + 'search "Android System WebView", tap Update, then reopen this app.';
+      }
       return 'This page is not running inside the Modern Drivers app, so it cannot use GPS. '
         + 'Open the app from the phone\'s home screen rather than a browser tab.';
     }
@@ -447,6 +467,79 @@
     }
     if (!bg()) return 'The location service is missing from this build. The office needs a new APK.';
     return null;
+  }
+
+  // ── battery optimisation ───────────────────────────────────────────────
+  //
+  // The most common reason a ride stops recording on a phone in India. Xiaomi,
+  // Realme, Vivo, Oppo and Samsung all close background apps to save battery,
+  // and a foreground service with its notification showing is not enough to
+  // stop them. The exemption is one system dialog, and only the driver can
+  // answer it. BatteryOptimisation is this app's own small native plugin
+  // (app/native/android); on a build without it every call here is a no-op.
+  var BAT = null;
+  function batteryPlugin() {
+    if (!BAT && window.Capacitor && window.Capacitor.registerPlugin) {
+      BAT = window.Capacitor.registerPlugin('BatteryOptimisation');
+    }
+    return BAT;
+  }
+
+  /* Refresh state.batteryExempt; with askIfNeeded, show Android's own dialog
+   * the first time a ride starts on a restricted phone. Once only, on its own:
+   * after that the status line and the button offer it, so a driver who said
+   * no is not asked every morning. */
+  function checkBattery(askIfNeeded) {
+    var p = batteryPlugin();
+    if (!p || typeof p.status !== 'function') return Promise.resolve(null);
+    return p.status().then(function (r) {
+      state.batteryExempt = !!(r && r.exempt);
+      state.phoneMaker = (r && r.manufacturer) || null;
+      render();
+      if (!state.batteryExempt && askIfNeeded && !LS.get('askedBattery', false)) {
+        LS.set('askedBattery', true);
+        return p.requestExemption().catch(function () { return null; });
+      }
+      return null;
+    }).catch(function () { state.batteryExempt = null; return null; });
+  }
+
+  // Phone makers that add their own app-killing on top of Android's, with the
+  // name of the extra switch. Android's exemption does not reach these; the
+  // driver has to find them, so the app names them.
+  var MAKER_STEPS = {
+    xiaomi: 'Settings → Apps → Modern Drivers → turn on Autostart, and set Battery saver to "No restrictions".',
+    redmi: 'Settings → Apps → Modern Drivers → turn on Autostart, and set Battery saver to "No restrictions".',
+    poco: 'Settings → Apps → Modern Drivers → turn on Autostart, and set Battery saver to "No restrictions".',
+    realme: 'Settings → Apps → Modern Drivers → Battery usage → allow background activity and Auto launch.',
+    oppo: 'Settings → Apps → Modern Drivers → Battery usage → allow background activity and Auto launch.',
+    oneplus: 'Settings → Apps → Modern Drivers → Battery → choose "Unrestricted".',
+    vivo: 'Settings → Battery → Background power consumption → Modern Drivers → Allow.',
+    iqoo: 'Settings → Battery → Background power consumption → Modern Drivers → Allow.',
+    samsung: 'Settings → Apps → Modern Drivers → Battery → choose "Unrestricted".',
+  };
+
+  function showBatterySteps() {
+    var maker = String(state.phoneMaker || '').toLowerCase();
+    var extra = MAKER_STEPS[maker];
+    $('sheetTitle').textContent = 'Keep recording with the screen off';
+    $('sheetBody').innerHTML = '<p class="note" style="text-align:left;margin:0 0 10px">'
+      + 'This phone is set to close apps in the background to save battery. That stops '
+      + 'your ride from being recorded once the screen locks.</p>'
+      + '<p style="margin:0 0 10px"><button id="btnBatAsk" class="plan" style="width:100%">'
+      + 'Allow Modern Drivers to run in the background</button></p>'
+      + (extra
+        ? '<p class="note" style="text-align:left;margin:0">Also, on this ' + esc(state.phoneMaker) + ' phone: '
+          + esc(extra) + '</p>'
+        : '');
+    $('sheetBg').classList.add('on');
+    var b = $('btnBatAsk');
+    if (b) {
+      b.addEventListener('click', function () {
+        var p = batteryPlugin();
+        if (p && typeof p.requestExemption === 'function') p.requestExemption().catch(function () {});
+      });
+    }
   }
 
   var lastKept = null;
@@ -540,6 +633,43 @@
    * fine + coarse only), and it does not need to: that permission governs
    * STARTING location from the background, which this app never does.
    */
+  /* Hold the permission BEFORE the recorder starts, never during.
+   *
+   * The background plugin will ask for permission itself, but it does not wait
+   * for the answer: it carries on and starts its service at once. Without the
+   * permission yet, Android refuses to make that service a foreground service,
+   * the plugin swallows the error, and when the driver then taps Allow only the
+   * GPS is restarted — not the foreground service. The ride looks fine while
+   * the app is open and stops recording the moment the screen locks.
+   *
+   * So the question is asked here first, through the plain Geolocation plugin,
+   * which does wait. It also says plainly when the phone's location switch is
+   * off ("Location services are not enabled"), which is the one answer the
+   * driver most needs to hear and the background plugin words ambiguously.
+   *
+   * Resolves 'granted', 'denied', 'device-off', or 'unknown' — the last meaning
+   * the question could not be put, and the recorder should try and report.
+   */
+  function ensureLocationPermission() {
+    var p = geoPlugin();
+    if (!p || typeof p.requestPermissions !== 'function') return Promise.resolve('unknown');
+    // After the driver has refused, only LOOK — checkPermissions never shows a
+    // dialog. This runs on every return to the app and every minute from
+    // checkRide, and Android's permission dialog is itself something the app
+    // returns from, so asking here would put the dialog straight back in front
+    // of a driver who just tapped Deny, again and again. Pressing Start Ride
+    // clears the refusal, so the driver's own tap still asks properly.
+    var lookOnly = state.permission === 'denied' && typeof p.checkPermissions === 'function';
+    var q = lookOnly ? p.checkPermissions() : p.requestPermissions({ permissions: ['location'] });
+    return q.then(function (r) {
+      if (!r) return 'unknown';
+      return r.location === 'granted' ? 'granted' : 'denied';
+    }, function (e) {
+      return /not enabled|disabled/i.test((e && e.message) || '') ? 'device-off' : 'unknown';
+    });
+  }
+
+
   var startingWatcher = false;
   function startWatcher() {
     var trouble = locationTrouble();
@@ -547,6 +677,18 @@
     if (state.watcherId || startingWatcher) return Promise.resolve();
     startingWatcher = true;
 
+    return ensureLocationPermission().then(function (perm) {
+      if (perm === 'device-off' || perm === 'denied') {
+        startingWatcher = false;
+        watcherFailed(perm === 'device-off' ? 'Location services disabled.' : 'User denied location permission',
+          'NOT_AUTHORIZED');
+        return null;
+      }
+      return addRecorder();
+    });
+  }
+
+  function addRecorder() {
     var opts = {
       requestPermissions: true,
       stale: false,
@@ -563,7 +705,9 @@
       state.backgroundTracking = true;
       state.startError = null;
       render();
-      reportHealth();
+      // Asked here, once the recorder is known to be running, because this is
+      // the moment the answer starts to matter.
+      checkBattery(true).then(reportHealth);
     }).catch(function (e) {
       // Reached only if the bridge itself fails, which means the plugin is not
       // in this build. The plugin's own refusals arrive through onLocation.
@@ -606,8 +750,8 @@
         + 'screen, turn Location on, then come back — recording starts by itself.';
     } else if (refused) {
       state.permission = 'denied';
-      state.startError = 'This app is not allowed to use location. Tap "Fix permission" below, '
-        + 'open Location, and choose "Allow all the time".';
+      state.startError = 'This app is not allowed to use precise location. Tap "Fix permission" below, '
+        + 'open Location, choose "Allow all the time", and turn on "Use precise location".';
     } else if (notReady) {
       // The plugin binds its service asynchronously when the app loads; asking
       // too soon after opening is a race, not a fault. Say nothing and retry.
@@ -619,7 +763,9 @@
       state.startError = 'Could not start location: ' + raw;
     }
     render();
-    reportHealth();
+    // Not for the start-up race: that retries every second or two, and each
+    // report is a write the server rate-limits.
+    if (!notReady) reportHealth();
   }
 
   function stopWatcher() {
@@ -676,6 +822,9 @@
         locationPermission: state.permission,
         backgroundPermission: state.backgroundTracking ? 'granted' : 'unknown',
         gpsEnabled: state.permission !== 'device-off',
+        // The server's field means "the phone restricts this app", the reverse
+        // of exempt; left out while unknown rather than guessed.
+        batteryOptimised: state.batteryExempt === null ? undefined : !state.batteryExempt,
         online: navigator.onLine !== false,
         queuedPoints: state.queued,
         appVersion: APP_VERSION,
@@ -734,6 +883,9 @@
   function startRide() {
     if (state.starting) return;
     state.starting = true; state.startError = null;
+    // The driver's own tap: ask Android properly again, dialog and all, rather
+    // than only looking as the automatic retries do after a refusal.
+    if (state.permission === 'denied') state.permission = 'unknown';
     state.distanceM = 0; state.pointCount = 0; state.route = []; lastKept = null;
     LS.set('distanceM', 0); LS.set('pointCount', 0);
     render();
@@ -807,6 +959,17 @@
     if (!state.lastFixAt) return { cls: 'warn', title: 'Waiting for GPS', sub: 'This can take a minute indoors.' };
     var age = (Date.now() - state.lastFixAt) / 1000;
     if (age > 300) return { cls: 'warn', title: 'Weak signal', sub: 'No new position for ' + Math.round(age / 60) + ' minutes.' };
+    // Ahead of the sync states: those are about whether the office has the
+    // points yet, this is about whether they will be recorded at all.
+    // Recording right now, but the phone will close the app once the screen has
+    // been locked a while. Green here would be a promise the phone will break.
+    if (state.batteryExempt === false) {
+      return {
+        cls: 'warn',
+        title: 'Recording — battery saver may stop it',
+        sub: 'Tap "Keep recording with screen off" below, or the ride stops recording when the screen locks.',
+      };
+    }
     if (!HAS_SERVER) return { cls: 'on', title: 'Recording', sub: 'Saved on this phone. Not sent to the office yet.' };
     if (!navigator.onLine && state.queued) return { cls: 'on', title: 'Recording — offline', sub: state.queued + ' positions saved. They send when the network returns.' };
     // Recording without background permission is real recording, and the
@@ -868,9 +1031,12 @@
     // Offered for both refusals — this app's permission and the phone's own
     // switch — because the button leads somewhere useful for each, and noise
     // against any other error.
-    show($('btnFixPerm'), state.permission === 'denied' || state.permission === 'device-off');
-    $('btnFixPerm').textContent = state.permission === 'device-off'
-      ? 'How to turn location on' : 'Fix permission';
+    // Then the battery saver, which only matters once location itself works.
+    var locFault = state.permission === 'denied' || state.permission === 'device-off';
+    var batFault = !locFault && riding() && state.batteryExempt === false;
+    show($('btnFixPerm'), locFault || batFault);
+    $('btnFixPerm').textContent = state.permission === 'device-off' ? 'How to turn location on'
+      : locFault ? 'Fix permission' : 'Keep recording with screen off';
 
     var n = $('notice');
     if (state.stoppedInfo && !riding()) {
@@ -955,6 +1121,9 @@
       + row('Ride running', riding(), riding() ? 'yes' : 'no')
       + row('Records with screen locked', state.backgroundTracking,
         state.backgroundTracking ? 'yes' : 'no — foreground only')
+      + row('Battery saver allows it', state.batteryExempt,
+        state.batteryExempt === null ? 'not known' : state.batteryExempt ? 'yes' : 'NO — will stop recording')
+      + row('Phone', null, state.phoneMaker || '—')
       + row('Points waiting to send', state.queued === 0, String(state.queued))
       + row('Last sent to office', !!state.lastSyncAt,
         state.lastSyncAt ? fmtDur(Date.now() - state.lastSyncAt) + ' ago' : 'never')
@@ -1233,6 +1402,7 @@
     // The phone's master switch is not in this app's settings page, so sending
     // the driver there for that fault would be a dead end. Steps instead.
     if (state.permission === 'device-off') { showSettingsSteps(); return; }
+    if (state.permission !== 'denied' && state.batteryExempt === false) { showBatterySteps(); return; }
     var p = bg();
     if (p && p.openSettings) {
       p.openSettings().catch(function () { showSettingsSteps(); });
@@ -1279,6 +1449,8 @@
   function resume() {
     queue.count().then(function (n) { state.queued = n; render(); });
     if (riding() && !state.watcherId) startWatcher();
+    // Back from the battery dialog or Settings: find out what was chosen.
+    if (riding()) checkBattery(false);
     if (!primed || state.permission === 'denied' || state.permission === 'device-off') {
       primed = false;
       primeLocation();

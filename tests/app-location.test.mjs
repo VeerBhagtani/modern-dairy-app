@@ -30,6 +30,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE = fs.readFileSync(path.join(ROOT, 'app/www/app.js'), 'utf8');
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+// Enough turns of the event loop for a chain of plugin promises to finish.
+const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
 
 // Captured before the app's globals are swapped in, so the fakes below can use
 // the real timers without calling themselves.
@@ -73,7 +75,8 @@ function fakeDom() {
       getElementById(id) { return this.__get(id); },
       querySelectorAll: () => [],
       createElement: () => make('created'),
-      addEventListener() {},
+      listeners: {},
+      addEventListener(kind, fn) { (this.listeners[kind] = this.listeners[kind] || []).push(fn); },
       body: { appendChild() {}, removeChild() {} },
     },
     elements,
@@ -83,23 +86,46 @@ function fakeDom() {
 /* Capacitor as the bridge actually behaves. addWatcher resolves with an id and
  * never rejects; failures go to the callback. Getting that backwards is the
  * whole reason this file exists, so the fake is deliberately faithful to it. */
-function fakeCapacitor() {
-  const seen = { watchers: [], removed: [], permissionRequests: 0, positions: 0 };
+function fakeCapacitor({ permission = 'granted', battery = null } = {}) {
+  // `order` records which native call happened first — the permission must be
+  // settled before the recorder starts, and only an ordering shows that.
+  const seen = { watchers: [], removed: [], permissionRequests: 0, positions: 0, order: [], exemptionRequests: 0, permissionChecks: 0 };
   let callback = null;
   let n = 0;
   let position = { coords: { latitude: 18.5204, longitude: 73.8567, accuracy: 9 } };
+  const phone = { permission };
 
   const bg = {
     addWatcher(options, cb) {
       seen.watchers.push(options);
+      seen.order.push('addWatcher');
       callback = cb;
       return Promise.resolve('watcher-' + (++n));
     },
     removeWatcher({ id }) { seen.removed.push(id); return Promise.resolve(); },
     openSettings() { return Promise.resolve(); },
   };
+  // The battery plugin exists only on builds that include app/native; absent,
+  // registerPlugin still returns an object — just one with no methods.
+  const bat = battery ? {
+    status() { return Promise.resolve({ exempt: battery.exempt, manufacturer: battery.manufacturer || 'Xiaomi' }); },
+    requestExemption() { seen.exemptionRequests += 1; return Promise.resolve({ exempt: false, opened: true }); },
+  } : {};
   const geolocation = {
-    requestPermissions() { seen.permissionRequests += 1; return Promise.resolve({ location: 'granted' }); },
+    // Never shows a dialog; the app uses it to look after a refusal.
+    checkPermissions() {
+      seen.permissionChecks += 1;
+      if (phone.permission === 'device-off') return Promise.reject(new Error('Location services are not enabled'));
+      return Promise.resolve({ location: phone.permission, coarseLocation: phone.permission });
+    },
+    requestPermissions() {
+      seen.permissionRequests += 1;
+      seen.order.push('requestPermissions');
+      // Exactly what @capacitor/geolocation does with the location switch off:
+      // it refuses to ask at all, rather than answering "denied".
+      if (phone.permission === 'device-off') return Promise.reject(new Error('Location services are not enabled'));
+      return Promise.resolve({ location: phone.permission, coarseLocation: phone.permission });
+    },
     getCurrentPosition() {
       seen.positions += 1;
       return position ? Promise.resolve(position) : Promise.reject(new Error('no position'));
@@ -108,6 +134,7 @@ function fakeCapacitor() {
 
   return {
     seen,
+    phone,
     setPosition(p) { position = p; },
     // What Android does when it refuses: resolve, then report through the callback.
     refuse(message, code) { callback(null, Object.assign(new Error(message), { code })); },
@@ -116,6 +143,7 @@ function fakeCapacitor() {
       registerPlugin(name) {
         if (name === 'BackgroundGeolocation') return bg;
         if (name === 'Geolocation') return geolocation;
+        if (name === 'BatteryOptimisation') return bat;
         return {};
       },
       Plugins: {},
@@ -125,10 +153,10 @@ function fakeCapacitor() {
 
 /* Load the app into this process, with a name already entered and a ride
  * already started, which is the state a driver is in when location matters. */
-async function launch() {
+async function launch(phone) {
   const dom = fakeDom();
   dom.document.__get = dom.get;
-  const cap = fakeCapacitor();
+  const cap = fakeCapacitor(phone);
   const store = new Map();
   const timers = [];
 
@@ -177,11 +205,16 @@ async function launch() {
   el('btnName').click();
   await tick();
   el('btnStart').click();
-  await tick(); await tick();
+  await settle();
 
   return {
     app, cap, el,
     state: app.state,
+    // What happens when the driver comes back from a dialog or from Settings.
+    async returnToApp() {
+      (dom.document.listeners.visibilitychange || []).forEach((fn) => fn());
+      await settle();
+    },
     stop() {
       timers.forEach(clearInterval);
       for (const [k, d] of Object.entries(previous)) {
@@ -211,7 +244,7 @@ test('a refused permission reported through the callback is not lost', async () 
     t.cap.refuse('User denied location permission', 'NOT_AUTHORIZED');
     await tick();
     assert.equal(t.state.permission, 'denied');
-    assert.match(t.state.startError, /not allowed to use location/i);
+    assert.match(t.state.startError, /not allowed to use precise location/i);
     assert.match(t.state.lastPluginError, /NOT_AUTHORIZED/);
   } finally { t.stop(); }
 });
@@ -252,7 +285,7 @@ test('one refusal does not stop the app asking again', async () => {
     await tick();
 
     t.el('btnStart').click();   // the driver tries again
-    await tick(); await tick();
+    await settle();
 
     assert.equal(t.cap.seen.watchers.length, 2, 'a second attempt reaches the plugin');
     assert.equal(t.state.watcherId, 'watcher-2');
@@ -267,7 +300,7 @@ test('a fix arriving is what clears a refusal, not the app deciding it is fine',
     assert.equal(t.state.permission, 'device-off');
 
     t.el('btnStart').click();
-    await tick(); await tick();
+    await settle();
     t.cap.report({ latitude: 18.5204, longitude: 73.8567, accuracy: 9, time: Date.now(), bearing: null, speed: 0 });
     await tick();
 
@@ -297,5 +330,130 @@ test('the app asks the phone for permission as soon as it is opened', async () =
   const t = await launch();
   try {
     assert.ok(t.cap.seen.permissionRequests >= 1);
+  } finally { t.stop(); }
+});
+
+// ── permission before the recorder ──────────────────────────────────────────
+//
+// The background plugin asks for permission itself but does not wait for the
+// answer: it starts its service at once, Android refuses to make that a
+// foreground service without the permission, and when the driver then taps
+// Allow only the GPS is restarted. The ride records while the app is open and
+// stops when the screen locks. So the app settles the permission first.
+
+test('the permission is settled before the recorder is started', async () => {
+  const t = await launch();
+  try {
+    const last = t.cap.seen.order.lastIndexOf('addWatcher');
+    const asked = t.cap.seen.order.lastIndexOf('requestPermissions', last);
+    assert.ok(asked !== -1 && asked < last, `order was ${t.cap.seen.order.join(' → ')}`);
+  } finally { t.stop(); }
+});
+
+test('a refused permission never starts the recorder, and says to choose precise', async () => {
+  const t = await launch({ permission: 'denied' });
+  try {
+    assert.equal(t.cap.seen.watchers.length, 0, 'no watcher was added');
+    assert.equal(t.state.permission, 'denied');
+    // Android 12+ lets a driver pick "approximate"; the recorder needs precise,
+    // and without saying so the driver allows location and is still refused.
+    assert.match(t.state.startError, /precise/i);
+  } finally { t.stop(); }
+});
+
+test('the phone\'s location switch being off is caught before the recorder starts', async () => {
+  const t = await launch({ permission: 'device-off' });
+  try {
+    assert.equal(t.cap.seen.watchers.length, 0);
+    assert.equal(t.state.permission, 'device-off');
+    assert.match(t.state.startError, /phone's own location switch/i);
+  } finally { t.stop(); }
+});
+
+test('turning location on and pressing Start Ride again then records', async () => {
+  const t = await launch({ permission: 'device-off' });
+  try {
+    t.cap.phone.permission = 'granted';
+    t.el('btnStart').click();
+    await settle();
+    assert.equal(t.cap.seen.watchers.length, 1);
+    assert.equal(t.state.watcherId, 'watcher-1');
+  } finally { t.stop(); }
+});
+
+// ── battery saver ──────────────────────────────────────────────────────────
+
+test('a phone whose battery saver will close the app is asked once, and warned about', async () => {
+  const t = await launch({ battery: { exempt: false } });
+  try {
+    assert.equal(t.state.batteryExempt, false);
+    assert.equal(t.cap.seen.exemptionRequests, 1, 'Android\'s dialog is shown once, on the first ride');
+    assert.match(t.el('stTitle').textContent, /battery saver/i, 'not a green "Tracking is on"');
+    assert.equal(t.el('btnFixPerm').hidden, false, 'the way to fix it is offered');
+  } finally { t.stop(); }
+});
+
+test('a driver who said no is not asked again every time a ride starts', async () => {
+  const t = await launch({ battery: { exempt: false } });
+  try {
+    t.cap.refuse('User denied location permission', 'NOT_AUTHORIZED');
+    await tick();
+    t.el('btnStart').click();
+    await settle();
+    assert.equal(t.cap.seen.exemptionRequests, 1);
+  } finally { t.stop(); }
+});
+
+test('an exempt phone is not asked and shows tracking as on', async () => {
+  const t = await launch({ battery: { exempt: true } });
+  try {
+    assert.equal(t.cap.seen.exemptionRequests, 0);
+    assert.equal(t.state.batteryExempt, true);
+    assert.equal(t.el('btnFixPerm').hidden, true);
+  } finally { t.stop(); }
+});
+
+test('a build without the battery plugin carries on as before', async () => {
+  const t = await launch();
+  try {
+    assert.equal(t.state.batteryExempt, null, 'unknown, not guessed');
+    assert.equal(t.state.watcherId, 'watcher-1');
+  } finally { t.stop(); }
+});
+
+test('after a refusal, coming back to the app looks but never asks again', async () => {
+  // Android's permission dialog is itself something the app comes back from.
+  // Asking on every return put the dialog straight back in front of a driver
+  // who had just tapped Deny.
+  const t = await launch({ permission: 'denied' });
+  try {
+    const asked = t.cap.seen.permissionRequests;
+    for (let i = 0; i < 3; i += 1) await t.returnToApp();
+    assert.equal(t.cap.seen.permissionRequests, asked, 'no dialog shown again');
+    assert.ok(t.cap.seen.permissionChecks >= 3, 'it did look each time');
+    assert.equal(t.cap.seen.watchers.length, 0);
+  } finally { t.stop(); }
+});
+
+test('allowing location in Settings and coming back starts recording by itself', async () => {
+  const t = await launch({ permission: 'denied' });
+  try {
+    t.cap.phone.permission = 'granted';   // the driver fixed it in Settings
+    await t.returnToApp();
+    assert.equal(t.cap.seen.watchers.length, 1, 'recording started without pressing anything');
+    assert.equal(t.state.permission, 'granted');
+  } finally { t.stop(); }
+});
+
+test('pressing Start Ride after a refusal does ask again', async () => {
+  // The driver's own tap is the one time a dialog is wanted.
+  const t = await launch({ permission: 'denied' });
+  try {
+    const asked = t.cap.seen.permissionRequests;
+    t.cap.phone.permission = 'granted';
+    t.el('btnStart').click();
+    await settle();
+    assert.equal(t.cap.seen.permissionRequests, asked + 1);
+    assert.equal(t.cap.seen.watchers.length, 1);
   } finally { t.stop(); }
 });

@@ -47,6 +47,11 @@ const PERMISSIONS = [
   // The driver app posts no notifications of its own, but Android 13+ requires
   // this for the foreground-service notification to be visible.
   'android.permission.POST_NOTIFICATIONS',
+  // Lets the app show Android's "always run in background?" dialog, the one
+  // setting that keeps phone makers' battery savers from closing a ride in
+  // progress. See app/native/android/BatteryOptimisationPlugin.java. (Play
+  // Store restricts this permission; the app is installed from an APK.)
+  'android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS',
 ];
 
 for (const perm of PERMISSIONS) {

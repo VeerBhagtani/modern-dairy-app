@@ -54,6 +54,21 @@ const adminLoginLimiter = rateLimit({
   handler: jsonHandler('Too many sign-in attempts. Please wait 15 minutes and try again.'),
 });
 
+// Who a write is counted against: the signed-in account, never the network.
+//
+// Drivers were missing from this list, so every driver write fell through to
+// req.ip. Indian mobile carriers put thousands of phones behind a few shared
+// addresses (carrier-grade NAT), and the depot's own Wi-Fi is one address for
+// everyone on it — so the whole fleet shared ONE budget of 30 writes, and a
+// few drivers pressing Start Ride at the same time locked out everyone else
+// with a 429. The IP is only the fallback for a request with no identity.
+function writeKey(req) {
+  if (req.driverId) return `driver:${req.driverId}`;
+  if (req.userId) return `user:${req.userId}`;
+  if (req.adminId) return `admin:${req.adminId}`;
+  return `ip:${req.ip}`;
+}
+
 // Authenticated write endpoints (place order, wallet top-up request, admin
 // writes): generous enough for real usage, tight enough to stop abuse/DoS
 // against Firestore writes and third-party API calls that cost money.
@@ -62,7 +77,7 @@ const writeLimiter = rateLimit({
   limit: 30,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.userId || req.adminId || req.ip,
+  keyGenerator: writeKey,
   handler: jsonHandler('Too many requests. Please slow down and try again shortly.'),
 });
 
@@ -116,5 +131,5 @@ const registerLimiter = rateLimit({
 
 module.exports = {
   authLimiter, otpPhoneLimiter, adminLoginLimiter, writeLimiter, generalLimiter,
-  gpsIngestLimiter, registerLimiter,
+  gpsIngestLimiter, registerLimiter, writeKey,
 };

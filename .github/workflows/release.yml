@@ -79,6 +79,9 @@ jobs:
       - name: Patch the manifest for background location
         run: node scripts/patch-manifest.js app/android/app/src/main/AndroidManifest.xml
 
+      - name: Add the app's own native code
+        run: node scripts/add-native.js app/android
+
       - name: Generate the launcher icon and splash
         working-directory: app
         run: npx --yes @capacitor/assets@3 generate --android
