@@ -16,9 +16,12 @@
  */
 'use strict';
 
+const { isMobile } = require('./mobileVendor');
+
 const INELIGIBLE = {
   INACTIVE: 'inactive',       // the customer is gone; the row is history
   ON_HOLD: 'on_hold',         // stop supplying today, expect to resume
+  MOBILE: 'mobile',           // a food truck — a customer, but not at a place
   NO_LOCATION: 'no_location', // nobody has placed it on the map yet
 };
 
@@ -44,6 +47,18 @@ function stopEligibility(place) {
       message: place.holdReason
         ? `Supply is on hold — ${place.holdReason}`
         : 'Supply to this restaurant is on hold.',
+    };
+  }
+
+  // A food truck is a real customer that is not at a fixed place, so it cannot
+  // be a stop on a planned round and cannot be geofenced. Distinguished from
+  // "no location yet" on purpose: that one is a gap for the office to close,
+  // this one never closes and nobody should go looking for the address.
+  if (isMobile(place)) {
+    return {
+      ok: false,
+      reason: INELIGIBLE.MOBILE,
+      message: 'This is a mobile customer with no fixed address, so it cannot be planned as a stop.',
     };
   }
 

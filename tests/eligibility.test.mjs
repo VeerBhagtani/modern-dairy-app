@@ -76,3 +76,19 @@ test('a restaurant that does not exist is refused rather than crashing', () => {
   assert.equal(canVisit(null), false);
   assert.equal(canVisit(undefined), false);
 });
+
+test('a food truck is refused as a stop, and said to be mobile', () => {
+  // Distinguished from "no location yet" deliberately: that gap closes when
+  // somebody places a pin, this one never does, and the office should not go
+  // hunting for an address that does not exist.
+  const v = stopEligibility({ id: 'r9', name: 'Sai Food Truck', mobile: true });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, INELIGIBLE.MOBILE);
+  assert.match(v.message, /fixed address/);
+});
+
+test('a truck is refused even if somebody pinned it anyway', () => {
+  // A pin on a truck is worse than no pin: it geofences a spot the truck may
+  // never park in, so passers-by register visits and real deliveries do not.
+  assert.equal(canVisit({ id: 'r9', name: 'Truck', mobile: true, lat: 18.5, lng: 73.8 }), false);
+});

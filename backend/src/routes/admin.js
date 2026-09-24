@@ -16,6 +16,7 @@ const bcrypt = require('bcryptjs');
 const { verifyLogin } = require('../middleware/adminAuth');
 const { placeIdFor } = require('../services/placeKey');
 const geocode = require('../services/geocode');
+const mobileVendor = require('../drivers/mobileVendor');
 const placesApi = require('../services/places');
 const legObservations = require('../drivers/legObservations');
 const maintenance = require('../services/maintenance');
@@ -558,6 +559,9 @@ router.post('/restaurants/import', requireRole('admin'), writeLimiter, async (re
   const existing = new Set((await repo.C.restaurants().select().get()).docs.map((d) => d.id));
 
   const added = []; const updated = []; const problems = [];
+  // Food trucks, kept out of the location machinery. Reported back so the
+  // office sees they were recognised rather than wondering where they went.
+  let mobileCount = 0;
   const seen = new Map();
   const writer = db.bulkWriter();
 
@@ -610,9 +614,17 @@ router.post('/restaurants/import', requireRole('admin'), writeLimiter, async (re
         { ...base, importedAt: Date.now(), importedBy: req.adminId },
         { merge: true });
     } else {
+      // A food truck is a customer that is not at an address. Sending it to
+      // the lookup would pay Google to find a building that does not exist and
+      // then geofence wherever the guess landed — so passing drivers register
+      // visits that never happened and real deliveries register nothing. It
+      // goes in with its own status instead, which the lookup does not read.
+      const mobile = mobileVendor.looksMobile({ name, address: base.address, area });
+      if (mobile) mobileCount += 1;
       writer.set(repo.C.restaurants().doc(id), {
         ...base,
-        locationStatus: 'pending',
+        mobile,
+        locationStatus: mobile ? mobileVendor.MOBILE_STATUS : 'pending',
         importedAt: Date.now(),
         importedBy: req.adminId,
         createdAt: Date.now(),
@@ -629,7 +641,13 @@ router.post('/restaurants/import', requireRole('admin'), writeLimiter, async (re
     action: 'restaurants.import',
     after: { added: added.length, updated: updated.length, problems: problems.length, awaitingLocation: pending },
   });
-  res.json({ success: true, data: { added: added.length, updated: updated.length, problems, awaitingLocation: pending } });
+  res.json({
+    success: true,
+    data: {
+      added: added.length, updated: updated.length, problems,
+      awaitingLocation: pending, mobile: mobileCount,
+    },
+  });
 });
 
 // GET /admin/restaurants/awaiting-location
@@ -1030,6 +1048,52 @@ async function refuseIfLocked(req, res) {
   });
   return true;
 }
+
+// POST /admin/restaurants/:id/mobile { on }
+//
+// Move a row between "food truck" and "restaurant".
+//
+// The import guesses from the word "truck", and a word match is wrong
+// sometimes — an address on Truck Terminal Road is a building. Both mistakes
+// cost something: a restaurant wrongly marked mobile silently stops being
+// located and stops being tracked, and a truck wrongly left as a restaurant
+// gets a geofence in a place it may never park. So the guess is always
+// correctable from the screen.
+router.post('/restaurants/:id/mobile', requireRole('manager'), writeLimiter, async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) return bad(res, 'Invalid id');
+  const on = req.body?.on !== false;
+
+  const ref = repo.C.restaurants().doc(id);
+  const doc = await ref.get();
+  if (!doc.exists) return res.status(404).json({ success: false, message: 'Not found' });
+  const before = doc.data();
+
+  const patch = { mobile: on };
+  if (on) {
+    // Off to the mobile list, and any pin it picked up is dropped. A pin on a
+    // truck is worse than no pin: it geofences somewhere the truck may never
+    // park, so passers-by register visits and real deliveries register none.
+    patch.locationStatus = mobileVendor.MOBILE_STATUS;
+    patch.lat = null;
+    patch.lng = null;
+  } else {
+    // Back to being a place, and back into the queue the lookup reads.
+    patch.locationStatus = Number.isFinite(before.lat) && Number.isFinite(before.lng)
+      ? 'confirmed' : 'pending';
+  }
+
+  await ref.set(patch, { merge: true });
+  repo.invalidatePlaceCache();
+  await repo.writeAudit({
+    adminId: req.adminId,
+    action: on ? 'restaurants.mark_mobile' : 'restaurants.unmark_mobile',
+    target: id,
+    before: { mobile: before.mobile === true, locationStatus: before.locationStatus },
+    after: { mobile: on, locationStatus: patch.locationStatus },
+  });
+  res.json({ success: true, data: { id, mobile: on } });
+});
 
 // POST /admin/restaurants/:id/hold { on, reason }
 //
