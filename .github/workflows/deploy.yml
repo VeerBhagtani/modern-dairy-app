@@ -312,6 +312,12 @@ jobs:
             ! -name .git ! -name 'modern-drivers.apk' -exec rm -rf {} +
           cp -R dashboard/. site/
           touch site/.nojekyll
+          # Same stamping as dashboard.yml. This step used to publish without
+          # it, so every deploy put unversioned script URLs back and browsers
+          # were free to keep serving the previous day's files.
+          V="${GITHUB_SHA::7}"
+          sed -i -E "s#src=\"([A-Za-z0-9_-]+)\.js\"#src=\"\\1.js?v=${V}\"#g" site/index.html
+          sed -i -E "s#href=\"(theme\.css|vendor/maplibre/maplibre-gl\.css)\"#href=\"\\1?v=${V}\"#g" site/index.html
           cd site
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
