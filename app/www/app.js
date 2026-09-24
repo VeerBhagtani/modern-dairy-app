@@ -65,6 +65,10 @@
     // The plugin's own error text, kept verbatim for Diagnostics. The driver is
     // shown the plain meaning; this is what the office reads out.
     lastPluginError: null,
+    // Whether recording will survive the screen locking. False means the
+    // driver has foreground permission only, which still records while the app
+    // is open — worth saying, not worth blocking over.
+    backgroundTracking: false,
     stoppedInfo: null,
     route: [],          // [lng,lat] for the map line
   };
@@ -491,34 +495,63 @@
       .then(function (n) { state.queued = n; render(); if (HAS_SERVER && n >= 10) sync(); });
   }
 
-  function startWatcher() {
+  /* Starting the recorder, in two attempts, because Android will not grant
+   * background location the way this asked for it.
+   *
+   * From Android 11, ACCESS_BACKGROUND_LOCATION cannot be requested alongside
+   * the foreground one. Ask for both together and the system does not show a
+   * dialog at all — it denies instantly. The driver sees no prompt, taps Start
+   * Ride, and is told permission was refused for something they were never
+   * offered. Background can only ever be granted from the Settings screen,
+   * separately, after foreground is already held.
+   *
+   * Passing backgroundMessage is what makes the plugin ask for background. So
+   * the first attempt asks for it, and if that is refused the second attempt
+   * drops it and records in the foreground instead. A driver with the app open
+   * is tracked either way; the difference is only whether recording survives
+   * the screen locking, and that is worth saying out loud rather than blocking
+   * the whole morning over.
+   */
+  function startWatcher(foregroundOnly) {
     var trouble = locationTrouble();
     if (trouble) { state.startError = trouble; render(); return Promise.resolve(); }
     var p = bg();
     if (state.watcherId) return Promise.resolve();
-    return p.addWatcher({
-      // Android requires a permanent notification for a foreground location
+
+    var opts = { requestPermissions: true, stale: false, distanceFilter: 0 };
+    if (!foregroundOnly) {
+      // Android requires a permanent notification for a background location
       // service. The wording is deliberate: the driver should never be unsure
       // whether they are being recorded.
-      backgroundTitle: 'Modern Drivers — ride in progress',
-      backgroundMessage: 'Your route is being recorded.',
-      requestPermissions: true,
-      stale: false,
-      distanceFilter: 0,
-    }, onLocation).then(function (id) { state.watcherId = id; render(); })
-      .catch(function (e) {
-        var raw = (e && e.message) || String(e || '');
-        // The plugin's own words are useful to whoever is debugging and useless
-        // to a driver, so the driver gets the plain meaning and the original is
-        // kept for Diagnostics.
-        state.lastPluginError = raw;
-        state.startError = /denied|permission/i.test(raw)
-          ? 'Android refused location for this app. Open Settings → Apps → Modern Drivers → '
-            + 'Permissions → Location and choose "Allow all the time", then press Start Ride again.'
-          : /not implemented|unimplemented|no such|does not have/i.test(raw)
-            ? 'The location service is missing from this build. The office needs a new APK.'
-            : ('Could not start location: ' + raw);
-        render();
+      opts.backgroundTitle = 'Modern Drivers — ride in progress';
+      opts.backgroundMessage = 'Your route is being recorded.';
+    }
+
+    return p.addWatcher(opts, onLocation).then(function (id) {
+      state.watcherId = id;
+      state.backgroundTracking = !foregroundOnly;
+      state.startError = null;
+      render();
+    }).catch(function (e) {
+      var raw = (e && e.message) || String(e || '');
+      // The plugin's own words are useful to whoever is debugging and useless
+      // to a driver, so the driver gets the plain meaning and the original is
+      // kept for Diagnostics.
+      state.lastPluginError = raw;
+      var refused = /denied|permission|NOT_AUTHORIZED/i.test(raw);
+
+      // Second attempt: foreground only. This is the case Android creates by
+      // refusing a combined request, and it is recoverable.
+      if (refused && !foregroundOnly) return startWatcher(true);
+
+      state.startError = refused
+        ? 'Android is refusing location for this app. Tap "Fix permission" below, '
+          + 'choose Location, and pick "Allow all the time".'
+        : /not implemented|unimplemented|no such|does not have/i.test(raw)
+          ? 'The location service is missing from this build. The office needs a new APK.'
+          : ('Could not start location: ' + raw);
+      state.permission = refused ? 'denied' : state.permission;
+      render();
       });
   }
   function stopWatcher() {
@@ -678,6 +711,16 @@
     if (age > 300) return { cls: 'warn', title: 'Weak signal', sub: 'No new position for ' + Math.round(age / 60) + ' minutes.' };
     if (!HAS_SERVER) return { cls: 'on', title: 'Recording', sub: 'Saved on this phone. Not sent to the office yet.' };
     if (!navigator.onLine && state.queued) return { cls: 'on', title: 'Recording — offline', sub: state.queued + ' positions saved. They send when the network returns.' };
+    // Recording without background permission is real recording, and the
+    // kilometres are real — but it stops when the screen locks, and a driver
+    // who is not told that will pocket the phone and lose half a round.
+    if (!state.backgroundTracking) {
+      return {
+        cls: 'warn',
+        title: 'Recording — keep the app open',
+        sub: 'This phone has not allowed background location, so recording stops if the screen locks.',
+      };
+    }
     return { cls: 'on', title: 'Tracking is on', sub: 'Your ride is being recorded.' };
   }
 
@@ -724,6 +767,9 @@
     var err = $('startErr');
     err.hidden = !state.startError;
     err.textContent = state.startError || '';
+    // Offered only when the fault is a refused permission — a button that opens
+    // Settings is noise against any other error.
+    show($('btnFixPerm'), state.permission === 'denied');
 
     var n = $('notice');
     if (state.stoppedInfo && !riding()) {
@@ -794,6 +840,8 @@
       + row('Office server', HAS_SERVER, HAS_SERVER ? 'configured' : 'NOT set in this build')
       + row('Signed in', !!state.tokens, state.tokens ? 'yes' : 'no')
       + row('Ride running', riding(), riding() ? 'yes' : 'no')
+      + row('Records with screen locked', state.backgroundTracking,
+        state.backgroundTracking ? 'yes' : 'no — foreground only')
       + row('Points waiting to send', state.queued === 0, String(state.queued))
       + row('Last sent to office', !!state.lastSyncAt,
         state.lastSyncAt ? fmtDur(Date.now() - state.lastSyncAt) + ' ago' : 'never')
@@ -1008,6 +1056,34 @@
   $('btnCentre').addEventListener('click', function () { followMap = true; drawRoute(); });
   $('btnWhy').addEventListener('click', openSheet);
   $('btnWhy2').addEventListener('click', openSheet);
+
+  // The plugin can open this app's own Settings page. Nothing else can: an app
+  // is not allowed to grant itself background location, so this button is the
+  // whole remedy for a refused permission.
+  $('btnFixPerm').addEventListener('click', function () {
+    var p = bg();
+    if (p && p.openSettings) {
+      p.openSettings().catch(function () { showSettingsSteps(); });
+    } else {
+      showSettingsSteps();
+    }
+  });
+
+  function showSettingsSteps() {
+    $('sheetTitle').textContent = 'Allow location for this app';
+    $('sheetBody').innerHTML = '<p class="note" style="text-align:left;margin:0 0 10px">'
+      + 'Turning on the phone\'s location switch is not the same thing as allowing '
+      + '<b>this app</b> to use it. Both are needed.</p>'
+      + '<ol style="font-size:.9rem;line-height:1.85;padding-left:20px;margin:0">'
+      + '<li>Open the phone\'s <b>Settings</b></li>'
+      + '<li><b>Apps</b> → <b>Modern Drivers</b></li>'
+      + '<li><b>Permissions</b> → <b>Location</b></li>'
+      + '<li>Choose <b>Allow all the time</b></li>'
+      + '</ol>'
+      + '<p class="note" style="text-align:left;margin-top:12px">'
+      + '"While using the app" also works, but recording stops when the screen locks.</p>';
+    $('sheetBg').classList.add('on');
+  }
   $('btnPlan').addEventListener('click', openPlanPicker);
   $('sheetClose').addEventListener('click', function () { $('sheetBg').classList.remove('on'); });
   $('sheetBg').addEventListener('click', function (e) { if (e.target === $('sheetBg')) $('sheetBg').classList.remove('on'); });

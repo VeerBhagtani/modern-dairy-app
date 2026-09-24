@@ -189,6 +189,11 @@
 
     <button id="btnStart" class="start">Start Ride</button>
     <p id="startErr" class="err" style="color:var(--bad);text-align:center;font-size:.88rem;font-weight:600;margin:12px 0 0" hidden></p>
+    <!-- Android will not let an app grant itself background location; only the
+         Settings screen can. Telling a driver to "go to Settings, Apps, Modern
+         Drivers, Permissions" at the depot gate does not work, so this takes
+         them straight there. -->
+    <button id="btnFixPerm" class="plan" hidden>Fix permission</button>
 
     <div id="rideBtns" class="rowbtns" hidden>
       <button id="btnCentre">Centre map</button>
