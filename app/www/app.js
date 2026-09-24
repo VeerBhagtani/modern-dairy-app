@@ -62,6 +62,9 @@
     permission: 'unknown',
     starting: false,
     startError: null,
+    // The plugin's own error text, kept verbatim for Diagnostics. The driver is
+    // shown the plain meaning; this is what the office reads out.
+    lastPluginError: null,
     stoppedInfo: null,
     route: [],          // [lng,lat] for the map line
   };
@@ -408,6 +411,23 @@
     return BG;
   }
 
+  /* Why tracking cannot start, in words that point at the fix.
+   *
+   * There used to be one message here — "Location is not available in this
+   * build" — for three unrelated failures: the page running outside the app at
+   * all, the plugin missing from the APK, and Android refusing the permission.
+   * A driver cannot act on that, and neither can whoever they ring. Each cause
+   * now names itself.
+   */
+  function locationTrouble() {
+    if (!window.Capacitor || !window.Capacitor.registerPlugin) {
+      return 'This page is not running inside the Modern Drivers app, so it cannot use GPS. '
+        + 'Open the app from the phone\'s home screen rather than a browser tab.';
+    }
+    if (!bg()) return 'The location service is missing from this build. The office needs a new APK.';
+    return null;
+  }
+
   var lastKept = null;
   function shouldKeep(loc) {
     if (!lastKept) return true;
@@ -472,8 +492,9 @@
   }
 
   function startWatcher() {
+    var trouble = locationTrouble();
+    if (trouble) { state.startError = trouble; render(); return Promise.resolve(); }
     var p = bg();
-    if (!p) { state.startError = 'Location is not available in this build.'; render(); return Promise.resolve(); }
     if (state.watcherId) return Promise.resolve();
     return p.addWatcher({
       // Android requires a permanent notification for a foreground location
@@ -485,7 +506,20 @@
       stale: false,
       distanceFilter: 0,
     }, onLocation).then(function (id) { state.watcherId = id; render(); })
-      .catch(function (e) { state.startError = e.message || 'Could not start location.'; render(); });
+      .catch(function (e) {
+        var raw = (e && e.message) || String(e || '');
+        // The plugin's own words are useful to whoever is debugging and useless
+        // to a driver, so the driver gets the plain meaning and the original is
+        // kept for Diagnostics.
+        state.lastPluginError = raw;
+        state.startError = /denied|permission/i.test(raw)
+          ? 'Android refused location for this app. Open Settings → Apps → Modern Drivers → '
+            + 'Permissions → Location and choose "Allow all the time", then press Start Ride again.'
+          : /not implemented|unimplemented|no such|does not have/i.test(raw)
+            ? 'The location service is missing from this build. The office needs a new APK.'
+            : ('Could not start location: ' + raw);
+        render();
+      });
   }
   function stopWatcher() {
     var p = bg();
@@ -723,8 +757,56 @@
   }
   function openSheet() {
     $('sheetTitle').textContent = (state.notice && state.notice.title) || 'How this app uses your location';
-    $('sheetBody').innerHTML = noticeHtml();
+    $('sheetBody').innerHTML = noticeHtml()
+      + '<p style="margin-top:18px"><button class="link" id="btnDiag" '
+      + 'style="background:none;border:none;color:var(--navy);font-weight:600;text-decoration:underline;padding:0">'
+      + 'Something is not working</button></p>';
     $('sheetBg').classList.add('on');
+    var d = $('btnDiag');
+    if (d) d.addEventListener('click', openDiagnostics);
+  }
+
+  /* What the office needs to know when a driver says "it does not work".
+   *
+   * Written for someone reading it down a phone line. Every line is a fact the
+   * app can actually check, in plain words, so the answer to "what does it
+   * say?" is useful instead of "it says it does not work". Without this the
+   * only way to find out why a phone will not track is to have the phone.
+   */
+  function openDiagnostics() {
+    var inApp = !!(window.Capacitor && window.Capacitor.registerPlugin);
+    var row = function (label, ok, detail) {
+      return '<tr><td style="padding:7px 0;vertical-align:top">' + esc(label) + '</td>'
+        + '<td style="padding:7px 0 7px 10px;text-align:right;white-space:nowrap;font-weight:600;color:'
+        + (ok === null ? 'var(--ink-2)' : ok ? 'var(--ok)' : 'var(--bad)') + '">'
+        + esc(detail) + '</td></tr>';
+    };
+
+    $('sheetTitle').textContent = 'Diagnostics';
+    $('sheetBody').innerHTML = '<p class="note" style="text-align:left;margin:0 0 12px">'
+      + 'Read this out to the office.</p>'
+      + '<table style="width:100%;font-size:.86rem;border-collapse:collapse">'
+      + row('Running inside the app', inApp, inApp ? 'yes' : 'NO — opened in a browser')
+      + row('Location service present', !!bg(), bg() ? 'yes' : 'NO — needs a new APK')
+      + row('Location permission', state.permission === 'granted', state.permission)
+      + row('Last GPS fix', !!state.lastFix,
+        state.lastFix ? fmtDur(Date.now() - (state.lastFixAt || Date.now())) + ' ago' : 'never')
+      + row('Office server', HAS_SERVER, HAS_SERVER ? 'configured' : 'NOT set in this build')
+      + row('Signed in', !!state.tokens, state.tokens ? 'yes' : 'no')
+      + row('Ride running', riding(), riding() ? 'yes' : 'no')
+      + row('Points waiting to send', state.queued === 0, String(state.queued))
+      + row('Last sent to office', !!state.lastSyncAt,
+        state.lastSyncAt ? fmtDur(Date.now() - state.lastSyncAt) + ' ago' : 'never')
+      + row('App version', null, APP_VERSION)
+      + '</table>'
+      + (state.startError
+        ? '<p style="margin-top:14px;font-size:.84rem;color:var(--bad)"><b>Last error</b><br>'
+          + esc(state.startError) + '</p>'
+        : '')
+      + (state.lastPluginError
+        ? '<p style="margin-top:10px;font-size:.76rem;color:var(--ink-2)"><b>Technical detail</b><br>'
+          + esc(state.lastPluginError) + '</p>'
+        : '');
   }
 
   // ── planning a round ───────────────────────────────────────────────────
