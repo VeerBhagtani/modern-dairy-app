@@ -55,6 +55,8 @@
     watcherId: null,
     lastFix: null,
     lastFixAt: null,
+    lastAccuracyM: null,
+    lastHeading: null,
     distanceM: LS.get('distanceM', 0),
     pointCount: LS.get('pointCount', 0),
     queued: 0,
@@ -386,6 +388,9 @@
     return ask.catch(function () { return null; }).then(function (res) {
       if (res && res.location === 'denied') {
         state.permission = 'denied';
+        // Not latched: the driver may go and allow it, and coming back must ask
+        // the phone again rather than assume the answer from a minute ago.
+        primed = false;
         text('mapEmptyText', 'Location is blocked. Allow location for this app in Android settings.');
         render();
         return null;
@@ -401,6 +406,9 @@
         drawRoute();
       });
     }).catch(function () {
+      // No fix is not the same as no permission, and it is usually temporary —
+      // a basement, a first cold start. Retry on the next resume.
+      primed = false;
       text('mapEmptyText', 'Could not get a position yet. Move somewhere with a clear view of the sky.');
       render();
     });
@@ -442,14 +450,16 @@
   }
 
   function onLocation(location, error) {
+    // This is where the plugin reports refusals — not on addWatcher's promise.
     if (error) {
-      if (error.code === 'NOT_AUTHORIZED') state.permission = 'denied';
-      state.lastError = error.message || String(error.code || error);
-      render();
+      watcherFailed(error.message || String(error), error.code);
       return;
     }
     if (!location) return;
+    // A fix arriving is the only proof that permission is actually held, so it
+    // is what clears a previous refusal rather than anything the app asserts.
     state.permission = 'granted';
+    state.startError = null;
     state.lastFix = { lat: location.latitude, lng: location.longitude };
     state.lastFixAt = Date.now();
     state.lastAccuracyM = location.accuracy == null ? null : location.accuracy;
@@ -495,70 +505,120 @@
       .then(function (n) { state.queued = n; render(); if (HAS_SERVER && n >= 10) sync(); });
   }
 
-  /* Starting the recorder, in two attempts, because Android will not grant
-   * background location the way this asked for it.
+  /* Starting the recorder.
    *
-   * From Android 11, ACCESS_BACKGROUND_LOCATION cannot be requested alongside
-   * the foreground one. Ask for both together and the system does not show a
-   * dialog at all — it denies instantly. The driver sees no prompt, taps Start
-   * Ride, and is told permission was refused for something they were never
-   * offered. Background can only ever be granted from the Settings screen,
-   * separately, after foreground is already held.
+   * The thing three earlier fixes all got wrong, so it is written down here:
+   * addWatcher is a CALLBACK method, not a promise method. Capacitor declares
+   * it RETURN_CALLBACK, so the promise resolves with a callback-id string the
+   * instant the message is posted to Android and can never reject. Everything
+   * the plugin refuses — a denied permission, the phone's location switch off,
+   * the service not yet bound — comes back as the SECOND ARGUMENT of the
+   * callback, in onLocation, and never as a rejection.
    *
-   * Passing backgroundMessage is what makes the plugin ask for background. So
-   * the first attempt asks for it, and if that is refused the second attempt
-   * drops it and records in the foreground instead. A driver with the app open
-   * is tracked either way; the difference is only whether recording survives
-   * the screen locking, and that is worth saying out loud rather than blocking
-   * the whole morning over.
+   * A .catch() here therefore cannot fire for any of the failures that matter,
+   * and the id is stored even when the watcher is already dead. Since this
+   * function returns early whenever an id is stored, one failure used to wedge
+   * recording for the rest of the session: the driver switched location on,
+   * came back, and nothing tried again.
+   *
+   * So: failures are handled in watcherFailed, reached from the callback, and
+   * every failure clears the id so the next attempt is a real attempt.
+   *
+   * backgroundMessage is always set. It is what makes the plugin run a
+   * foreground service, and the foreground service — not the background
+   * permission — is what keeps fixes arriving once the screen locks. The plugin
+   * never asks for ACCESS_BACKGROUND_LOCATION at all (its permission alias is
+   * fine + coarse only), and it does not need to: that permission governs
+   * STARTING location from the background, which this app never does.
    */
-  function startWatcher(foregroundOnly) {
+  var startingWatcher = false;
+  function startWatcher() {
     var trouble = locationTrouble();
     if (trouble) { state.startError = trouble; render(); return Promise.resolve(); }
-    var p = bg();
-    if (state.watcherId) return Promise.resolve();
+    if (state.watcherId || startingWatcher) return Promise.resolve();
+    startingWatcher = true;
 
-    var opts = { requestPermissions: true, stale: false, distanceFilter: 0 };
-    if (!foregroundOnly) {
-      // Android requires a permanent notification for a background location
-      // service. The wording is deliberate: the driver should never be unsure
-      // whether they are being recorded.
-      opts.backgroundTitle = 'Modern Drivers — ride in progress';
-      opts.backgroundMessage = 'Your route is being recorded.';
-    }
+    var opts = {
+      requestPermissions: true,
+      stale: false,
+      distanceFilter: 0,
+      // The wording is deliberate: the driver should never be unsure whether
+      // they are being recorded.
+      backgroundTitle: 'Modern Drivers — ride in progress',
+      backgroundMessage: 'Your route is being recorded.',
+    };
 
-    return p.addWatcher(opts, onLocation).then(function (id) {
+    return bg().addWatcher(opts, onLocation).then(function (id) {
+      startingWatcher = false;
       state.watcherId = id;
-      state.backgroundTracking = !foregroundOnly;
+      state.backgroundTracking = true;
       state.startError = null;
       render();
+      reportHealth();
     }).catch(function (e) {
-      var raw = (e && e.message) || String(e || '');
-      // The plugin's own words are useful to whoever is debugging and useless
-      // to a driver, so the driver gets the plain meaning and the original is
-      // kept for Diagnostics.
-      state.lastPluginError = raw;
-      var refused = /denied|permission|NOT_AUTHORIZED/i.test(raw);
-
-      // Second attempt: foreground only. This is the case Android creates by
-      // refusing a combined request, and it is recoverable.
-      if (refused && !foregroundOnly) return startWatcher(true);
-
-      state.startError = refused
-        ? 'Android is refusing location for this app. Tap "Fix permission" below, '
-          + 'choose Location, and pick "Allow all the time".'
-        : /not implemented|unimplemented|no such|does not have/i.test(raw)
-          ? 'The location service is missing from this build. The office needs a new APK.'
-          : ('Could not start location: ' + raw);
-      state.permission = refused ? 'denied' : state.permission;
-      render();
-      });
+      // Reached only if the bridge itself fails, which means the plugin is not
+      // in this build. The plugin's own refusals arrive through onLocation.
+      startingWatcher = false;
+      watcherFailed((e && e.message) || String(e || ''), e && e.code);
+    });
   }
+
+  /* Every way the recorder can fail, in words a driver can act on.
+   *
+   * The plugin has three refusals and they need three different answers:
+   *   "Location services disabled."      NOT_AUTHORIZED — the PHONE's switch
+   *   "User denied location permission"  NOT_AUTHORIZED — THIS APP's permission
+   *   "Service not running."                            — bound too early
+   *
+   * The first two share a code and have opposite remedies, so matching on the
+   * code alone tells the driver to fix the wrong thing. That is worth the extra
+   * branch: "turn the phone's location on" to somebody whose location is
+   * already on is how an app loses its user.
+   */
+  function watcherFailed(raw, code) {
+    raw = String(raw || '');
+    state.lastPluginError = (code ? code + ': ' : '') + raw;
+
+    // The plugin released the saved call when it refused, so no fix will ever
+    // reach this callback again. Drop the id, or startWatcher will decline to
+    // try for the rest of the session.
+    var dead = state.watcherId;
+    state.watcherId = null;
+    state.backgroundTracking = false;
+    if (dead) { try { bg().removeWatcher({ id: dead }).catch(function () {}); } catch (e) { /* already gone */ } }
+
+    var offSwitch = /services? disabled/i.test(raw);
+    var notReady = /service not running/i.test(raw);
+    var refused = !offSwitch && /denied|permission|NOT_AUTHORIZED/i.test(raw + ' ' + (code || ''));
+
+    if (offSwitch) {
+      state.permission = 'device-off';
+      state.startError = 'The phone\'s own location switch is off. Swipe down from the top of the '
+        + 'screen, turn Location on, then come back — recording starts by itself.';
+    } else if (refused) {
+      state.permission = 'denied';
+      state.startError = 'This app is not allowed to use location. Tap "Fix permission" below, '
+        + 'open Location, and choose "Allow all the time".';
+    } else if (notReady) {
+      // The plugin binds its service asynchronously when the app loads; asking
+      // too soon after opening is a race, not a fault. Say nothing and retry.
+      state.startError = null;
+      setTimeout(function () { if (riding()) startWatcher(); }, CFG.WATCHER_RETRY_MS || 1500);
+    } else if (/not implemented|unimplemented|no such|does not have/i.test(raw)) {
+      state.startError = 'The location service is missing from this build. The office needs a new APK.';
+    } else {
+      state.startError = 'Could not start location: ' + raw;
+    }
+    render();
+    reportHealth();
+  }
+
   function stopWatcher() {
     var p = bg();
     if (!p || !state.watcherId) return Promise.resolve();
     var id = state.watcherId;
     state.watcherId = null;
+    state.backgroundTracking = false;
     return p.removeWatcher({ id: id }).catch(function () {});
   }
 
@@ -588,6 +648,30 @@
     }).then(function () { return queue.count(); })
       .then(function (n) { state.queued = n; syncing = false; render(); })
       .catch(function () { syncing = false; });
+  }
+
+  /* Tell the office what this phone's location is doing.
+   *
+   * The server has had an endpoint for this since the beginning and the app has
+   * never called it, which meant a driver whose permission was refused looked
+   * identical to one parked in a shed: no data either way. Now the office can
+   * tell those apart while the driver is still out, instead of the next morning.
+   *
+   * Fire and forget. A failed health report must never disturb a ride.
+   */
+  function reportHealth() {
+    if (!HAS_SERVER || !state.tokens) return Promise.resolve(null);
+    return apiFetch('/driver/health', {
+      method: 'POST',
+      body: {
+        locationPermission: state.permission,
+        backgroundPermission: state.backgroundTracking ? 'granted' : 'unknown',
+        gpsEnabled: state.permission !== 'device-off',
+        online: navigator.onLine !== false,
+        queuedPoints: state.queued,
+        appVersion: APP_VERSION,
+      },
+    }).catch(function () { return null; });
   }
 
   // ── name ───────────────────────────────────────────────────────────────
@@ -702,8 +786,13 @@
   }
   function statusOf() {
     if (!riding()) return { cls: '', title: 'Not tracking', sub: 'Press Start Ride when you leave.' };
+    // Two refusals, two remedies. Telling a driver whose location is already on
+    // to turn it on is how the app gets blamed for the phone's setting.
+    if (state.permission === 'device-off') {
+      return { cls: 'bad', title: 'The phone\'s location is off', sub: 'Turn Location on in the phone\'s quick settings. This restarts by itself.' };
+    }
     if (state.permission === 'denied') {
-      return { cls: 'bad', title: 'Location is blocked', sub: 'Allow location for this app in Android settings, then start again.' };
+      return { cls: 'bad', title: 'This app is not allowed to use location', sub: 'Tap Fix permission below. The phone\'s location switch is a different setting.' };
     }
     if (!state.watcherId) return { cls: 'warn', title: 'Starting…', sub: 'Waiting for the phone to allow location.' };
     if (!state.lastFixAt) return { cls: 'warn', title: 'Waiting for GPS', sub: 'This can take a minute indoors.' };
@@ -767,9 +856,12 @@
     var err = $('startErr');
     err.hidden = !state.startError;
     err.textContent = state.startError || '';
-    // Offered only when the fault is a refused permission — a button that opens
-    // Settings is noise against any other error.
-    show($('btnFixPerm'), state.permission === 'denied');
+    // Offered for both refusals — this app's permission and the phone's own
+    // switch — because the button leads somewhere useful for each, and noise
+    // against any other error.
+    show($('btnFixPerm'), state.permission === 'denied' || state.permission === 'device-off');
+    $('btnFixPerm').textContent = state.permission === 'device-off'
+      ? 'How to turn location on' : 'Fix permission';
 
     var n = $('notice');
     if (state.stoppedInfo && !riding()) {
@@ -834,9 +926,19 @@
       + '<table style="width:100%;font-size:.86rem;border-collapse:collapse">'
       + row('Running inside the app', inApp, inApp ? 'yes' : 'NO — opened in a browser')
       + row('Location service present', !!bg(), bg() ? 'yes' : 'NO — needs a new APK')
-      + row('Location permission', state.permission === 'granted', state.permission)
+      + row('Phone\'s location switch', state.permission !== 'device-off',
+        state.permission === 'device-off' ? 'OFF' : (state.lastFix ? 'on' : 'not known yet'))
+      + row('Permission for this app', state.permission === 'granted', state.permission)
+      + row('Recorder running', !!state.watcherId, state.watcherId ? 'yes' : 'no')
       + row('Last GPS fix', !!state.lastFix,
         state.lastFix ? fmtDur(Date.now() - (state.lastFixAt || Date.now())) + ' ago' : 'never')
+      // The coordinates themselves, because "it says it has a fix" and "the fix
+      // is a real place in Pune" are different claims and only one is worth
+      // reading out.
+      + row('Where it thinks it is', !!state.lastFix,
+        state.lastFix ? state.lastFix.lat.toFixed(5) + ', ' + state.lastFix.lng.toFixed(5) : '—')
+      + row('Accuracy', state.lastAccuracyM != null && state.lastAccuracyM <= 50,
+        state.lastAccuracyM == null ? '—' : Math.round(state.lastAccuracyM) + ' m')
       + row('Office server', HAS_SERVER, HAS_SERVER ? 'configured' : 'NOT set in this build')
       + row('Signed in', !!state.tokens, state.tokens ? 'yes' : 'no')
       + row('Ride running', riding(), riding() ? 'yes' : 'no')
@@ -854,7 +956,63 @@
       + (state.lastPluginError
         ? '<p style="margin-top:10px;font-size:.76rem;color:var(--ink-2)"><b>Technical detail</b><br>'
           + esc(state.lastPluginError) + '</p>'
-        : '');
+        : '')
+      + '<p style="margin-top:16px"><button id="btnSelfTest" class="plan" style="width:100%">'
+      + 'Test location now</button></p>'
+      + '<div id="selfTest" style="font-size:.84rem;margin-top:10px"></div>';
+
+    var b = $('btnSelfTest');
+    if (b) b.addEventListener('click', runSelfTest);
+  }
+
+  /* Prove the chain, one link at a time, on the phone that is failing.
+   *
+   * Reading rows of state tells you what the app believes. This tells you what
+   * actually happens right now: the phone is asked for a position, the position
+   * is shown, and it is sent to the office and the office's reply is shown. If
+   * a link is broken, the test stops at the broken one and names it — which is
+   * the question "it does not work" never answers.
+   */
+  function runSelfTest() {
+    var out = $('selfTest');
+    if (!out) return;
+    var steps = [];
+    var paint = function () { out.innerHTML = steps.join(''); };
+    var say = function (ok, label, detail) {
+      steps.push('<div style="padding:4px 0;color:' + (ok === null ? 'var(--ink-2)' : ok ? 'var(--ok)' : 'var(--bad)')
+        + '">' + (ok === null ? '…' : ok ? '✓' : '✕') + ' <b>' + esc(label) + '</b>'
+        + (detail ? ' — ' + esc(detail) : '') + '</div>');
+      paint();
+    };
+
+    out.innerHTML = '<div style="color:var(--ink-2)">Asking the phone…</div>';
+
+    if (!bg()) { say(false, 'Location service', 'missing from this build'); return; }
+    say(true, 'Location service', 'present');
+
+    readOneFix().then(function (f) {
+      say(true, 'Position from the phone', f.lat.toFixed(5) + ', ' + f.lng.toFixed(5)
+        + (f.acc == null ? '' : ' ±' + Math.round(f.acc) + ' m'));
+      state.lastFix = { lat: f.lat, lng: f.lng };
+      state.lastFixAt = Date.now();
+      state.lastAccuracyM = f.acc == null ? null : f.acc;
+      state.permission = 'granted';
+      render();
+
+      if (!HAS_SERVER) { say(null, 'Sending to the office', 'no server in this build'); return null; }
+      if (!state.tokens) { say(false, 'Sending to the office', 'this phone is not signed in'); return null; }
+      return reportHealth().then(function (r) {
+        if (r && r.received) say(true, 'The office answered', 'the connection works');
+        else say(false, 'The office answered', 'no reply — check the signal');
+      });
+    }).catch(function (e) {
+      var msg = (e && e.message) || String(e || '');
+      say(false, 'Position from the phone', msg || 'no position');
+      steps.push('<p class="note" style="text-align:left;margin-top:8px">'
+        + 'Check the two rows above: the phone\'s location switch, and permission for this app. '
+        + 'They are different settings and both must be on.</p>');
+      paint();
+    });
   }
 
   // ── planning a round ───────────────────────────────────────────────────
@@ -1061,6 +1219,9 @@
   // is not allowed to grant itself background location, so this button is the
   // whole remedy for a refused permission.
   $('btnFixPerm').addEventListener('click', function () {
+    // The phone's master switch is not in this app's settings page, so sending
+    // the driver there for that fault would be a dead end. Steps instead.
+    if (state.permission === 'device-off') { showSettingsSteps(); return; }
     var p = bg();
     if (p && p.openSettings) {
       p.openSettings().catch(function () { showSettingsSteps(); });
@@ -1070,18 +1231,24 @@
   });
 
   function showSettingsSteps() {
-    $('sheetTitle').textContent = 'Allow location for this app';
+    var deviceOff = state.permission === 'device-off';
+    $('sheetTitle').textContent = deviceOff ? 'Turn the phone\'s location on' : 'Allow location for this app';
     $('sheetBody').innerHTML = '<p class="note" style="text-align:left;margin:0 0 10px">'
-      + 'Turning on the phone\'s location switch is not the same thing as allowing '
-      + '<b>this app</b> to use it. Both are needed.</p>'
+      + 'These are two different settings and both are needed: the <b>phone\'s</b> location '
+      + 'switch, and permission for <b>this app</b>.</p>'
       + '<ol style="font-size:.9rem;line-height:1.85;padding-left:20px;margin:0">'
-      + '<li>Open the phone\'s <b>Settings</b></li>'
-      + '<li><b>Apps</b> → <b>Modern Drivers</b></li>'
-      + '<li><b>Permissions</b> → <b>Location</b></li>'
-      + '<li>Choose <b>Allow all the time</b></li>'
+      + (deviceOff
+        ? '<li>Swipe down from the top of the screen</li>'
+          + '<li>Tap <b>Location</b> so it turns on</li>'
+          + '<li>Come back to this app — it starts recording by itself</li>'
+        : '<li>Open the phone\'s <b>Settings</b></li>'
+          + '<li><b>Apps</b> → <b>Modern Drivers</b></li>'
+          + '<li><b>Permissions</b> → <b>Location</b></li>'
+          + '<li>Choose <b>Allow all the time</b></li>')
       + '</ol>'
       + '<p class="note" style="text-align:left;margin-top:12px">'
-      + '"While using the app" also works, but recording stops when the screen locks.</p>';
+      + '"While using the app" also works: once a ride has been started with the app open, '
+      + 'Android keeps recording with the screen locked and shows a notification the whole time.</p>';
     $('sheetBg').classList.add('on');
   }
   $('btnPlan').addEventListener('click', openPlanPicker);
@@ -1090,8 +1257,21 @@
   window.addEventListener('online', function () { sync(); render(); });
   window.addEventListener('offline', render);
 
+  /* Coming back to the app.
+   *
+   * The retry below is the other half of the permission fix. A driver who is
+   * told to turn location on leaves the app to do it; without this, they come
+   * back to an app that has given up and will not ask the phone again until it
+   * is force-closed. Starting a watcher that is already running is a no-op, so
+   * this is safe to call on every resume.
+   */
   function resume() {
     queue.count().then(function (n) { state.queued = n; render(); });
+    if (riding() && !state.watcherId) startWatcher();
+    if (!primed || state.permission === 'denied' || state.permission === 'device-off') {
+      primed = false;
+      primeLocation();
+    }
     if (HAS_SERVER) { checkRide(); sync(); }
     else if (state.localRide) { initMap(); startWatcher(); }
   }
@@ -1106,6 +1286,9 @@
   if (HAS_SERVER) {
     setInterval(sync, (CFG.SYNC_INTERVAL_SEC || 45) * 1000);
     setInterval(checkRide, (CFG.RIDE_POLL_SEC || 60) * 1000);
+    // Only while a ride is running: outside one there is nothing the office can
+    // act on, and forty idle phones reporting all day is noise and bandwidth.
+    setInterval(function () { if (riding()) reportHealth(); }, 5 * 60 * 1000);
   }
   setInterval(render, 5000);
 
