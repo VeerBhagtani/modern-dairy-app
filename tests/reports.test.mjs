@@ -106,10 +106,12 @@ test('the reliability report exposes the gap, not just a grade', () => {
   assert.ok(rows[0].gapMinutes >= 5);
 });
 
-test('the anomaly report reports the gap and any large unclassified leg', () => {
+test('the anomaly report reports the gap and any long leg that went to no restaurant', () => {
   const rows = reports.routeAnomalyRows(ROWS);
   assert.ok(rows.some((r) => r.kind === 'tracking_gap'));
-  assert.ok(rows.some((r) => r.kind === 'large_unknown_leg'));
+  // The Porter detour in the fixture is several kilometres that lead to no
+  // customer: personal by rule, and shown so the office can check it.
+  assert.ok(rows.some((r) => r.kind === 'large_personal_leg'));
 });
 
 test('the classification audit report renders the full chain', () => {

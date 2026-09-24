@@ -54,8 +54,11 @@ test('the admin stop endpoint is role-gated and demands a reason', () => {
 });
 
 test('every ride stop is audited, including the automatic one', () => {
-  assert.ok(/action: kind === 'timeout' \? 'ride\.auto_close' : 'ride\.stop'/.test(REPO),
-    'stopRide must write an audit entry for both admin and timeout closures');
+  assert.ok(/action: kind === 'timeout' \? 'ride\.auto_close' : kind === 'day_end' \? 'ride\.day_end' : 'ride\.stop'/.test(REPO),
+    'stopRide must write an audit entry for admin, timeout and day-end closures');
+  // Rides closed at the end of their day inside startRide's transaction are
+  // audited too, after it commits.
+  assert.ok(/action: 'ride\.day_end', target: c\.rideId/.test(REPO), 'startRide audits the rides it closes');
   const job = read('backend/src/jobs/maintenance.js');
   assert.ok(/kind: 'timeout'/.test(job));
   assert.ok(/the configured limit is \$\{cfg\.autoStopAfterHours\}/.test(job),

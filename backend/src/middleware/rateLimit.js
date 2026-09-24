@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 
 // In-memory store — accurate for a single Cloud Run instance. If this service
@@ -120,16 +121,47 @@ const gpsIngestLimiter = rateLimit({
 // Driver registration. A driver legitimately hits this after installing, after
 // reinstalling, and when they change handset, so it cannot be miserly — but it
 // is also the one endpoint that creates accounts, so it is capped per IP to
-// stop anyone enumerating or mass-creating drivers.
+// stop anyone enumerating or mass-creating drivers. Per IP, and therefore
+// shared by every phone on the depot Wi-Fi on the morning the app is rolled
+// out: sized for forty phones registering together, with room over.
 const registerLimiter = rateLimit({
   windowMs: FIFTEEN_MIN,
-  limit: 20,
+  limit: 100,
   standardHeaders: true,
   legacyHeaders: false,
   handler: jsonHandler('Too many attempts. Please wait 15 minutes and try again.'),
 });
 
+// Token refresh, per refresh token rather than per IP. Every phone refreshes
+// its access token about every half hour; counted per address, forty phones
+// on one depot Wi-Fi shared twenty refreshes between them, and the ones over
+// the limit could not upload at all until the window passed.
+const refreshLimiter = rateLimit({
+  windowMs: FIFTEEN_MIN,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const t = String(req.body?.refreshToken || '');
+    return t ? `refresh:${crypto.createHash('sha256').update(t).digest('hex').slice(0, 32)}` : `ip:${req.ip}`;
+  },
+  handler: jsonHandler('Too many attempts. Please wait 15 minutes and try again.'),
+});
+
+// Everything a signed-in driver's phone does that is not an upload or a write:
+// checking its ride, loading stops, its history. Per driver, for the same
+// reason as writeKey. Mounted after the driver is identified.
+const driverLimiter = rateLimit({
+  windowMs: FIFTEEN_MIN,
+  limit: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.driverId ? `driver:${req.driverId}` : `ip:${req.ip}`),
+  handler: jsonHandler('Too many requests. The app will retry shortly.'),
+});
+
 module.exports = {
+  refreshLimiter, driverLimiter,
   authLimiter, otpPhoneLimiter, adminLoginLimiter, writeLimiter, generalLimiter,
   gpsIngestLimiter, registerLimiter, writeKey,
 };

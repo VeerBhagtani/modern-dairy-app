@@ -58,10 +58,7 @@ function parseTime(v) {
   return Number.isFinite(t) ? t : null;
 }
 
-const num = (v) => {
-  const n = Number(String(v ?? '').trim());
-  return Number.isFinite(n) ? n : null;
-};
+const { orderCoords } = require('./coords');
 
 /**
  * @param {string} csvText
@@ -99,8 +96,8 @@ function parseOrdersCsv(csvText, driverCodeToId = new Map()) {
       windowEnd: parseTime(at('window_end')),
       deliveredAt: parseTime(at('delivered_at')),
       status: at('status') || null,
-      lat: num(at('lat')),
-      lng: num(at('lng')),
+      // Blank cells are "no location", never (0, 0); see coords.js.
+      ...orderCoords(at('lat'), at('lng')),
       raw: Object.fromEntries(header.map((h, i) => [h, row[i] ?? null])),
     });
   }

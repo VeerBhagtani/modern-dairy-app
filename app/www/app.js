@@ -591,6 +591,11 @@
     LS.set('pointCount', state.pointCount);
 
     queue.put({
+      // The ride this fix belongs to, kept with it in the queue. Without it a
+      // fix waiting to be sent when the office stopped the ride had no home:
+      // it was later sent to whichever ride was current, and yesterday's
+      // travel landed in today's kilometres.
+      rideId: state.rideId || null,
       clientPointId: nextPointId(),
       lat: location.latitude,
       lng: location.longitude,
@@ -779,31 +784,66 @@
 
   // ── sync ───────────────────────────────────────────────────────────────
   var syncing = false;
+  /* Send queued fixes, each to the ride it was recorded in.
+   *
+   * A batch can hold fixes from two rides — the end of one the office stopped
+   * while the phone was offline, and the start of the next — so it is split by
+   * ride and each part goes to its own ride. The server accepts a stopped
+   * ride's fixes up to its stop time and names anything else as rejected, and
+   * a fix is deleted from the queue only once the server has accounted for it
+   * by id, either way. Fixes from before this change carry no ride and go to
+   * the current one; the server refuses any that predate it.
+   */
   function sync() {
-    if (!HAS_SERVER || syncing || !state.rideId || !state.tokens) return Promise.resolve();
+    if (!HAS_SERVER || syncing || !state.tokens) return Promise.resolve();
     syncing = true;
+    var anyStopped = false;
     return queue.take(state.tracking.maxBatchPoints).then(function (pts) {
-      if (!pts.length) return null;
-      return apiFetch('/driver/rides/' + state.rideId + '/points', { method: 'POST', body: { points: pts } })
-        .then(function (data) {
-          // Delete only what the server confirmed, plus anything it rejected as
-          // permanently malformed — retrying those forever would wedge the queue.
-          var done = (data.accepted || []).concat((data.rejected || [])
-            .map(function (r) { return r.clientPointId; }).filter(Boolean));
-          return queue.remove(done).then(function () {
-            state.lastSyncAt = Date.now();
-            LS.set('lastSyncAt', state.lastSyncAt);
-            if (data.rideActive === false) return checkRide();
-            return null;
-          });
+      var groups = {};
+      var order = [];
+      pts.forEach(function (p) {
+        var ride = p.rideId || state.rideId;
+        if (!ride) return;              // recorded with no ride and none now: wait
+        if (!groups[ride]) { groups[ride] = []; order.push(ride); }
+        var copy = {};
+        Object.keys(p).forEach(function (k) { if (k !== 'rideId') copy[k] = p[k]; });
+        groups[ride].push(copy);
+      });
+      // One ride after another, so the order of the day's fixes is kept.
+      return order.reduce(function (chain, ride) {
+        return chain.then(function () {
+          return apiFetch('/driver/rides/' + ride + '/points', { method: 'POST', body: { points: groups[ride] } })
+            .then(function (data) {
+              // Delete only what the server confirmed, plus anything it
+              // rejected — retrying those forever would wedge the queue.
+              var done = (data.accepted || []).concat((data.rejected || [])
+                .map(function (r) { return r.clientPointId; }).filter(Boolean));
+              if (data.rideActive === false && ride === state.rideId) anyStopped = true;
+              return queue.remove(done).then(function () {
+                state.lastSyncAt = Date.now();
+                LS.set('lastSyncAt', state.lastSyncAt);
+              });
+            }, function (e) {
+              if (e.code === 'RIDE_STOPPED') { anyStopped = true; return null; }
+              // A ride that no longer exists or is not this driver's: nothing
+              // can ever accept these fixes, and keeping them wedges the queue.
+              if (e.status === 404 || e.status === 403) {
+                return queue.remove(groups[ride].map(function (p) { return p.clientPointId; }));
+              }
+              throw e;
+            });
         });
-    }).catch(function (e) {
-      if (e.code === 'RIDE_STOPPED') return checkRide();
+      }, Promise.resolve());
+    }).then(function () {
+      if (anyStopped) return checkRide();
+      return null;
+    }).catch(function () {
       return null;  // a dead zone is normal; keep the points and retry later
     }).then(function () { return queue.count(); })
       .then(function (n) { state.queued = n; syncing = false; render(); })
       .catch(function () { syncing = false; });
   }
+
 
   /* Tell the office what this phone's location is doing.
    *
@@ -1009,6 +1049,7 @@
     // own learned distances both live there. Offline, the button would only
     // ever produce an error, so it is not offered.
     show($('btnPlan'), HAS_SERVER && !!state.tokens);
+    show($('btnHistory'), HAS_SERVER && !!state.tokens);
 
     // The map is up as soon as there is anything true to draw on it.
     var wantMap = riding() || !!state.lastFix;
@@ -1041,10 +1082,15 @@
     var n = $('notice');
     if (state.stoppedInfo && !riding()) {
       n.className = 'msg info';
-      n.innerHTML = '<b>The office stopped your ride.</b> '
-        + esc(state.stoppedInfo.kind === 'timeout'
-          ? 'It was closed automatically after running a long time.'
-          : (state.stoppedInfo.reason || ''));
+      // A ride ends with its day: every day is kept as its own ride, so the
+      // driver's history and the office's reports show one row per day. That
+      // is not the office stopping anybody, and it must not read like it.
+      n.innerHTML = state.stoppedInfo.kind === 'day_end'
+        ? '<b>Yesterday\'s ride has ended.</b> Each day is its own ride. Press Start Ride to begin today.'
+        : '<b>The office stopped your ride.</b> '
+          + esc(state.stoppedInfo.kind === 'timeout'
+            ? 'It was closed automatically after running a long time.'
+            : (state.stoppedInfo.reason || ''));
       n.hidden = false;
     } else if (!HAS_SERVER) {
       n.className = 'msg warn';
@@ -1193,6 +1239,69 @@
         + 'They are different settings and both must be on.</p>');
       paint();
     });
+  }
+
+  // ── my rides ───────────────────────────────────────────────────────────
+  //
+  // The driver's own days, from the office system: the same numbers the office
+  // sees, so a driver can check them — and bring a wrong day to the office —
+  // rather than take them on trust. The server only ever returns this phone's
+  // driver's rides.
+  function kmText(v) { return v == null ? '—' : (Math.round(v * 10) / 10).toFixed(1) + ' km'; }
+  function dayText(dayKey) {
+    // Read as a calendar day: parsed at noon so no timezone can shift it.
+    return new Date(dayKey + 'T12:00:00').toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+  }
+
+  function openHistory() {
+    $('sheetTitle').textContent = 'My rides';
+    $('sheetBody').innerHTML = '<p class="muted">Loading your last 30 days…</p>';
+    $('sheetBg').classList.add('on');
+    apiFetch('/driver/history?days=30').then(function (h) {
+      if (!h.days.length) {
+        $('sheetBody').innerHTML = '<p class="muted">No rides in the last 30 days yet.</p>';
+        return;
+      }
+      var t = h.totals;
+      var html = '<div style="display:flex;gap:8px;margin:0 0 14px">'
+        + histTile(kmText(t.business), 'Business')
+        + histTile(kmText(t.personal), 'Personal')
+        + histTile(String(t.days), t.days === 1 ? 'Day' : 'Days')
+        + '</div>'
+        + '<p class="note" style="text-align:left;margin:0 0 12px">Business is driving to a restaurant, and between '
+        + 'restaurants and the dairy. Personal is driving that did not lead to a restaurant. '
+        + 'If a day looks wrong, tell the office — they can see the route.</p>'
+        + h.days.map(function (d) {
+          var k = d.km;
+          var shops = d.restaurants.map(function (r) { return esc(r.name); }).join(', ');
+          return '<div style="border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px">'
+            + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px">'
+            + '<b>' + esc(dayText(d.dayKey)) + '</b>'
+            + '<span style="font-weight:700">' + (k ? kmText(k.total) : '') + '</span></div>'
+            + (k
+              ? '<div style="font-size:.86rem;color:var(--ink-2);margin-top:4px">'
+                + '<span style="color:var(--ok);font-weight:600">' + kmText(k.business) + ' business</span>'
+                + ' · ' + kmText(k.personal) + ' personal'
+                + (k.unknown ? ' · ' + kmText(k.unknown) + ' undecided' : '')
+                + (k.gapEstimate ? ' · ' + kmText(k.gapEstimate) + ' with no GPS' : '')
+                + '</div>'
+              : '<div class="note" style="text-align:left;margin-top:4px">'
+                + (d.status === 'active' ? 'Today\'s ride — the kilometres appear as the day goes on.' : 'Not calculated yet.')
+                + '</div>')
+            + (shops ? '<div style="font-size:.8rem;color:var(--ink-2);margin-top:6px">' + d.restaurants.length
+              + (d.restaurants.length === 1 ? ' restaurant: ' : ' restaurants: ') + shops + '</div>' : '')
+            + '</div>';
+        }).join('');
+      $('sheetBody').innerHTML = html;
+    }).catch(function (e) {
+      $('sheetBody').innerHTML = '<p style="color:var(--bad);font-weight:600">' + esc(e.message) + '</p>'
+        + '<p class="note" style="text-align:left">Your history comes from the office system, so it needs a signal.</p>';
+    });
+  }
+  function histTile(v, label) {
+    return '<div style="flex:1;background:var(--navy-soft);border-radius:12px;padding:10px 12px">'
+      + '<div style="font-size:1.15rem;font-weight:750">' + esc(v) + '</div>'
+      + '<div style="font-size:.74rem;color:var(--ink-2)">' + esc(label) + '</div></div>';
   }
 
   // ── planning a round ───────────────────────────────────────────────────
@@ -1433,6 +1542,7 @@
     $('sheetBg').classList.add('on');
   }
   $('btnPlan').addEventListener('click', openPlanPicker);
+  $('btnHistory').addEventListener('click', openHistory);
   $('sheetClose').addEventListener('click', function () { $('sheetBg').classList.remove('on'); });
   $('sheetBg').addEventListener('click', function (e) { if (e.target === $('sheetBg')) $('sheetBg').classList.remove('on'); });
   window.addEventListener('online', function () { sync(); render(); });

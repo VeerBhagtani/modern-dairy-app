@@ -32,18 +32,32 @@
 
 const FRESH_MS = 5 * 60 * 1000;
 const HOUSEKEEPING_EVERY_MS = 10 * 60 * 1000;
+// A ride whose calculation failed is retried after this, or sooner if new
+// points arrive — not on every look.
+const RETRY_FAILED_MS = 30 * 60 * 1000;
 
 function needsCalc(ride, nowMs, { freshMs = FRESH_MS } = {}) {
   if (!ride || !ride.pointCount) return false;                  // nothing to calculate from
+  // Raw GPS removed under the retention policy: the stored result is final.
+  // Recalculating would read no points and overwrite it with zeros.
+  if (ride.rawGpsDeletedAt) return false;
+  if (ride.calcFailedAt && nowMs - ride.calcFailedAt < RETRY_FAILED_MS
+      && (ride.lastUploadAt || 0) <= ride.calcFailedAt) return false;
   if (!ride.processedAt) return true;
-  const newPoints = (ride.lastUploadAt || 0) > ride.processedAt;
+  // What the last result saw: the moment it read the points. The save time is
+  // later, and a batch uploaded in between would otherwise never be counted.
+  const seen = ride.processedInputsAt || ride.processedAt;
+  // A review, revert or declaration since the last result: recalculate now,
+  // whatever the ride's state — the office is waiting to see its decision.
+  if ((ride.inputsChangedAt || 0) > seen) return true;
+  const newPoints = (ride.lastUploadAt || 0) > seen;
   if (!newPoints) return false;
   if (ride.status === 'active') return nowMs - ride.processedAt >= freshMs;
   return true;
 }
 
 /* @param rides   ride rows (with id, status, pointCount, processedAt, lastUploadAt)
- * @param deps    { processOne(rideId), now() }
+ * @param deps    { processOne(rideId), markFailed(rideId, message)?, now() }
  * @param opts    { maxRides, budgetMs, freshMs }
  * @returns { calculated: [rideId], failed: [{rideId,error}], deferred: n }
  *
@@ -52,10 +66,14 @@ function needsCalc(ride, nowMs, { freshMs = FRESH_MS } = {}) {
  */
 async function keepCurrent(rides, deps, { maxRides = 10, budgetMs = 8000, freshMs = FRESH_MS } = {}) {
   const now = deps.now ? deps.now() : Date.now();
+  // Rides that have failed before go last: sorted only by age they would lead
+  // every queue (they never get a result), and a handful of broken rides would
+  // use up the whole budget on every look while the rest waited.
   const due = rides
     .filter((r) => needsCalc(r, now, { freshMs }))
-    .sort((a, b) => (a.processedAt || 0) - (b.processedAt || 0));
-  const calculated = []; const failed = [];
+    .sort((a, b) => (a.calcFailedAt ? 1 : 0) - (b.calcFailedAt ? 1 : 0)
+      || (a.processedAt || 0) - (b.processedAt || 0));
+  const calculated = []; const failed = []; let busy = 0;
   const started = deps.now ? deps.now() : Date.now();
   for (const ride of due) {
     if (calculated.length + failed.length >= maxRides) break;
@@ -65,11 +83,19 @@ async function keepCurrent(rides, deps, { maxRides = 10, budgetMs = 8000, freshM
       await deps.processOne(ride.id);
       calculated.push(ride.id);
     } catch (e) {
+      // Another request is calculating this ride right now: not a failure,
+      // and its result will be there in a moment.
+      if (e && e.code === 'BUSY') { busy += 1; continue; }
       // One ride's failure must not stop the rest, or the dashboard.
-      failed.push({ rideId: ride.id, error: String((e && e.message) || e).slice(0, 200) });
+      const message = String((e && e.message) || e).slice(0, 200);
+      failed.push({ rideId: ride.id, error: message });
+      if (deps.markFailed) {
+        // eslint-disable-next-line no-await-in-loop
+        await Promise.resolve(deps.markFailed(ride.id, message)).catch(() => {});
+      }
     }
   }
-  return { calculated, failed, deferred: due.length - calculated.length - failed.length };
+  return { calculated, failed, busy, deferred: due.length - calculated.length - failed.length - busy };
 }
 
 /* Throttled so every dashboard refresh does not re-scan active rides. */

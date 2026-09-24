@@ -262,33 +262,82 @@ async function updateDriver(driverId, patch, adminId) {
 // ---------------------------------------------------------------------------
 
 const dayKeyFor = (ms) => new Date(ms + 5.5 * 3600000).toISOString().slice(0, 10); // IST calendar day
+// The last millisecond of an IST calendar day.
+const endOfDayMs = (dayKey) => Date.parse(`${dayKey}T23:59:59.999+05:30`);
+const DAY_END_REASON = (dayKey) => `The day ${dayKey} ended. Each day is kept as its own ride.`;
+
+/* One ride per day.
+ *
+ * Only the office stops a ride, and nobody stops every ride every evening, so
+ * rides used to run on for days: Start Ride the next morning returned the same
+ * ride, and a week of driving became one ride with one total. A ride now ends
+ * with its day. It is closed at the end of that day — not when somebody next
+ * notices — so its points up to midnight stay in it and later ones are refused
+ * from it and go to the next day's ride instead.
+ *
+ * Called from every place that touches an active ride (the phone starting,
+ * checking and uploading; the dashboard looking), because there is no
+ * scheduler to do it at midnight. Returns the closed ride, or null if the ride
+ * was not over.
+ */
+async function closeIfDayOver(ride, nowMs = Date.now()) {
+  if (!ride || ride.status !== 'active' || !ride.dayKey) return null;
+  if (ride.dayKey >= dayKeyFor(nowMs)) return null;
+  const id = ride.id || ride.rideId;
+  const out = await stopRide(id, {
+    by: 'system:day_end',
+    reason: DAY_END_REASON(ride.dayKey),
+    kind: 'day_end',
+    stoppedAt: Math.min(nowMs, endOfDayMs(ride.dayKey)),
+  });
+  await C.live().doc(ride.driverId).set({ rideStatus: 'day_closed', rideStoppedAt: out.stoppedAt }, { merge: true }).catch(() => {});
+  return { id, ...out };
+}
 
 // Start, or return the ride already running. The transaction is what makes
 // "one active ride per driver" a fact rather than a hope: a double-tap, a
 // retry after a timeout and two phones all converge on the same ride document.
 async function startRide(driverId, meta = {}) {
   const now = Date.now();
-  return db.runTransaction(async (tx) => {
+  // Rides closed below because their day had ended. Audited after the
+  // transaction commits: every ride stop is on the record, whoever made it.
+  let closedForDayEnd = [];
+  const out = await db.runTransaction(async (tx) => {
+    closedForDayEnd = [];   // a transaction can be retried; start clean each time
     const driverRef = C.drivers().doc(driverId);
     const driverDoc = await tx.get(driverRef);
     if (!driverDoc.exists) throw Object.assign(new Error('Driver not found'), { code: 'NO_DRIVER' });
     const driver = driverDoc.data();
     if (driver.status !== 'active') throw Object.assign(new Error('This driver account is not active'), { code: 'INACTIVE' });
 
-    if (driver.activeRideId) {
-      const existing = await tx.get(C.rides().doc(driver.activeRideId));
-      if (existing.exists && existing.data().status === 'active') {
-        return { rideId: existing.id, ...existing.data(), alreadyActive: true };
-      }
-    }
+    // An active ride from an earlier day is closed at the end of its day, in
+    // this same transaction, and today gets a new ride. Only a ride from today
+    // is carried on.
+    const today = dayKeyFor(now);
+    const closeOld = (ref, data) => {
+      tx.update(ref, {
+        status: STOP_STATUS.day_end, stoppedAt: Math.min(now, endOfDayMs(data.dayKey)),
+        stoppedBy: 'system:day_end', stopReason: DAY_END_REASON(data.dayKey), stopKind: 'day_end',
+      });
+      closedForDayEnd.push({ rideId: ref.id, dayKey: data.dayKey });
+    };
+
+    // Reads first: a Firestore transaction must do all its reads before any
+    // write.
+    const existing = driver.activeRideId ? await tx.get(C.rides().doc(driver.activeRideId)) : null;
     // Belt and braces: the driver document could have drifted (a crash between
     // the two writes below in an older version), so also look for a stray
     // active ride before creating a new one.
-    const strays = await tx.get(C.rides().where('driverId', '==', driverId).where('status', '==', 'active').limit(1));
-    if (!strays.empty) {
-      const d = strays.docs[0];
-      tx.update(driverRef, { activeRideId: d.id });
-      return { rideId: d.id, ...d.data(), alreadyActive: true };
+    const strays = await tx.get(C.rides().where('driverId', '==', driverId).where('status', '==', 'active').limit(5));
+
+    const open = [];
+    if (existing && existing.exists && existing.data().status === 'active') open.push(existing);
+    for (const d of strays.docs) if (!open.some((o) => o.id === d.id)) open.push(d);
+    const current = open.find((d) => (d.data().dayKey || today) >= today);
+    for (const d of open) if (d !== current) closeOld(d.ref, d.data());
+    if (current) {
+      if (driver.activeRideId !== current.id) tx.update(driverRef, { activeRideId: current.id });
+      return { rideId: current.id, ...current.data(), alreadyActive: true };
     }
 
     const rideId = crypto.randomUUID();
@@ -311,25 +360,41 @@ async function startRide(driverId, meta = {}) {
     tx.update(driverRef, { activeRideId: rideId });
     return { rideId, ...ride, alreadyActive: false };
   });
+  for (const c of closedForDayEnd) {
+    const reason = DAY_END_REASON(c.dayKey);
+    /* eslint-disable no-await-in-loop */
+    await writeAudit({ adminId: 'system:day_end', action: 'ride.day_end', target: c.rideId, after: { reason, kind: 'day_end' } }).catch(() => {});
+    await writeEvent({ driverId, rideId: c.rideId, kind: 'ride_stopped', detail: { by: 'system:day_end', reason, kind: 'day_end' } }).catch(() => {});
+    /* eslint-enable no-await-in-loop */
+  }
+  return out;
 }
 
 // The only way a ride stops. There is deliberately no driver-callable path to
 // here — see routes/driver.js, where the driver's stop endpoint exists purely
 // to record the attempt and refuse it.
-async function stopRide(rideId, { by, reason, kind = 'admin' }) {
-  const now = Date.now();
+// Status each kind of stop leaves behind. A day-end close is neither the
+// office's decision nor a timeout, and reports say which it was.
+const STOP_STATUS = { timeout: 'auto_closed', day_end: 'day_closed' };
+
+async function stopRide(rideId, { by, reason, kind = 'admin', stoppedAt = null }) {
+  // A day-end close is stamped at the end of the ride's day, not at the moment
+  // somebody happened to notice the day was over: points recorded up to
+  // midnight belong to that day, and anything later is refused from it.
+  const now = stoppedAt || Date.now();
   const result = await db.runTransaction(async (tx) => {
     const ref = C.rides().doc(rideId);
     const doc = await tx.get(ref);
     if (!doc.exists) throw Object.assign(new Error('Ride not found'), { code: 'NO_RIDE' });
     const ride = doc.data();
     if (ride.status !== 'active') return { rideId, ...ride, alreadyStopped: true };
-    tx.update(ref, { status: kind === 'timeout' ? 'auto_closed' : 'stopped', stoppedAt: now, stoppedBy: by, stopReason: reason, stopKind: kind });
+    const status = STOP_STATUS[kind] || 'stopped';
+    tx.update(ref, { status, stoppedAt: now, stoppedBy: by, stopReason: reason, stopKind: kind });
     tx.update(C.drivers().doc(ride.driverId), { activeRideId: null });
-    return { rideId, ...ride, status: kind === 'timeout' ? 'auto_closed' : 'stopped', stoppedAt: now, alreadyStopped: false };
+    return { rideId, ...ride, status, stoppedAt: now, stopKind: kind, alreadyStopped: false };
   });
   if (!result.alreadyStopped) {
-    await writeAudit({ adminId: by, action: kind === 'timeout' ? 'ride.auto_close' : 'ride.stop', target: rideId, after: { reason, kind } });
+    await writeAudit({ adminId: by, action: kind === 'timeout' ? 'ride.auto_close' : kind === 'day_end' ? 'ride.day_end' : 'ride.stop', target: rideId, after: { reason, kind } });
     await writeEvent({ driverId: result.driverId, rideId, kind: 'ride_stopped', detail: { by, reason, kind } });
   }
   return result;
@@ -390,7 +455,10 @@ async function ingestPoints(rideId, driverId, points) {
     tx.update(ref, {
       lastPointAt: Math.max(cur, latest.deviceTs),
       pointCount: (doc.data().pointCount || 0) + points.length,
-      lastUploadAt: serverTs,
+      // Stamped now, after the points above are committed, not at the start of
+      // the upload: a calculation that read the points in between must still
+      // see this ride as having newer data than it used.
+      lastUploadAt: Date.now(),
     });
   });
 
@@ -603,6 +671,9 @@ async function addReview({ rideId, segmentId, fromType, toType, distanceM, note,
   const batch = db.batch();
   for (const doc of prior.docs) batch.update(doc.ref, { superseded: true });
   const ref = C.reviews().doc();
+  // The ride's result is now out of date, whether or not the recalculation
+  // that follows gets to run straight away. See markInputsChanged.
+  batch.update(C.rides().doc(rideId), { inputsChangedAt: Date.now() });
   batch.set(ref, {
     rideId, segmentId, fromType, toType, distanceM: distanceM ?? null,
     // The time window this decision was made against. Segment ids are
@@ -622,11 +693,59 @@ async function revertReview(reviewId, reviewerId) {
   const doc = await ref.get();
   if (!doc.exists) return null;
   await ref.update({ reverted: true, revertedBy: reviewerId, revertedAt: Date.now() });
+  await markInputsChanged(doc.data().rideId);
   await writeAudit({ adminId: reviewerId, action: 'segment.revert_review', target: reviewId, before: doc.data() });
   return { id: reviewId };
 }
 
-async function saveProcessing(rideId, result) {
+/* Something other than new points changed what a ride's result should be — an
+ * office review, a revert, a driver's personal declaration. Recorded on the
+ * ride so the next look recalculates it even if the immediate recalculation
+ * could not run (another one held the ride) or failed. */
+async function markInputsChanged(rideId) {
+  if (!rideId) return;
+  await C.rides().doc(rideId).update({ inputsChangedAt: Date.now() }).catch(() => {});
+}
+
+/* A per-ride lease, so two calculations of one ride never run at once.
+ *
+ * Rides are recalculated whenever the office looks, and two tabs refreshing
+ * together would otherwise both load, compute and write — interleaving their
+ * segment writes and deletes, and leaving totals from one run with segments
+ * from the other. The lease lives on the ride document, so it holds across
+ * Cloud Run instances, and it expires, so a crashed run cannot lock a ride.
+ */
+async function acquireCalcLease(rideId, holdMs = 2 * 60 * 1000) {
+  const now = Date.now();
+  const token = crypto.randomUUID();
+  const got = await db.runTransaction(async (tx) => {
+    const ref = C.rides().doc(rideId);
+    const doc = await tx.get(ref);
+    if (!doc.exists) return false;
+    if ((doc.data().calcLeaseUntil || 0) > now) return false;
+    tx.update(ref, { calcLeaseUntil: now + holdMs, calcLeaseToken: token });
+    return true;
+  });
+  return got ? token : null;
+}
+async function releaseCalcLease(rideId, token) {
+  await db.runTransaction(async (tx) => {
+    const ref = C.rides().doc(rideId);
+    const doc = await tx.get(ref);
+    if (doc.exists && doc.data().calcLeaseToken === token) tx.update(ref, { calcLeaseUntil: 0, calcLeaseToken: null });
+  });
+}
+// Recorded so a ride that fails every time is retried later rather than on
+// every look, ahead of every ride that would succeed.
+async function markCalcFailed(rideId, error) {
+  await C.rides().doc(rideId).update({ calcFailedAt: Date.now(), calcError: String(error || '').slice(0, 300) }).catch(() => {});
+}
+
+// inputsAt is when this calculation read its points. A batch that lands after
+// that is not in the result, and the ride must count as out of date; judging by
+// the time the result was SAVED instead missed any batch uploaded while the
+// calculation ran.
+async function saveProcessing(rideId, result, { inputsAt = null } = {}) {
   const { segments, ...head } = result;
   await C.processing().doc(rideId).set({ ...head, processedAt: Date.now() }, { merge: false });
   // Segments live in a sub-collection: a ride can have hundreds, and Firestore
@@ -643,7 +762,13 @@ async function saveProcessing(rideId, result) {
   for (const seg of segments) writer.set(C.segments(rideId).doc(seg.id), seg, { merge: false });
   for (const d of oldSegs.docs) if (!segIds.has(d.id)) writer.delete(d.ref);
   await writer.close();
-  await C.rides().doc(rideId).update({ processedAt: Date.now(), calcVersion: result.calcVersion });
+  await C.rides().doc(rideId).update({
+    processedAt: Date.now(),
+    processedInputsAt: inputsAt,
+    calcVersion: result.calcVersion,
+    calcFailedAt: null,
+    calcError: null,
+  });
 
   // Matches are queryable on their own for the matching report. The same rule
   // applies: a match the new result no longer makes must not survive in it.
@@ -668,7 +793,7 @@ async function loadProcessing(rideId, { withSegments = true } = {}) {
 }
 
 module.exports = {
-  C, dayKeyFor,
+  C, dayKeyFor, endOfDayMs, closeIfDayOver, acquireCalcLease, releaseCalcLease, markCalcFailed, markInputsChanged,
   getConfig, setConfigOverrides,
   writeAudit, writeEvent, openAlerts, applyAlertDiff, raiseAlertOnce,
   registerDriver, getDriver, listDrivers, updateDriver, nextDriverCode,

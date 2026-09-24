@@ -18,6 +18,7 @@
 // response mapping tested — without a GCP client library or credentials.
 function getSecret(alias) { return require('../secretManager').getSecret(alias); }
 
+const { orderCoords } = require('./coords');
 const BASE_URL = process.env.GOFRUGAL_API_BASE_URL || 'https://api.gofrugal.com/rayapi/v1';
 const ORDERS_ENDPOINT = process.env.GOFRUGAL_ORDERS_ENDPOINT || '/salesOrders';
 const TIMEOUT_MS = Number(process.env.GOFRUGAL_TIMEOUT_MS) || 20000;
@@ -105,8 +106,9 @@ function toNormalisedOrder(r, driverCodeToId) {
     windowEnd: t(r.deliveryTo || r.expectedDeliveryDate),
     deliveredAt: t(r.deliveredDate),
     status: r.status ? String(r.status) : null,
-    lat: Number.isFinite(Number(r.latitude)) ? Number(r.latitude) : null,
-    lng: Number.isFinite(Number(r.longitude)) ? Number(r.longitude) : null,
+    // Number(null) and Number('') are 0: a record with no location became
+    // (0, 0). See coords.js.
+    ...orderCoords(r.latitude, r.longitude),
     raw: r,
   };
 }

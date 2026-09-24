@@ -5,15 +5,26 @@
 // evidence next to the verdict, because a kilometre figure a manager cannot
 // explain to a driver is worse than no figure at all.
 //
-// Three rules govern everything below:
+// The rules below, as the office set them:
 //
-//  1. Nothing becomes PERSONAL from geometry. Only a driver declaration or an
-//     admin review can do that. Geometry's strongest honest statement about an
-//     unrecognised stop is UNKNOWN.
+//  1. Business and personal are decided by the restaurants. Driving TO a
+//     restaurant is business, and so is driving between restaurants and the
+//     depot. Driving that does not lead to a restaurant — after the last one of
+//     the day, to and from places that are not customers, a commute to the
+//     depot — is personal. (This replaced an earlier rule that geometry could
+//     never call anything personal, which left most of every day "unknown".)
 //  2. Nothing becomes BUSINESS because it is NEAR a known place. It must be
-//     inside the configured geofence and satisfy a dwell rule.
-//  3. A restaurant visit is never evidence that a delivery happened. That is a
+//     inside the configured geofence. A restaurant stop that is doubtful — two
+//     geofences overlapping, or too short to be a visit — does not make its
+//     legs business or personal: they stay UNKNOWN until somebody reviews them.
+//  3. A driver's personal declaration and an office review always win.
+//  4. A restaurant visit is never evidence that a delivery happened. That is a
 //     separate engine (matching.js) with a separate verdict field.
+//
+// Personal-by-rule distance whose far end is close to a known customer is
+// flagged for review: the likeliest reason is a restaurant pinned in the wrong
+// place, and that would otherwise quietly move a real delivery run out of
+// business.
 
 const { placesContaining, nearestPlaces, haversineM } = require('./geo');
 const { SEGMENT_KIND } = require('./segmentation');
@@ -46,6 +57,10 @@ const BUSINESS_TYPES = new Set([
 ]);
 
 const ev = (code, detail, extra) => ({ code, detail, ...(extra || {}) });
+
+// How close to a known place an unrecognised stop has to be before its
+// personal verdict is flagged for a human: a few geofences' worth.
+const NEAR_KNOWN_PLACE_M = 250;
 
 // Does a driver declaration cover this time range? A declaration is a driver
 // saying "the next stretch is personal" in the app; it is timestamped on the
@@ -186,16 +201,24 @@ function classifySegments(segments, points, ctx, cfg) {
       seg.anchor = 'personal';
       evidence.push(ev('driver_declared', `driver marked this period personal${declaration.note ? `: ${declaration.note}` : ''}`, { declaredAt: declaration.declaredAt }));
     } else {
-      seg.type = SEGMENT_TYPE.UNKNOWN;
-      seg.confidence = CONFIDENCE.UNKNOWN;
-      seg.needsReview = true;
-      seg.anchor = 'unknown';
-      evidence.push(ev('no_known_location', 'this stop is not inside any known Modern Dairy or customer geofence'));
+      // Not a restaurant and not the depot: by the restaurant rule, not
+      // business.
+      seg.type = SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS;
+      seg.confidence = CONFIDENCE.MEDIUM;
+      seg.needsReview = false;
+      seg.anchor = 'personal';
+      evidence.push(ev('no_known_location', 'this stop is not inside any restaurant or Modern Dairy geofence'));
     }
     // What was nearby, for the reviewer only. Proximity is context, never proof.
     const near = nearestPlaces(at, [...facilities, ...restaurants], 3)
       .map((n) => ({ id: n.place.id, name: n.place.name, distanceM: Math.round(n.distanceM) }));
     if (near.length) seg.nearbyPlaces = near;
+    // A stop just outside a customer's geofence is the classic sign of a pin in
+    // the wrong place. Personal by rule, but a human should look.
+    if (!declaration && near.length && near[0].distanceM <= NEAR_KNOWN_PLACE_M) {
+      seg.needsReview = true;
+      evidence.push(ev('near_known_place', `${near[0].name} is ${near[0].distanceM} m away — check its location on the map`));
+    }
     seg.evidence = evidence;
   }
 
@@ -242,35 +265,58 @@ function classifySegments(segments, points, ctx, cfg) {
     const confA = before ? before.confidence : (a === 'none' ? CONFIDENCE.UNKNOWN : CONFIDENCE.HIGH);
     const confB = after ? after.confidence : (b === 'none' ? CONFIDENCE.UNKNOWN : CONFIDENCE.HIGH);
 
+    // A restaurant stop is only a firm anchor when the visit itself is not in
+    // doubt. Two overlapping geofences, or a stop too short to be a visit,
+    // leave the legs either side UNKNOWN for review rather than deciding them.
+    const doubtful = (s) => !!s && s.type === SEGMENT_TYPE.LIKELY_RESTAURANT_VISIT && s.confidence === CONFIDENCE.LOW;
+    const isWork = (k) => k === 'business' || k === 'facility';
+    const placeName = (s, fallback) => (s && s.place && s.place.name) || fallback;
+    const firmA = !doubtful(before);
+
     if (declaration && declaration.kind === 'personal') {
       seg.type = SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS;
       seg.confidence = CONFIDENCE.MEDIUM;
       seg.needsReview = false;
       evidence.push(ev('driver_declared', 'driver marked this period personal', { declaredAt: declaration.declaredAt }));
-    } else if (a === 'facility' && (b === 'business' || b === 'facility')) {
+    } else if ((b === 'business' && doubtful(after)) || (b === 'facility' && a === 'business' && !firmA)) {
+      seg.type = SEGMENT_TYPE.UNKNOWN;
+      seg.confidence = CONFIDENCE.LOW;
+      seg.needsReview = true;
+      evidence.push(ev('doubtful_visit', 'the restaurant stop at one end is uncertain (overlapping geofences or too short to be a visit) — review it to decide this leg'));
+    } else if (a === 'facility' && isWork(b)) {
       seg.type = SEGMENT_TYPE.MODERN_DAIRY_DEPARTURE;
       seg.confidence = weaker(confA, confB);
-      evidence.push(ev('between_known_locations', `left a Modern Dairy facility heading to ${after ? (after.place?.name || 'a known location') : 'a known location'}`));
-    } else if (b === 'facility' && (a === 'business' || a === 'facility')) {
+      evidence.push(ev('between_known_locations', `left a Modern Dairy facility heading to ${placeName(after, 'a known location')}`));
+    } else if (b === 'facility' && a === 'business' && firmA) {
       seg.type = SEGMENT_TYPE.RETURN_TO_MODERN_DAIRY;
       seg.confidence = weaker(confA, confB);
-      evidence.push(ev('between_known_locations', 'returned to a Modern Dairy facility from a known business location'));
-    } else if (a === 'business' && b === 'business') {
+      evidence.push(ev('between_known_locations', 'returned to a Modern Dairy facility from a restaurant'));
+    } else if (a === 'business' && firmA && b === 'business') {
       seg.type = SEGMENT_TYPE.TRAVEL_BETWEEN_BUSINESS_LOCATIONS;
       seg.confidence = weaker(confA, confB);
-      evidence.push(ev('between_known_locations', `travel between ${before.place?.name || 'a known location'} and ${after.place?.name || 'a known location'}`));
-    } else if (a === 'personal' && b === 'personal') {
+      evidence.push(ev('between_known_locations', `travel between ${placeName(before, 'a restaurant')} and ${placeName(after, 'a restaurant')}`));
+    } else if (b === 'business') {
+      // Driving to a restaurant is business, wherever it started from. Never
+      // stronger than MEDIUM: where the trip began is not known to be work.
+      seg.type = SEGMENT_TYPE.BUSINESS_TRAVEL;
+      seg.confidence = weaker(confB, CONFIDENCE.MEDIUM);
+      evidence.push(ev('to_restaurant', `travel to ${placeName(after, 'a restaurant')}`));
+    } else {
+      // Not heading to a restaurant: after the last restaurant, between places
+      // that are not customers, or to the depot from elsewhere (a commute).
       seg.type = SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS;
       seg.confidence = CONFIDENCE.MEDIUM;
-      evidence.push(ev('between_personal_stops', 'both ends of this leg are stops the driver declared personal'));
-    } else {
-      // One known end and one unknown end, or two unknown ends. This is the
-      // honest answer and it is expected to be common before order data and
-      // driver declarations are in use. It is NEVER folded into either total.
-      seg.type = SEGMENT_TYPE.UNKNOWN;
-      seg.confidence = a === 'none' && b === 'none' ? CONFIDENCE.UNKNOWN : CONFIDENCE.LOW;
-      seg.needsReview = true;
-      evidence.push(ev('unmatched_endpoints', `leg runs from ${a === 'none' ? 'an unrecognised position' : a} to ${b === 'none' ? 'an unrecognised position' : b}`));
+      seg.needsReview = false;
+      const from = a === 'business' ? `leaving ${placeName(before, 'a restaurant')}`
+        : a === 'facility' ? 'leaving the depot' : 'from a place that is not a restaurant';
+      const to = b === 'facility' ? 'to the depot' : 'not to a restaurant';
+      evidence.push(ev('no_restaurant_destination', `${from}, ${to}`));
+      // Ending next to a customer that is not recognised: most likely a pin in
+      // the wrong place, and a real delivery run about to be called personal.
+      if (after && after.nearbyPlaces && after.nearbyPlaces[0] && after.nearbyPlaces[0].distanceM <= NEAR_KNOWN_PLACE_M) {
+        seg.needsReview = true;
+        evidence.push(ev('near_known_place', `ends ${after.nearbyPlaces[0].distanceM} m from ${after.nearbyPlaces[0].name} — check its location on the map`));
+      }
     }
 
     if (seg.gapEstimateM > 0) {

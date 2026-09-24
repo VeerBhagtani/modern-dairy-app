@@ -86,7 +86,13 @@ app.use(cors({
 app.use('/admin/orders/import', express.json({ limit: '8mb' }));
 app.use('/admin/restaurants/import', express.json({ limit: '4mb' }));
 app.use(express.json({ limit: '1mb' }));
-app.use(generalLimiter);
+// The general per-IP backstop, for everything except the drivers' phones.
+// Those have their own limits, counted per driver once the driver is known
+// (routes/driver.js). Counted here per IP, before anybody is identified, the
+// whole fleet shared one budget — mobile carriers put thousands of phones
+// behind a few addresses, and the depot Wi-Fi is one — and after 300 requests
+// every phone's GPS uploads were refused.
+app.use((req, res, next) => (req.path.startsWith('/driver/') ? next() : generalLimiter(req, res, next)));
 
 // Two names for one check, and /health is the one to rely on.
 //

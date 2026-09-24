@@ -8,7 +8,9 @@
 // Roles come from the admin's own account (admins/{username}) and ride on the
 // signed token, so a role change takes effect at the next sign-in.
 
-const router = require('express').Router();
+const { asyncRouter } = require('../middleware/asyncRoutes');
+// Every handler's errors reach index.js's error handler; see asyncRoutes.js.
+const router = asyncRouter(require('express').Router());
 const repo = require('../services/repo');
 const { db } = require('../services/firestore');
 const { writeLimiter } = require('../middleware/rateLimit');
@@ -18,32 +20,21 @@ const { placeIdFor } = require('../services/placeKey');
 const geocode = require('../services/geocode');
 const mobileVendor = require('../drivers/mobileVendor');
 const placesApi = require('../services/places');
-const legObservations = require('../drivers/legObservations');
 const maintenance = require('../services/maintenance');
 const { getSecret, setSecret, secretStatus, KNOWN_SECRETS } = require('../services/secretManager');
 const {
   isValidId, isBoundedString, isOptionalBoundedString, pickAllowed, hasForbiddenKeys,
 } = require('../middleware/validate');
-const { processRideData, aggregateRides } = require('../drivers/pipeline');
+const { aggregateRides } = require('../drivers/pipeline');
 const { SEGMENT_TYPE } = require('../drivers/classification');
-const { evaluateResultAlerts } = require('../drivers/alerts');
 const reports = require('../drivers/reports');
 const orderSource = require('../services/orderSource');
 const manual = require('../services/orderSource/manual');
-const freshness = require('../services/freshness');
-const { autoCloseStaleRides } = require('../jobs/maintenance');
-
-// Nothing used to calculate kilometres unless somebody pressed a button, and
-// the one automatic close-out lived inside a maintenance run nobody ran. Both
-// now happen whenever the office looks — see services/freshness.js.
-const housekeeping = freshness.makeHousekeeper(async (nowMs) => {
-  const { config } = await repo.getConfig();
-  return autoCloseStaleRides(config, nowMs);
-});
-function bringUpToDate(rides, opts) {
-  // processOne is declared further down; it is hoisted.
-  return freshness.keepCurrent(rides, { processOne }, opts);
-}
+// Calculating rides, closing finished days, keeping kilometres current:
+// shared with the drivers' own history. See services/rideProcessing.js and
+// services/freshness.js.
+const { processOne, bringUpToDate, housekeeping } = require('../services/rideProcessing');
+const { driverHistory } = require('../services/history');
 
 // The role was established at sign-in and is carried in the admin token, which
 // requireAdmin() has already verified, so this is a comparison rather than a
@@ -125,9 +116,19 @@ router.get('/dashboard', requireRole('viewer'), async (req, res) => {
     repo.C.live().get(),
     repo.openAlerts(),
   ]);
+  // Rides are one per day. A running ride from an earlier day is closed at the
+  // end of its day right here — housekeeping only runs every few minutes — and
+  // then calculated like any finished ride, but it is not TODAY's: today's
+  // figures count today's rides only. Adding it in reported yesterday
+  // afternoon's kilometres as this morning's.
   const seen = new Set(todays.map((r) => r.id));
-  const rides = todays.concat(running.filter((r) => !seen.has(r.id)));
-  const calculation = await bringUpToDate(rides);
+  const earlier = running.filter((r) => !seen.has(r.id));
+  for (const r of earlier) {
+    // eslint-disable-next-line no-await-in-loop
+    await repo.closeIfDayOver(r, now);
+  }
+  const rides = todays;
+  const calculation = await bringUpToDate(todays.concat(earlier));
   const live = new Map(liveSnap.docs.map((d) => [d.id, d.data()]));
   const ridesByDriver = new Map();
   for (const r of rides) {
@@ -147,11 +148,14 @@ router.get('/dashboard', requireRole('viewer'), async (req, res) => {
     const driverRides = ridesByDriver.get(d.id) || [];
     const active = driverRides.find((r) => r.status === 'active') || null;
     let verified = null; let total = null; let unknown = null; let calculated = false;
+    let business = null; let personal = null;
     for (const r of driverRides) {
       const res2 = resultByRide.get(r.id);
       if (!res2) continue;
       calculated = true;
       verified = (verified || 0) + res2.distance.metres.verifiedBusiness;
+      business = (business || 0) + res2.distance.metres.verifiedBusiness + res2.distance.metres.likelyBusiness;
+      personal = (personal || 0) + res2.distance.metres.personal;
       total = (total || 0) + res2.distance.metres.dayTotal;
       unknown = (unknown || 0) + res2.distance.metres.unknown;
     }
@@ -176,6 +180,8 @@ router.get('/dashboard', requireRole('viewer'), async (req, res) => {
         calculated,
         totalKm: total == null ? null : Math.round(total / 100) / 10,
         verifiedBusinessKm: verified == null ? null : Math.round(verified / 100) / 10,
+        businessKm: business == null ? null : Math.round(business / 100) / 10,
+        personalKm: personal == null ? null : Math.round(personal / 100) / 10,
         unknownKm: unknown == null ? null : Math.round(unknown / 100) / 10,
       },
     };
@@ -194,6 +200,8 @@ router.get('/dashboard', requireRole('viewer'), async (req, res) => {
         completedRides: rides.filter((r) => r.status !== 'active').length,
         totalKm: Math.round(rows.reduce((s, r) => s + (r.today.totalKm || 0), 0) * 10) / 10,
         verifiedBusinessKm: Math.round(rows.reduce((s, r) => s + (r.today.verifiedBusinessKm || 0), 0) * 10) / 10,
+        businessKm: Math.round(rows.reduce((s, r) => s + (r.today.businessKm || 0), 0) * 10) / 10,
+        personalKm: Math.round(rows.reduce((s, r) => s + (r.today.personalKm || 0), 0) * 10) / 10,
         unknownKm: Math.round(rows.reduce((s, r) => s + (r.today.unknownKm || 0), 0) * 10) / 10,
         trackingIssues: rows.filter((r) => ['no_signal', 'degraded'].includes(r.trackingHealth)).length,
         openAlerts: alerts.length,
@@ -316,7 +324,7 @@ router.post('/rides/:rideId/stop', requireRole('manager'), writeLimiter, async (
     await repo.C.live().doc(out.driverId).set({ rideStatus: 'stopped', rideStoppedAt: Date.now() }, { merge: true }).catch(() => {});
     // A stopped ride is complete: calculate it now, so its kilometres are
     // there the moment anybody looks. Never allowed to fail the stop itself.
-    try { await processOne(rideId); } catch (err) {
+    try { await processOne(rideId, { waitMs: 10000 }); } catch (err) {
       await repo.writeEvent({ driverId: out.driverId, rideId, kind: 'processing_failed', detail: { error: String(err.message || err).slice(0, 200) } }).catch(() => {});
     }
     res.json({ success: true, data: out });
@@ -330,78 +338,37 @@ router.post('/rides/:rideId/stop', requireRole('manager'), writeLimiter, async (
 // Processing
 // ---------------------------------------------------------------------------
 
-// Re-run the whole calculation for one ride. Safe to call any number of times:
-// it reads the immutable raw points and REPLACES the processed result, so a
-// threshold change or a new review is picked up without touching the GPS data.
-async function processOne(rideId) {
-  const ride = await repo.getRide(rideId);
-  if (!ride) throw Object.assign(new Error('Ride not found'), { code: 'NO_RIDE' });
-  const [{ config, overrides }, points, places, orders, declarations, reviews] = await Promise.all([
-    repo.getConfig(),
-    repo.loadPoints(rideId),
-    repo.loadPlaces(),
-    repo.ordersForRide(ride),
-    repo.declarationsForRide(rideId),
-    repo.reviewsForRide(rideId),
-  ]);
-  const result = processRideData({
-    points,
-    ride: { id: rideId, driverId: ride.driverId, startedAt: ride.startedAt, stoppedAt: ride.stoppedAt },
-    facilities: places.facilities,
-    restaurants: places.restaurants,
-    orders,
-    declarations,
-    reviews: reviews.filter((r) => !r.reverted && !r.superseded),
-    configOverrides: overrides,
-    nowMs: Date.now(),
-  });
-  await repo.saveProcessing(rideId, result);
+// processOne lives in services/rideProcessing.js.
 
-  // Learn this driver's roads from the ride that just finished. Every leg
-  // between two restaurants they actually drove is a measurement of how far
-  // apart those two places are FOR THEM — which is what the trip planner uses
-  // instead of asking a map that does not know their shortcuts.
-  //
-  // Never allowed to fail the processing run: the kilometre figures are the
-  // point of this endpoint, and a routing convenience must not endanger them.
-  try {
-    const { observations, sequence } = legObservations.legsFromVisits(result.visits);
-    if (observations.length || sequence.length >= 2) {
-      // The ride id is what lets a reprocess replace this ride's observations
-      // instead of appending a second copy — a recalculation must not turn one
-      // trip into five and tell the driver a leg is measured from five.
-      await repo.recordDriverLegs(ride.driverId, observations, sequence, { rideId });
-      repo.invalidateFleetLegs();
-    }
-  } catch (e) {
-    await repo.writeEvent({
-      driverId: ride.driverId,
-      rideId,
-      kind: 'leg_learning_failed',
-      detail: { error: String(e.message || e).slice(0, 200) },
-    }).catch(() => {});
-  }
-
-  const existing = await repo.openAlerts({ driverId: ride.driverId });
-  const desired = evaluateResultAlerts(ride, result, config);
-  await repo.applyAlertDiff({
-    toRaise: desired,
-    // Only result-derived alerts are reconciled here; live-tracking alerts have
-    // their own lifecycle in the maintenance job.
-    toResolve: existing.filter((a) => a.rideId === rideId && ['large_gap', 'unmatched_delivery', 'segment_needs_review'].includes(a.kind) && !desired.some((d) => d.key === a.key)),
-  });
-  return result;
-}
+// GET /admin/history?driverId=&from=&to= — one driver's days, newest first.
+//
+// A ride is a day (rides close with their day), so this is the driver's
+// working history: each day's business and personal kilometres and the
+// restaurants reached. Opening a day uses the ride view.
+router.get('/history', requireRole('viewer'), async (req, res) => {
+  const { driverId } = req.query;
+  if (!isValidId(driverId)) return bad(res, 'Choose a driver.');
+  const to = Number(req.query.to) || Date.now();
+  const from = Number(req.query.from) || to - 31 * 24 * 3600 * 1000;
+  if (to < from) return bad(res, '"From" is after "to".');
+  if (to - from > 190 * 24 * 3600 * 1000) return bad(res, 'Show at most six months at a time.');
+  const driver = await repo.getDriver(driverId);
+  if (!driver) return res.status(404).json({ success: false, message: 'Driver not found' });
+  const history = await driverHistory({ driverId, from, to, maxRides: 200 });
+  res.json({ success: true, data: { driver: { id: driverId, name: driver.name, driverCode: driver.driverCode }, from, to, ...history } });
+});
 
 router.post('/rides/:rideId/process', requireRole('manager'), writeLimiter, async (req, res) => {
   const { rideId } = req.params;
   if (!isValidId(rideId)) return bad(res, 'Invalid ride id');
   try {
-    const result = await processOne(rideId);
+    const result = await processOne(rideId, { waitMs: 15000 });
     await repo.writeAudit({ adminId: req.adminId, action: 'ride.reprocess', target: rideId, after: { calcVersion: result.calcVersion, verifiedBusinessKm: result.distance.km.verifiedBusiness } });
     res.json({ success: true, data: result });
   } catch (e) {
     if (e.code === 'NO_RIDE') return res.status(404).json({ success: false, message: 'Ride not found' });
+    if (e.code === 'BUSY') return res.status(409).json({ success: false, message: e.message });
+    if (e.code === 'NO_RAW') return res.status(409).json({ success: false, message: e.message });
     throw e;
   }
 });
@@ -481,7 +448,9 @@ router.post('/rides/:rideId/segments/:segmentId/review', requireRole('manager'),
     segStartTs: seg.startTs, segEndTs: seg.endTs,
     note, reviewerId: `admin:${req.adminId}`,
   });
-  const result = await processOne(rideId);
+  // The office is waiting to see its decision take effect: wait for any
+  // calculation already running on this ride rather than failing.
+  const result = await processOne(rideId, { waitMs: 15000 });
   res.json({ success: true, data: { distance: result.distance, segment: result.segments.find((s) => s.id === segmentId) } });
 });
 
@@ -491,7 +460,7 @@ router.post('/reviews/:reviewId/revert', requireRole('manager'), writeLimiter, a
   const doc = await repo.C.reviews().doc(reviewId).get();
   if (!doc.exists) return res.status(404).json({ success: false, message: 'Review not found' });
   await repo.revertReview(reviewId, `admin:${req.adminId}`);
-  const result = await processOne(doc.data().rideId);
+  const result = await processOne(doc.data().rideId, { waitMs: 15000 });
   res.json({ success: true, data: { distance: result.distance } });
 });
 

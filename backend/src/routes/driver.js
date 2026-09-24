@@ -9,15 +9,18 @@
 //     only to REFUSE and RECORD — see the bottom of this file. Enforcement is
 //     server-side, so a patched APK changes nothing.
 
-const router = require('express').Router();
+const { asyncRouter } = require('../middleware/asyncRoutes');
+// Every handler's errors reach index.js's error handler; see asyncRoutes.js.
+const router = asyncRouter(require('express').Router());
 const repo = require('../services/repo');
 const { issueDriverTokens, verifyDriverToken, requireDriver } = require('../middleware/driverAuth');
-const { registerLimiter, gpsIngestLimiter, writeLimiter } = require('../middleware/rateLimit');
+const { registerLimiter, refreshLimiter, driverLimiter, gpsIngestLimiter, writeLimiter } = require('../middleware/rateLimit');
 const { isValidId, isBoundedString, isOptionalBoundedString, hasForbiddenKeys } = require('../middleware/validate');
 const { normaliseIncomingPoint } = require('../drivers/validation');
 const { ALERT } = require('../drivers/alerts');
 const tripPlanner = require('../services/tripPlanner');
 const { canVisit } = require('../drivers/eligibility');
+const { driverHistory } = require('../services/history');
 
 // Shown in the app before the driver registers, and again on the main
 // screen whenever tracking is on. Kept here, server-side, so the wording can be
@@ -69,7 +72,7 @@ router.post('/register', registerLimiter, async (req, res) => {
 });
 
 // POST /driver/refresh { refreshToken }
-router.post('/refresh', registerLimiter, async (req, res) => {
+router.post('/refresh', refreshLimiter, async (req, res) => {
   const { refreshToken } = req.body || {};
   if (!isBoundedString(refreshToken, { min: 1, max: 2000 })) return res.status(400).json({ success: false, message: 'refreshToken is required' });
   try {
@@ -87,6 +90,7 @@ router.post('/refresh', registerLimiter, async (req, res) => {
 });
 
 router.use(requireDriver());
+router.use(driverLimiter);
 
 // GET /driver/me — everything the app's main screen shows.
 router.get('/me', async (req, res) => {
@@ -142,7 +146,11 @@ router.post('/rides/start', writeLimiter, async (req, res) => {
 // GET /driver/rides/active — the app polls this so the phone learns promptly
 // that the office has stopped the ride, and stops the foreground service.
 router.get('/rides/active', async (req, res) => {
-  const ride = req.driver.activeRideId ? await repo.getRide(req.driver.activeRideId) : null;
+  let ride = req.driver.activeRideId ? await repo.getRide(req.driver.activeRideId) : null;
+  // A ride from an earlier day is closed at the end of that day, and the phone
+  // is told so (kind 'day_end') rather than being left recording into it.
+  const closed = await repo.closeIfDayOver(ride);
+  if (closed) ride = await repo.getRide(closed.id);
   if (!ride || ride.status !== 'active') {
     // Tell the app WHY it should stop, so it can show the driver something
     // truthful instead of silently going dark.
@@ -173,7 +181,7 @@ router.post('/rides/:rideId/points', gpsIngestLimiter, async (req, res) => {
     return res.status(413).json({ success: false, message: `Send at most ${config.maxBatchPoints} points per batch.` });
   }
 
-  const ride = await repo.getRide(rideId);
+  let ride = await repo.getRide(rideId);
   if (!ride) return res.status(404).json({ success: false, message: 'Ride not found' });
   // The ride must belong to the token's driver. Without this check a driver
   // could post points into a colleague's ride.
@@ -181,6 +189,22 @@ router.post('/rides/:rideId/points', gpsIngestLimiter, async (req, res) => {
     await repo.writeEvent({ driverId: req.driverId, rideId, kind: 'cross_driver_upload_blocked', detail: { ownedBy: ride.driverId } });
     return res.status(403).json({ success: false, message: 'That ride does not belong to this account.' });
   }
+  // One ride per day: a ride whose day has ended is closed at the end of that
+  // day before anything is stored, so points from after midnight are refused
+  // from it by the rule just below and the phone moves to a new ride.
+  const closed = await repo.closeIfDayOver(ride);
+  if (closed) ride = await repo.getRide(rideId);
+
+  // Points recorded before this ride began. They come from a phone that queued
+  // them during an earlier ride and could not send them before that ride was
+  // stopped. Stored here, they would add another day's travel, and a phantom
+  // gap, to this one. Refused and named, so the phone drops them from its
+  // queue instead of retrying them forever. A little slack allows for the
+  // phone's clock.
+  const START_SLACK_MS = 2 * 60 * 1000;
+  const beforeStart = body.points.filter((p) => Number(p?.deviceTs) < (ride.startedAt || 0) - START_SLACK_MS);
+  if (beforeStart.length) body.points = body.points.filter((p) => !beforeStart.includes(p));
+
   // Points the phone sent that belong after the stop. Collected here so they
   // can be reported back as rejected rather than vanishing — see below.
   let afterStop = [];
@@ -191,9 +215,11 @@ router.post('/rides/:rideId/points', gpsIngestLimiter, async (req, res) => {
     // Silently dropping them would put a hole in the day's distance.
     const cutoff = ride.stoppedAt || 0;
     const inWindow = body.points.filter((p) => Number(p?.deviceTs) <= cutoff);
-    if (!inWindow.length) {
-      return res.status(409).json({ success: false, code: 'RIDE_STOPPED', message: 'This ride has been stopped by the office.', data: { stoppedAt: ride.stoppedAt, reason: ride.stopReason } });
-    }
+    // No early "ride stopped" refusal here any more. It answered a batch made
+    // entirely of after-stop points without naming them, so the phone kept
+    // them queued and sent them again, to this ride, for ever. They are
+    // listed as rejected below instead, and rideActive:false in the reply
+    // tells the phone to check its ride.
     // Points recorded AFTER the stop are refused — that is correct, the ride
     // was over — but they must be named in the reply. The app only deletes a
     // queued point the server has accounted for, so a point that is silently
@@ -208,8 +234,11 @@ router.post('/rides/:rideId/points', gpsIngestLimiter, async (req, res) => {
   const accepted = [];
   const rejected = afterStop.map((p) => ({
     clientPointId: p?.clientPointId ?? null,
-    error: 'recorded after the office stopped this ride',
-  }));
+    error: ride.stopKind === 'day_end' ? 'recorded after this ride\'s day ended' : 'recorded after the office stopped this ride',
+  })).concat(beforeStart.map((p) => ({
+    clientPointId: p?.clientPointId ?? null,
+    error: 'recorded before this ride started',
+  })));
   for (const raw of body.points) {
     const { point, error } = normaliseIncomingPoint(raw, { nowMs, clockSkewMin: config.clockSkewMin });
     if (error) { rejected.push({ clientPointId: raw?.clientPointId ?? null, error }); continue; }
@@ -230,6 +259,31 @@ router.post('/rides/:rideId/points', gpsIngestLimiter, async (req, res) => {
       rejected,
       serverTime: nowMs,
       rideActive: ride.status === 'active',
+    },
+  });
+});
+
+// GET /driver/history?days=30 — this driver's own days, newest first.
+//
+// The driver id comes from the token, as everywhere in this file, so a phone
+// can only ever see its own driver's history.
+router.get('/history', async (req, res) => {
+  const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 92);
+  const to = Date.now();
+  const history = await driverHistory({ driverId: req.driverId, from: to - days * 24 * 3600 * 1000, to, maxRides: 100 });
+  // The office's split of business into verified and likely means nothing to
+  // a driver without the explanation that goes with it; the phone shows
+  // business, personal, and what could not be decided.
+  res.json({
+    success: true,
+    data: {
+      days: history.days.map((d) => ({
+        rideId: d.rideId, dayKey: d.dayKey, status: d.status, stopKind: d.stopKind,
+        startedAt: d.startedAt, stoppedAt: d.stoppedAt, calculated: d.calculated,
+        km: d.km && { business: d.km.business, personal: d.km.personal, unknown: d.km.unknown, gapEstimate: d.km.gapEstimate, total: d.km.total },
+        restaurants: d.restaurants,
+      })),
+      totals: { days: history.totals.days, business: history.totals.business, personal: history.totals.personal, total: history.totals.total },
     },
   });
 });
@@ -258,6 +312,8 @@ router.post('/rides/:rideId/declare', writeLimiter, async (req, res) => {
     declaredAt: Date.now(), declaredBy: `driver:${req.driverId}`,
   });
   await repo.writeEvent({ driverId: req.driverId, rideId, kind: 'personal_declared', detail: { fromTs, toTs: toTs ?? null } });
+  // The ride's result no longer reflects what the driver has said.
+  await repo.markInputsChanged(rideId);
   res.json({ success: true, data: { id: ref.id } });
 });
 

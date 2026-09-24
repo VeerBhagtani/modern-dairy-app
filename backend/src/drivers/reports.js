@@ -284,6 +284,14 @@ function routeAnomalyRows(rows) {
       if (s.type === SEGMENT_TYPE.UNKNOWN && s.distanceM > 5000) {
         out.push({ date: ride.dayKey, driverName: name, kind: 'large_unknown_leg', atIst: IST(s.startTs), detail: `${km(s.distanceM)} km unclassified` });
       }
+      // A long stretch the restaurant rule called personal, that nobody —
+      // driver or office — has said is personal. Usually right (the drive
+      // home), but a new customer not yet on the map looks exactly like this,
+      // and it is worth a glance before the month's totals are signed off.
+      const decidedByPerson = s.reviewedBy || (s.evidence || []).some((e) => e.code === 'driver_declared');
+      if (s.kind === 'travel' && s.type === SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS && !decidedByPerson && s.distanceM > 5000) {
+        out.push({ date: ride.dayKey, driverName: name, kind: 'large_personal_leg', atIst: IST(s.startTs), detail: `${km(s.distanceM)} km not to any restaurant` });
+      }
       if (s.ambiguousPlaces) {
         out.push({ date: ride.dayKey, driverName: name, kind: 'ambiguous_geofence', atIst: IST(s.startTs), detail: s.ambiguousPlaces.map((p) => p.name).join(' / ') });
       }
