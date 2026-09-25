@@ -178,4 +178,35 @@ function trackQuality(totals, cfg) {
   return { grade, reasons, coverage: Math.round(coverage * 100) / 100 };
 }
 
-module.exports = { METHOD, cleanTrack, trackQuality, sortPoints };
+/* Movement while parked is not travel.
+ *
+ * A stop is, by definition, at least stopMinDwellSec within stopRadiusM of one
+ * spot. A phone lying on a dashboard for twenty minutes still wanders a few
+ * metres at a time, and hops over minMoveM added up to hundreds of "measured"
+ * metres at every restaurant. A hop that starts and ends inside the same stop
+ * is moved to the jitter tally instead. Hops leaving or entering a stop are
+ * untouched: that is the drive.
+ *
+ * Mutates the hops (which the caller owns) and returns new totals, so the
+ * reconciliation checks against the same figure the segments add up to.
+ */
+function absorbStopJitter(track, stops) {
+  if (!stops.length) return track.totals;
+  const stopOf = new Map();
+  stops.forEach((st, k) => { for (let i = st.startIdx; i <= st.endIdx; i += 1) stopOf.set(i, k); });
+  let moved = 0;
+  for (const hop of track.hops) {
+    if (hop.acrossGap || hop.distanceM === 0) continue;
+    const a = stopOf.get(hop.fromIdx);
+    if (a === undefined || a !== stopOf.get(hop.toIdx)) continue;
+    moved += hop.distanceM;
+    hop.jitterM = (hop.jitterM || 0) + hop.distanceM;
+    hop.distanceM = 0;
+    hop.parked = true;
+  }
+  if (!moved) return track.totals;
+  const t = track.totals;
+  return { ...t, measuredM: t.measuredM - moved, jitterM: t.jitterM + moved, parkedJitterM: moved, totalM: t.totalM - moved };
+}
+
+module.exports = { METHOD, cleanTrack, trackQuality, sortPoints, absorbStopJitter };

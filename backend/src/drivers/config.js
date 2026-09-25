@@ -40,9 +40,17 @@ const DEFAULTS = {
   // ---- stop detection -------------------------------------------------
   // A stop is points staying within this radius of their running centroid...
   stopRadiusM: 60,
-  // ...for at least this long. 3 minutes excludes traffic lights and keeps
-  // deliveries. Lower it and every signal becomes a "visit".
-  stopMinDwellSec: 180,
+  // ...for at least this long. The same 2 minutes as a restaurant visit: a
+  // quick drop that did not register as a stop could never become a visit.
+  // A stop this short that is not at a restaurant or the depot is a pause on
+  // the way (see transitStopMaxSec), so traffic does not split a trip.
+  stopMinDwellSec: 120,
+  // An unrecognised stop (no restaurant, not the depot, not declared) shorter
+  // than this is a pause on the way — a jam, a signal, fuel — not a
+  // destination: the trip either side is judged by where it was going. Longer,
+  // and it is a place the driver went to, which by the restaurant rule is not
+  // business.
+  transitStopMaxSec: 600,
 
   // ---- geofencing -----------------------------------------------------
   // Fallback radius for a restaurant with no radiusM of its own.
@@ -104,6 +112,7 @@ const RANGES = {
   gapSeconds: [60, 7200],
   stopRadiusM: [10, 500],
   stopMinDwellSec: [30, 7200],
+  transitStopMaxSec: [0, 7200],
   geofenceDefaultRadiusM: [20, 2000],
   facilityRadiusM: [20, 5000],
   visitMinDwellSec: [0, 7200],
@@ -120,7 +129,7 @@ const RANGES = {
 // Bumped whenever a change here or in the pipeline can change a reported
 // number. Stored on every ride_processing document so results are traceable
 // and so a recalculation can be triggered for everything below a version.
-const CALC_VERSION = '1.0.0';
+const CALC_VERSION = '1.1.0';
 
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
 

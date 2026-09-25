@@ -237,7 +237,7 @@ test('every classification carries the evidence behind it', () => {
 test('the thresholds used are recorded on the result', () => {
   assert.ok(BASE.calcVersion);
   assert.equal(typeof BASE.configUsed.stopRadiusM, 'number');
-  assert.equal(BASE.configUsed.stopMinDwellSec, 180);
+  assert.equal(BASE.configUsed.stopMinDwellSec, 120, 'a stop needs the same 2 minutes as a visit');
   // A config override is honoured and visible.
   const loose = run({ configOverrides: { stopMinDwellSec: 3600 } });
   assert.equal(loose.configUsed.stopMinDwellSec, 3600);

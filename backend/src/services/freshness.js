@@ -30,6 +30,10 @@
  */
 'use strict';
 
+const { CALC_VERSION } = require('../drivers/config');
+
+// See needsCalc: rides this recent are recalculated when the rules change.
+const RECALC_ON_VERSION_DAYS = 35;
 const FRESH_MS = 5 * 60 * 1000;
 const HOUSEKEEPING_EVERY_MS = 10 * 60 * 1000;
 // A ride whose calculation failed is retried after this, or sooner if new
@@ -44,6 +48,12 @@ function needsCalc(ride, nowMs, { freshMs = FRESH_MS } = {}) {
   if (ride.calcFailedAt && nowMs - ride.calcFailedAt < RETRY_FAILED_MS
       && (ride.lastUploadAt || 0) <= ride.calcFailedAt) return false;
   if (!ride.processedAt) return true;
+  // A result from an older calculation version, for a ride of the last few
+  // weeks: recalculated so today's numbers all come from the same rules.
+  // Older rides keep their stamped result until someone recalculates them on
+  // purpose (Settings → Recalculate); each result says which version made it.
+  if (ride.calcVersion && ride.calcVersion !== CALC_VERSION
+      && (ride.startedAt || 0) > nowMs - RECALC_ON_VERSION_DAYS * 864e5) return true;
   // What the last result saw: the moment it read the points. The save time is
   // later, and a batch uploaded in between would otherwise never be counted.
   const seen = ride.processedInputsAt || ride.processedAt;

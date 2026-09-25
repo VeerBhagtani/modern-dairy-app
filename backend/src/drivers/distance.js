@@ -75,28 +75,28 @@ function summariseDistance(segments, totals) {
   const bucketResidualM = measuredM - (totals ? totals.measuredM : measuredM);
   const totalResidualM = dayTotalM - (totals ? totals.totalM : dayTotalM);
 
+  // Rounded so the parts always add up to the rounded whole, exactly, in both
+  // metres and kilometres (largest remainder). Rounding each bucket on its
+  // own made 3.04 + 3.04 + 3.04 display as 9.0 against a total of 9.1, which
+  // looks like lost distance. The real residual, before any rounding, is in
+  // reconciliation below and is never adjusted.
+  const parts = { verifiedBusiness: m.verifiedBusinessM, likelyBusiness: m.likelyBusinessM, personal: m.personalM, unknown: m.unknownM, invalid: m.invalidM };
+  const metresParts = apportion(parts, 1);
+  const kmParts = apportion(parts, 100);   // units of 100 m = 0.1 km
   return {
     // Metres, for maths. Kilometres, for humans — at one decimal, which is the
     // honest resolution of a GPS-derived distance.
     metres: {
-      verifiedBusiness: Math.round(m.verifiedBusinessM),
-      likelyBusiness: Math.round(m.likelyBusinessM),
-      personal: Math.round(m.personalM),
-      unknown: Math.round(m.unknownM),
-      invalid: Math.round(m.invalidM),
+      ...metresParts,
       gapEstimate: Math.round(m.gapEstimateM),
-      measured: Math.round(measuredM),
-      dayTotal: Math.round(dayTotalM),
+      measured: Object.values(metresParts).reduce((a, b) => a + b, 0),
+      dayTotal: Object.values(metresParts).reduce((a, b) => a + b, 0) + Math.round(m.gapEstimateM),
     },
     km: {
-      verifiedBusiness: toKm(m.verifiedBusinessM),
-      likelyBusiness: toKm(m.likelyBusinessM),
-      personal: toKm(m.personalM),
-      unknown: toKm(m.unknownM),
-      invalid: toKm(m.invalidM),
+      ...Object.fromEntries(Object.entries(kmParts).map(([k, v]) => [k, v / 10])),
       gapEstimate: toKm(m.gapEstimateM),
-      measured: toKm(measuredM),
-      dayTotal: toKm(dayTotalM),
+      measured: Object.values(kmParts).reduce((a, b) => a + b, 0) / 10,
+      dayTotal: (Object.values(kmParts).reduce((a, b) => a + b, 0) + Math.round(m.gapEstimateM / 100)) / 10,
     },
     perSegment,
     reconciliation: {
@@ -109,6 +109,20 @@ function summariseDistance(segments, totals) {
   };
 }
 
+/* Round a set of parts to whole units of `unit` metres so that they sum to
+ * the rounded total (largest-remainder method). Deterministic: ties go to the
+ * earlier key. */
+function apportion(parts, unit) {
+  const keys = Object.keys(parts);
+  const exact = keys.map((k) => parts[k] / unit);
+  const total = Math.round(exact.reduce((a, b) => a + b, 0));
+  const floors = exact.map(Math.floor);
+  let left = total - floors.reduce((a, b) => a + b, 0);
+  const order = exact.map((x, i) => [x - Math.floor(x), i]).sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+  for (const [, i] of order) { if (left <= 0) break; floors[i] += 1; left -= 1; }
+  return Object.fromEntries(keys.map((k, i) => [k, floors[i]]));
+}
+
 // Per-visit distance: the travel that led to each restaurant visit. Attributed
 // to the visit that FOLLOWS the leg, and each leg is used once, so the per-visit
 // figures can be summed without double-counting.
@@ -117,7 +131,8 @@ function distancePerVisit(segments) {
   let pending = 0;
   let pendingGap = 0;
   for (const seg of segments) {
-    if (seg.kind === 'travel') { pending += seg.distanceM; pendingGap += seg.gapEstimateM; continue; }
+    // A pause on the way is part of the approach, not the end of it.
+    if (seg.kind === 'travel' || seg.transit) { pending += seg.distanceM; pendingGap += seg.gapEstimateM; continue; }
     if (seg.type === SEGMENT_TYPE.LIKELY_RESTAURANT_VISIT) {
       visits.push({
         segmentId: seg.id,
@@ -139,4 +154,70 @@ function distancePerVisit(segments) {
   return visits;
 }
 
-module.exports = { BUCKET, bucketFor, summariseDistance, distancePerVisit };
+/* The ride as legs: from one place the driver actually stopped at to the
+ * next — Depot → A, A → B, B → C, C → Depot — each with its own distance,
+ * split by bucket, and the evidence of what each end was. Pauses on the way
+ * belong to the leg they interrupted. The first leg starts at the first fix
+ * and the last ends at the last one.
+ *
+ * Reconciles by construction: the legs' measured metres plus what was
+ * measured while stopped at the places themselves equal the ride's measured
+ * total, and that identity is returned so it can be checked.
+ */
+function routeLegs(segments, points) {
+  const isAnchor = (s) => s.kind === 'stop' && !s.transit;
+  const endOf = (s) => (s ? {
+    kind: s.type === 'MODERN_DAIRY_FACILITY_STOP' ? 'depot' : s.type === 'LIKELY_RESTAURANT_VISIT' ? 'restaurant' : (s.place ? 'restaurant' : 'other'),
+    placeId: s.place ? s.place.id : null,
+    name: s.place ? s.place.name : 'a place that is not a customer',
+    at: s.startTs, leftAt: s.endTs, segmentId: s.id,
+  } : null);
+  const legs = [];
+  let cur = null;
+  let atStopsM = 0;
+  const open = (from, ts) => ({ from, to: null, startTs: ts, endTs: ts, measuredM: 0, gapEstimateM: 0, byBucket: {}, segmentIds: [] });
+  const firstTs = points && points.length ? points[0].deviceTs : null;
+  cur = open({ kind: 'start', placeId: null, name: 'Ride start', at: firstTs }, firstTs);
+  for (const seg of segments) {
+    if (isAnchor(seg)) {
+      atStopsM += seg.distanceM;
+      cur.to = endOf(seg);
+      cur.endTs = seg.startTs;
+      if (cur.measuredM > 0 || cur.gapEstimateM > 0 || cur.segmentIds.length) legs.push(cur);
+      cur = open(endOf(seg), seg.endTs);
+      continue;
+    }
+    const b = bucketFor(seg);
+    cur.measuredM += seg.distanceM;
+    cur.gapEstimateM += seg.gapEstimateM;
+    cur.byBucket[b] = (cur.byBucket[b] || 0) + seg.distanceM;
+    cur.segmentIds.push(seg.id);
+    if (seg.endTs != null) cur.endTs = seg.endTs;
+  }
+  if (cur.segmentIds.length) {
+    cur.to = { kind: 'end', placeId: null, name: 'Ride end', at: cur.endTs };
+    legs.push(cur);
+  }
+  const round = (l) => ({
+    ...l,
+    measuredM: Math.round(l.measuredM),
+    gapEstimateM: Math.round(l.gapEstimateM),
+    byBucket: Object.fromEntries(Object.entries(l.byBucket).map(([k, v]) => [k, Math.round(v)])),
+    // What the leg counted as, for a one-word summary: the bucket holding
+    // most of its distance.
+    mainly: Object.entries(l.byBucket).sort((x, y) => y[1] - x[1])[0]?.[0] || null,
+  });
+  const legsM = legs.reduce((a, l) => a + l.measuredM, 0);
+  const measuredM = segments.reduce((a, s) => a + s.distanceM, 0);
+  return {
+    legs: legs.map(round),
+    check: {
+      legsM: Math.round(legsM),
+      atStopsM: Math.round(atStopsM),
+      measuredM: Math.round(measuredM),
+      residualM: Math.round((legsM + atStopsM - measuredM) * 100) / 100,
+    },
+  };
+}
+
+module.exports = { BUCKET, bucketFor, summariseDistance, distancePerVisit, apportion, routeLegs };

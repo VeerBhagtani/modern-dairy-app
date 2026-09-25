@@ -79,11 +79,17 @@ async function gather({ now = Date.now() } = {}) {
     // A driver who registered and never drove is usually an install that did
     // not survive first contact — a permissions prompt refused, or an app
     // nobody explained.
-    neverDriven: activeDrivers.filter((d) => !d.lastRideAt).length,
+    neverDriven: null,   // filled in below: drivers have no lastRideAt field
     ridesLast7Days: rides7.length,
     ridesStillOpen: rides7.filter((r) => r.status === 'active').length,
     ridesAutoClosed: rides7.filter((r) => r.status === 'auto_closed').length,
   };
+
+  // A driver who has never driven has no ride at all. One small query each:
+  // the fleet is about forty.
+  const hasRide = await Promise.all(activeDrivers.map((d) => repo.C.rides().where('driverId', '==', d.id).limit(1).select().get()
+    .then((s) => !s.empty).catch(() => true)));
+  fleet.neverDriven = hasRide.filter((x) => !x).length;
 
   // ── is the calculation keeping up, and does it reconcile ───────────────
   const finished = rides7.filter((r) => r.status !== 'active');
@@ -101,9 +107,12 @@ async function gather({ now = Date.now() } = {}) {
     gapEstimate += m.gapEstimate || 0; dayTotal += m.dayTotal;
     // The pipeline asserts its own identities and reports the residual rather
     // than rounding it away. A residual that is not ~0 is a real bug.
-    const res = Math.abs(r.distance.residualM || 0);
+    // (distance.residualM and counts.pendingReview never existed: the audit
+    // read zero for both, and a broken reconciliation looked perfect.)
+    const rec = r.distance.reconciliation || {};
+    const res = Math.max(Math.abs(rec.bucketResidualM || 0), Math.abs(rec.totalResidualM || 0));
     if (res > residualWorst) residualWorst = res;
-    needsReview += (r.counts && r.counts.pendingReview) || 0;
+    needsReview += (r.review && r.review.pending) || 0;
   }
 
   const pct = (part) => (dayTotal > 0 ? Math.round((part / dayTotal) * 1000) / 10 : null);
@@ -125,7 +134,8 @@ async function gather({ now = Date.now() } = {}) {
   // ── evidence ───────────────────────────────────────────────────────────
   const [orders30, matches30] = await Promise.all([
     countOf(repo.C.orders().where('orderedAt', '>=', since30)),
-    countOf(repo.C.matches().where('at', '>=', since30)).catch(() => 0),
+    // Matches carry visitAt; there is no `at` on them.
+    countOf(repo.C.matches().where('visitAt', '>=', since30)).catch(() => 0),
   ]);
   const evidence = {
     orderRecordsLast30Days: orders30,

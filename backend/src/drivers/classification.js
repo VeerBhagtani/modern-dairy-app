@@ -61,6 +61,9 @@ const ev = (code, detail, extra) => ({ code, detail, ...(extra || {}) });
 // How close to a known place an unrecognised stop has to be before its
 // personal verdict is flagged for a human: a few geofences' worth.
 const NEAR_KNOWN_PLACE_M = 250;
+// How much longer than going straight a trip may be through a pause for the
+// pause to count as on the way.
+const TRANSIT_DETOUR = 1.3;
 
 // Does a driver declaration cover this time range? A declaration is a driver
 // saying "the next stretch is personal" in the app; it is timestamped on the
@@ -223,8 +226,47 @@ function classifySegments(segments, points, ctx, cfg) {
   }
 
   // ---- pass 2: travel --------------------------------------------------
-  const prevStopOf = (i) => { for (let k = i - 1; k >= 0; k -= 1) if (out[k].kind === SEGMENT_KIND.STOP) return out[k]; return null; };
-  const nextStopOf = (i) => { for (let k = i + 1; k < out.length; k += 1) if (out[k].kind === SEGMENT_KIND.STOP) return out[k]; return null; };
+  // A short stop at no known place is a pause on the way, not a destination:
+  // the travel either side is judged by the stops it runs between once those
+  // pauses are looked through. Without this, three minutes in traffic on the
+  // way to a restaurant turned the first half of the trip personal.
+  //
+  // "On the way" is checked, not assumed: the pause must sit on the direct
+  // line between the places either side of it, at most TRANSIT_DETOUR longer
+  // than going straight. A stop off to one side — a Porter drop between a
+  // restaurant and the depot — is a detour, and stays a destination.
+  const isTransit = (s) => s.kind === SEGMENT_KIND.STOP && s.transit === true;
+  const candidate = out.map((seg) => seg.kind === SEGMENT_KIND.STOP
+    && seg.type === SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS
+    && !(seg.evidence || []).some((e) => e.code === 'driver_declared')
+    && seg.stop && seg.stop.dwellSec < cfg.transitStopMaxSec);
+  const posOf = (seg, end) => {
+    if (seg.kind === SEGMENT_KIND.STOP && seg.stop) return seg.stop.center;
+    const idx = end === 'start' ? seg.startIdx : seg.endIdx;
+    return idx != null && points[idx] ? points[idx] : null;
+  };
+  // The nearest anchor on each side: a stop that is not a candidate pause, or
+  // the first/last fix of the day.
+  const anchorBefore = (i) => { for (let k = i - 1; k >= 0; k -= 1) if (out[k].kind === SEGMENT_KIND.STOP && !candidate[k]) return posOf(out[k]); for (let k = 0; k < i; k += 1) { const q = posOf(out[k], 'start'); if (q) return q; } return null; };
+  const anchorAfter = (i) => { for (let k = i + 1; k < out.length; k += 1) if (out[k].kind === SEGMENT_KIND.STOP && !candidate[k]) return posOf(out[k]); for (let k = out.length - 1; k > i; k -= 1) { const q = posOf(out[k], 'end'); if (q) return q; } return null; };
+  for (let pass = 0; pass < 2; pass += 1) {
+    for (let i = 0; i < out.length; i += 1) {
+      if (!candidate[i]) continue;
+      const A = anchorBefore(i); const B = anchorAfter(i); const P = out[i].stop.center;
+      const direct = A && B ? haversineM(A, B) : 0;
+      const via = A && B ? haversineM(A, P) + haversineM(P, B) : Infinity;
+      // Within 150 m of the straight line always counts (a pause right beside
+      // where the trip starts or ends).
+      if (!(via <= direct * TRANSIT_DETOUR || via - direct <= 150)) candidate[i] = false;
+    }
+  }
+  out.forEach((seg, i) => { if (candidate[i]) seg.transit = true; });
+  const prevStopOf = (i) => { for (let k = i - 1; k >= 0; k -= 1) if (out[k].kind === SEGMENT_KIND.STOP && !isTransit(out[k])) return out[k]; return null; };
+  const nextStopOf = (i) => { for (let k = i + 1; k < out.length; k += 1) if (out[k].kind === SEGMENT_KIND.STOP && !isTransit(out[k])) return out[k]; return null; };
+  // The open ends of the day are judged from the first and last fix of the
+  // whole stretch, not of the piece between two pauses.
+  const stretchStart = (i) => { let k = i; while (k > 0 && (out[k - 1].kind === SEGMENT_KIND.TRAVEL || isTransit(out[k - 1]))) k -= 1; return out[k].startIdx; };
+  const stretchEnd = (i) => { let k = i; while (k < out.length - 1 && (out[k + 1].kind === SEGMENT_KIND.TRAVEL || isTransit(out[k + 1]))) k += 1; return out[k].endIdx; };
 
   for (let i = 0; i < out.length; i += 1) {
     const seg = out[i];
@@ -260,8 +302,8 @@ function classifySegments(segments, points, ctx, cfg) {
       return 'none';
     };
 
-    const a = before ? kindOf(before) : endpointPlace(seg.startIdx);
-    const b = after ? kindOf(after) : endpointPlace(seg.endIdx);
+    const a = before ? kindOf(before) : endpointPlace(stretchStart(i));
+    const b = after ? kindOf(after) : endpointPlace(stretchEnd(i));
     const confA = before ? before.confidence : (a === 'none' ? CONFIDENCE.UNKNOWN : CONFIDENCE.HIGH);
     const confB = after ? after.confidence : (b === 'none' ? CONFIDENCE.UNKNOWN : CONFIDENCE.HIGH);
 
@@ -325,6 +367,28 @@ function classifySegments(segments, points, ctx, cfg) {
     }
     if (seg.confidence === CONFIDENCE.LOW || seg.confidence === CONFIDENCE.UNKNOWN) seg.needsReview = true;
     seg.evidence = evidence;
+  }
+
+  // ---- pass 2b: pauses on the way ---------------------------------------
+  // A pause takes the verdict of the trip it interrupted (the travel just
+  // after it, which runs on towards the same destination), with its own
+  // evidence saying so. Its distance is the few metres of shuffling while
+  // stopped, so this moves almost nothing — but it keeps the story whole.
+  for (let i = 0; i < out.length; i += 1) {
+    const seg = out[i];
+    if (!isTransit(seg)) continue;
+    let k = i + 1;
+    while (k < out.length && isTransit(out[k])) k += 1;
+    const trip = out[k] && out[k].kind === SEGMENT_KIND.TRAVEL ? out[k] : out[i - 1];
+    if (!trip) continue;
+    seg.type = trip.type;
+    seg.confidence = trip.confidence;
+    seg.needsReview = !!trip.needsReview;
+    seg.anchor = 'transit';
+    seg.evidence = [
+      ...(seg.evidence || []).filter((e) => e.code !== 'no_known_location'),
+      ev('transit_stop', `a ${Math.round(seg.stop.dwellSec / 60)} min pause at no known place, on the way — counted with the trip it interrupted`),
+    ];
   }
 
   // ---- pass 3: manual reviews -----------------------------------------

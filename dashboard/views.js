@@ -486,6 +486,26 @@ window.DRIVERS_VIEWS = (function () {
         + '</div>'
         + '<p class="tiny" id="rpNote" style="margin-top:8px">Grey dots are fixes left out of the distance (poor accuracy, impossible jumps, duplicates). They are kept and shown, never deleted.</p></div>';
 
+      if (p && p.legs && p.legs.length) {
+        var BUCKET_NAME = { verifiedBusiness: 'verified business', likelyBusiness: 'likely business', personal: 'personal', unknown: 'unknown', invalid: 'no GPS' };
+        html += '<div class="card"><h2>Route, leg by leg</h2>'
+          + '<p class="tiny" style="margin-top:0">Each leg runs from one place the driver stopped at to the next. A short pause on the road is part of the leg it interrupted.</p>'
+          + '<div style="overflow-x:auto"><table><thead><tr><th>Leg</th><th>Time</th><th>Distance</th><th>Counted as</th></tr></thead><tbody>'
+          + p.legs.map(function (l) {
+            var parts = Object.keys(l.byBucket || {}).filter(function (k) { return l.byBucket[k] > 0; })
+              .map(function (k) { return (l.byBucket[k] / 1000).toFixed(2) + ' km ' + esc(BUCKET_NAME[k] || k); });
+            return '<tr><td><b>' + esc(l.from.name) + '</b> → <b>' + esc(l.to ? l.to.name : '…') + '</b></td>'
+              + '<td>' + time(l.startTs) + '–' + time(l.endTs) + '</td>'
+              + '<td>' + (l.measuredM / 1000).toFixed(2) + ' km' + (l.gapEstimateM ? '<br><span class="tiny">+' + (l.gapEstimateM / 1000).toFixed(2) + ' km estimated across a GPS gap</span>' : '') + '</td>'
+              + '<td class="tiny">' + (parts.join('<br>') || '—') + '</td></tr>';
+          }).join('')
+          + '</tbody></table></div>'
+          + (p.legsCheck ? '<p class="tiny" style="margin-top:8px">Legs ' + (p.legsCheck.legsM / 1000).toFixed(2) + ' km + moved while stopped '
+            + (p.legsCheck.atStopsM / 1000).toFixed(2) + ' km = measured ' + (p.legsCheck.measuredM / 1000).toFixed(2) + ' km'
+            + (Math.abs(p.legsCheck.residualM) < 1 ? ' ✓' : ' — <b>does not add up (' + p.legsCheck.residualM + ' m); report this</b>') + '</p>' : '')
+          + '</div>';
+      }
+
       if (p) {
         html += '<div class="card"><h2>Segments</h2><div style="overflow-x:auto"><table><thead><tr>'
           + '<th>Time</th><th>What</th><th>Confidence</th><th>Distance</th><th>Evidence</th><th></th></tr></thead><tbody>'

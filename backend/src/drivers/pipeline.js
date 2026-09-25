@@ -7,11 +7,11 @@
 // two years when someone disputes a figure.
 
 const { resolveConfig, CALC_VERSION } = require('./config');
-const { cleanTrack, trackQuality } = require('./track');
+const { cleanTrack, trackQuality, absorbStopJitter } = require('./track');
 const { detectStops } = require('./stops');
 const { buildSegments } = require('./segmentation');
 const { classifySegments, SEGMENT_TYPE, CONFIDENCE } = require('./classification');
-const { summariseDistance, distancePerVisit } = require('./distance');
+const { summariseDistance, distancePerVisit, routeLegs } = require('./distance');
 const { matchDeliveries } = require('./matching');
 
 // How many excluded fixes the processing document lists individually. Firestore
@@ -37,6 +37,8 @@ function processRideData(input) {
 
   const track = cleanTrack(input.points || [], config, nowMs);
   const stops = detectStops(track.points, config);
+  // Wandering while parked is not distance (see absorbStopJitter).
+  track.totals = absorbStopJitter(track, stops);
   const { segments: rawSegments } = buildSegments(track.points, track.hops, stops);
 
   const ctx = {
@@ -50,6 +52,7 @@ function processRideData(input) {
   const segments = classifySegments(rawSegments, track.points, ctx, config);
   const distance = summariseDistance(segments, track.totals);
   const visits = distancePerVisit(segments);
+  const route = routeLegs(segments, track.points);
   const matching = matchDeliveries(segments, ctx.orders, ctx.restaurants, ctx, config);
   const quality = trackQuality(track.totals, config);
 
@@ -111,7 +114,11 @@ function processRideData(input) {
       originalConfidence: s.originalConfidence || null,
       reviewedBy: s.reviewedBy || null,
       reviewedAt: s.reviewedAt || null,
+      transit: !!s.transit,
     })),
+    // The ride as legs between the places the driver stopped at.
+    legs: route.legs,
+    legsCheck: route.check,
     distance,
     visits,
     matching,

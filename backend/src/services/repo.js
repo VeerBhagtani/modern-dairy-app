@@ -12,6 +12,7 @@
 
 const crypto = require('crypto');
 const { db, admin, FieldValue } = require('./firestore');
+const { readAll } = require('./paging');
 const { resolveConfig } = require('../drivers/config');
 
 const C = {
@@ -481,17 +482,24 @@ async function listRides({ driverId, from, to, status, limit = 200 }) {
 // server last received the point, and the device time — the one the
 // calculation uses — is unchanged.
 async function ingestPoints(rideId, driverId, points) {
-  if (!points.length) return { written: 0 };
+  if (!points.length) return { written: 0, duplicates: 0 };
   const writer = db.bulkWriter();
   const serverTs = Date.now();
-  for (const p of points) {
-    writer.set(
-      C.gps(rideId).doc(p.clientPointId),
-      { ...p, rideId, driverId, serverTs },
-      { merge: false },
-    );
-  }
+  // create(), not set(): a point that is already stored (the same batch sent
+  // again after a lost reply) is left exactly as it was, and not counted
+  // twice. The clientPointId is the document id, so a retry can never make a
+  // second copy.
+  let duplicates = 0;
+  writer.onWriteError((err) => {
+    if (err.code === 6 /* ALREADY_EXISTS */) { duplicates += 1; return false; }
+    return err.failedAttempts < 3;
+  });
+  const writes = points.map((p) => writer.create(C.gps(rideId).doc(p.clientPointId), { ...p, rideId, driverId, serverTs })
+    .then(() => true, (err) => { if (err.code === 6) return false; throw err; }));
   await writer.close();
+  const results = await Promise.all(writes);
+  const written = results.filter(Boolean).length;
+  if (!written) return { written: 0, duplicates };
 
   const latest = points.reduce((a, b) => (b.deviceTs > a.deviceTs ? b : a));
   // Only move lastPointAt forward. An out-of-order replay of an old batch must
@@ -503,7 +511,7 @@ async function ingestPoints(rideId, driverId, points) {
     const cur = doc.data().lastPointAt || 0;
     tx.update(ref, {
       lastPointAt: Math.max(cur, latest.deviceTs),
-      pointCount: (doc.data().pointCount || 0) + points.length,
+      pointCount: (doc.data().pointCount || 0) + written,
       // Stamped now, after the points above are committed, not at the start of
       // the upload: a calculation that read the points in between must still
       // see this ride as having newer data than it used.
@@ -529,12 +537,21 @@ async function ingestPoints(rideId, driverId, points) {
     }, { merge: true });
   });
 
-  return { written: points.length, serverTs };
+  return { written, duplicates, serverTs };
 }
 
-async function loadPoints(rideId, { limit = 20000 } = {}) {
-  const snap = await C.gps(rideId).orderBy('deviceTs').limit(limit).get();
-  return snap.docs.map((d) => d.data());
+// Every point of the ride, page by page. There is deliberately no cap: a
+// capped read silently dropped the end of a long ride (or of a phone that
+// sampled fast), and the kilometres after the cap simply disappeared.
+const POINT_PAGE = 5000;
+async function loadPoints(rideId) {
+  // Paged after the last document itself (deviceTs, then document id), so two
+  // fixes in the same millisecond can never be skipped at a page edge, and no
+  // extra index is needed.
+  return readAll((after) => {
+    const q = C.gps(rideId).orderBy('deviceTs').limit(POINT_PAGE);
+    return after ? q.startAfter(after) : q;
+  }, POINT_PAGE);
 }
 
 // ---------------------------------------------------------------------------
@@ -693,12 +710,20 @@ async function ordersForRide(ride) {
   // so restricting the query to assignedDriverId would hide the problem.
   const dayStart = Date.parse(`${ride.dayKey}T00:00:00+05:30`);
   const dayEnd = dayStart + 24 * 3600 * 1000;
-  const snap = await C.orders()
-    .where('orderedAt', '>=', dayStart - 12 * 3600 * 1000)
-    .where('orderedAt', '<', dayEnd)
-    .limit(2000)
-    .get();
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  // An order may carry only a delivery window, or only a delivery time, with
+  // no orderedAt at all. Reading by orderedAt alone never loaded those, so
+  // they could never match a visit. Each time field is read and the results
+  // merged.
+  const from = dayStart - 12 * 3600 * 1000;
+  const LIMIT = 5000;
+  const snaps = await Promise.all(['orderedAt', 'windowStart', 'windowEnd', 'deliveredAt'].map((f) => C.orders()
+    .where(f, '>=', from).where(f, '<', dayEnd).limit(LIMIT).get()));
+  const byId = new Map();
+  for (const snap of snaps) {
+    if (snap.size >= LIMIT) console.warn(`ordersForRide: ${ride.dayKey} has ${LIMIT}+ orders on one field; some may be missing`);
+    for (const d of snap.docs) byId.set(d.id, { id: d.id, ...d.data() });
+  }
+  return [...byId.values()];
 }
 
 async function declarationsForRide(rideId) {
