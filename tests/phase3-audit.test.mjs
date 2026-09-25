@@ -86,6 +86,9 @@ test('nothing is deployed, published or built without the full test suite passin
     const t = s.indexOf('name: Run the test suite');
     assert.ok(t !== -1, wf);
     assert.match(s.slice(t, t + 200), /npm ci[\s\S]*npm test/, wf);
+    // `node --test "tests/*.test.mjs"` needs Node 21+ to expand the pattern;
+    // on Node 20 it finds no files and the gate fails every build.
+    assert.match(s, /node-version: 22/, wf);
   }
 });
 

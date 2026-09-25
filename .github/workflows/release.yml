@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+        with: { node-version: 22 }
 
       # Nothing ships unless the whole test suite passes on this commit.
       - name: Run the test suite
