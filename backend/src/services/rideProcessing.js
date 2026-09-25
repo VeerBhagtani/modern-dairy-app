@@ -11,7 +11,10 @@ const freshness = require('./freshness');
 const { processRideData } = require('../drivers/pipeline');
 const { evaluateResultAlerts } = require('../drivers/alerts');
 const legObservations = require('../drivers/legObservations');
-const { autoCloseStaleRides } = require('../jobs/maintenance');
+const { autoCloseStaleRides, enforceRetention } = require('../jobs/maintenance');
+
+const RETENTION_EVERY_MS = 6 * 3600 * 1000;
+let lastRetentionAt = 0;
 
 const busy = () => Object.assign(new Error('This ride is being calculated right now.'), { code: 'BUSY' });
 
@@ -129,7 +132,18 @@ const housekeeping = freshness.makeHousekeeper(async (nowMs) => {
     if (closed) dayClosed.push(closed.id);
   }
   const timedOut = await autoCloseStaleRides(config, nowMs);
-  return { dayClosed, timedOut };
+  // The 180-day raw GPS deletion. Nothing scheduled it before, and the
+  // dashboard's button defaults to a dry run, so expired points were never
+  // deleted. A few rides at a time, a few times a day, riding on the same
+  // housekeeping everything else uses.
+  let retention = null;
+  if (nowMs - lastRetentionAt >= RETENTION_EVERY_MS) {
+    lastRetentionAt = nowMs;
+    retention = await enforceRetention(config, nowMs, { maxRides: 20 })
+      .then((r) => ({ deleted: r.deleted, kept: r.skipped.length }))
+      .catch((e) => ({ error: String(e.message || e) }));
+  }
+  return { dayClosed, timedOut, retention };
 });
 
 /* Calculate what is out of date among these rides, within a budget. */

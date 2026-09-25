@@ -13,9 +13,9 @@ const { asyncRouter } = require('../middleware/asyncRoutes');
 const router = asyncRouter(require('express').Router());
 const repo = require('../services/repo');
 const { db, FieldValue } = require('../services/firestore');
-const { writeLimiter } = require('../middleware/rateLimit');
+const { writeLimiter, batchLimiter } = require('../middleware/rateLimit');
 const bcrypt = require('bcryptjs');
-const { verifyLogin } = require('../middleware/adminAuth');
+const { verifyLogin, issueAdminToken, forgetAdmin } = require('../middleware/adminAuth');
 const { placeIdFor } = require('../services/placeKey');
 const geocode = require('../services/geocode');
 const mobileVendor = require('../drivers/mobileVendor');
@@ -89,10 +89,16 @@ router.post('/password', writeLimiter, async (req, res) => {
     passwordHash: await bcrypt.hash(newPassword, 12),
     mustChangePassword: false,
     updatedAt: Date.now(),
+    // Every token issued before this moment stops working (requireAdmin), so
+    // a changed password also signs out anyone holding the old one.
+    passwordChangedAt: Date.now(),
   }, { merge: true });
+  forgetAdmin(req.adminId);
+  const fresh = await issueAdminToken(req.adminId, req.adminRole);
 
   await repo.writeAudit({ adminId: req.adminId, action: 'admin.password_changed' });
-  res.json({ success: true, data: { changed: true } });
+  // A new token for this session, so the person who changed it stays in.
+  res.json({ success: true, data: { changed: true, token: fresh } });
 });
 
 // ---------------------------------------------------------------------------
@@ -903,7 +909,7 @@ router.post('/restaurants/accept-candidates', requireRole('admin'), writeLimiter
 //
 // Anything neither could settle is held with whatever was found, so the person
 // looking at it sees a business name rather than a pair of numbers.
-router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (req, res) => {
+router.post('/restaurants/locate', requireRole('admin'), batchLimiter, async (req, res) => {
   if (await refuseIfLocked(req, res)) return;
   const limit = Math.min(Math.max(Number(req.body?.limit) || 100, 1), 200);
   const apiKey = await getSecret('geocoding');
@@ -1252,13 +1258,13 @@ router.post('/restaurants/:id/confirm-location', requireRole('admin'), writeLimi
 
 // POST /admin/restaurants/location-audit { recheck | recheckBefore, limit }
 // A batch at a time; the dashboard calls it until nothing is left.
-router.post('/restaurants/location-audit', requireRole('admin'), writeLimiter, async (req, res) => {
+router.post('/restaurants/location-audit', requireRole('admin'), batchLimiter, async (req, res) => {
   const apiKey = await getSecret('geocoding');
   if (!apiKey) {
     return res.status(400).json({ success: false, code: 'NO_GEOCODING_KEY', message: 'No Google key is configured, so restaurants cannot be checked yet.' });
   }
   // Up to four Google requests per restaurant, so modest batches.
-  const limit = Math.min(Math.max(Number(req.body?.limit) || 30, 1), 60);
+  const limit = Math.min(Math.max(Number(req.body?.limit) || 50, 1), 60);
   // A "check all again" run is timed by the server's clock, never the office
   // PC's: a PC clock running ahead would make the run never finish.
   const before = req.body?.recheck === true ? Date.now()

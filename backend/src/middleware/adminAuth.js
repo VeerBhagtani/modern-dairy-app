@@ -85,6 +85,20 @@ async function adminLoginHandler(req, res) {
   }
 }
 
+// A few office accounts, read on every request: cached briefly so the
+// dashboard's refreshes do not become Firestore reads.
+const ACCOUNT_CACHE_MS = 30 * 1000;
+const accounts = new Map();
+async function currentAccount(id) {
+  const hit = accounts.get(id);
+  if (hit && Date.now() - hit.at < ACCOUNT_CACHE_MS) return hit.data;
+  const doc = await db.collection('admins').doc(String(id)).get();
+  const data = doc.exists ? doc.data() : null;
+  accounts.set(id, { at: Date.now(), data });
+  return data;
+}
+function forgetAdmin(id) { accounts.delete(id); }
+
 function requireAdmin() {
   return async (req, res, next) => {
     const header = req.headers.authorization || '';
@@ -95,8 +109,18 @@ function requireAdmin() {
       // Algorithm pinned: never trust the alg named in the token's own header.
       const payload = jwt.verify(token, key, { algorithms: ['HS256'] });
       if (payload.type !== 'admin') return res.status(403).json({ success: false, message: 'Not an admin token' });
+      // The account as it is now, not as it was when the token was issued: a
+      // disabled account, a lowered role or a changed password takes effect
+      // within ACCOUNT_CACHE_MS, not at the end of an 8-hour token.
+      const account = await currentAccount(payload.sub);
+      if (!account || account.status === 'disabled') {
+        return res.status(401).json({ success: false, message: 'This office account is no longer active. Sign in again.' });
+      }
+      if (account.passwordChangedAt && payload.iat * 1000 < account.passwordChangedAt - 1000) {
+        return res.status(401).json({ success: false, message: 'The password was changed. Sign in again.' });
+      }
       req.adminId = payload.sub;
-      req.adminRole = ROLES[payload.role] ? payload.role : 'viewer';
+      req.adminRole = ROLES[account.role] ? account.role : 'viewer';
       return next();
     } catch {
       return res.status(401).json({ success: false, message: 'Your session has expired. Sign in again.' });
@@ -104,4 +128,4 @@ function requireAdmin() {
   };
 }
 
-module.exports = { ROLES, issueAdminToken, verifyLogin, adminLoginHandler, requireAdmin };
+module.exports = { ROLES, issueAdminToken, verifyLogin, adminLoginHandler, requireAdmin, forgetAdmin };

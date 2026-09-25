@@ -72,38 +72,54 @@ async function processFinishedRides(processOne, { limit = 25 } = {}) {
 // Retention. Raw points are deleted only when the ride HAS a processed result —
 // deleting the evidence while keeping a number nobody can re-derive would make
 // every report unauditable, which is worse than keeping the data a while longer.
-async function enforceRetention(cfg, nowMs, { dryRun = false, maxRides = 50 } = {}) {
-  const cutoff = nowMs - cfg.retention.rawGpsDays * 24 * 3600 * 1000;
-  const snap = await repo.C.rides()
-    .where('startedAt', '<', cutoff)
-    .orderBy('startedAt')
-    .limit(maxRides)
-    .get();
 
+/* Which of these rides (all older than the cutoff) to clear now. Pure. */
+function retentionDecision(ride) {
+  if (ride.rawGpsDeletedAt) return 'done';
+  if (!ride.processedAt) return 'keep';
+  return 'delete';
+}
+
+async function enforceRetention(cfg, nowMs, { dryRun = false, maxRides = 50, maxScan = 2000 } = {}) {
+  const cutoff = nowMs - cfg.retention.rawGpsDays * 24 * 3600 * 1000;
   const deleted = []; const skipped = [];
-  for (const doc of snap.docs) {
-    const ride = { id: doc.id, ...doc.data() };
-    if (ride.rawGpsDeletedAt) continue;
-    if (!ride.processedAt) { skipped.push({ rideId: ride.id, reason: 'not processed — raw data kept so the day stays auditable' }); continue; }
-    if (dryRun) { deleted.push({ rideId: ride.id, dryRun: true }); continue; }
+  // Paged through, oldest first. Reading only the first page (as before) meant
+  // that once its rides were cleared, every run read the same cleared rides
+  // and never reached the next ones.
+  let last = null; let scanned = 0;
+  while (deleted.length < maxRides && scanned < maxScan) {
+    let q = repo.C.rides().where('startedAt', '<', cutoff).orderBy('startedAt').limit(200);
+    if (last) q = q.startAfter(last);
     /* eslint-disable no-await-in-loop */
-    // recursiveDelete removes the gps_raw sub-collection in bulk.
-    await repo.C.rides().doc(ride.id).collection('gps_raw').listDocuments()
-      .then((refs) => {
-        const writer = repo.C.rides().firestore.bulkWriter();
-        refs.forEach((ref) => writer.delete(ref));
-        return writer.close();
+    const snap = await q.get();
+    if (snap.empty) break;
+    scanned += snap.size;
+    last = snap.docs[snap.docs.length - 1];
+    for (const doc of snap.docs) {
+      if (deleted.length >= maxRides) break;
+      const ride = { id: doc.id, ...doc.data() };
+      const what = retentionDecision(ride);
+      if (what === 'done') continue;
+      if (what === 'keep') { skipped.push({ rideId: ride.id, reason: 'not processed — raw data kept so the day stays auditable' }); continue; }
+      if (dryRun) { deleted.push({ rideId: ride.id, dryRun: true }); continue; }
+      // The gps_raw sub-collection, in bulk.
+      const refs = await repo.C.rides().doc(ride.id).collection('gps_raw').listDocuments();
+      const writer = repo.C.rides().firestore.bulkWriter();
+      refs.forEach((ref) => writer.delete(ref));
+      await writer.close();
+      await repo.C.rides().doc(ride.id).update({ rawGpsDeletedAt: nowMs, rawGpsRetentionDays: cfg.retention.rawGpsDays });
+      await repo.writeAudit({
+        adminId: 'system:retention',
+        action: 'gps.retention_delete',
+        target: ride.id,
+        after: { retentionDays: cfg.retention.rawGpsDays, pointCount: ride.pointCount || null, deletedPoints: refs.length },
       });
-    await repo.C.rides().doc(ride.id).update({ rawGpsDeletedAt: nowMs, rawGpsRetentionDays: cfg.retention.rawGpsDays });
-    await repo.writeAudit({
-      adminId: 'system:retention',
-      action: 'gps.retention_delete',
-      target: ride.id,
-      after: { retentionDays: cfg.retention.rawGpsDays, pointCount: ride.pointCount || null },
-    });
-    deleted.push({ rideId: ride.id, pointCount: ride.pointCount || null });
+      deleted.push({ rideId: ride.id, pointCount: ride.pointCount || null });
+    }
+    if (snap.size < 200) break;
+    /* eslint-enable no-await-in-loop */
   }
-  return { deleted: deleted.length, skipped, detail: deleted };
+  return { deleted: deleted.length, skipped, scanned, detail: deleted };
 }
 
 async function runMaintenance({ processOne, dryRunRetention = false } = {}) {
@@ -123,4 +139,4 @@ async function runMaintenance({ processOne, dryRunRetention = false } = {}) {
   return out;
 }
 
-module.exports = { runMaintenance, autoCloseStaleRides, reconcileAlerts, processFinishedRides, enforceRetention };
+module.exports = { runMaintenance, autoCloseStaleRides, reconcileAlerts, processFinishedRides, enforceRetention, retentionDecision };

@@ -77,6 +77,7 @@ jobs:
       - name: Run the tests first, and record what they say
         if: steps.key.outputs.has == 'yes'
         run: |
+          (cd backend && npm ci --no-audit --no-fund)
           npm test > /tmp/test-output.txt 2>&1 && echo "TESTS_PASS=yes" >> "$GITHUB_ENV" || echo "TESTS_PASS=no" >> "$GITHUB_ENV"
           tail -40 /tmp/test-output.txt
 

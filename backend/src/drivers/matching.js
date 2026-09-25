@@ -26,10 +26,14 @@ const ev = (code, detail, extra) => ({ code, detail, ...(extra || {}) });
 // The location an order was expected to be delivered to: its own coordinates if
 // the order system supplied them, otherwise the known restaurant's. If neither
 // exists we cannot check distance, and we say so rather than assuming.
-function expectedLocation(order, placesById) {
+function expectedLocation(order, placesById, placesByCustomer) {
   if (Number.isFinite(order.lat) && Number.isFinite(order.lng)) return { lat: order.lat, lng: order.lng, source: 'order' };
-  const place = order.placeId ? placesById.get(order.placeId) : null;
-  if (place) return { lat: place.lat, lng: place.lng, source: 'restaurant_record' };
+  // By place id, or else by the customer the order is for — most order files
+  // carry only a customer id, and without this such an order could never be
+  // more than a POSSIBLE match however exactly the visit fitted it.
+  const place = (order.placeId ? placesById.get(order.placeId) : null)
+    || (order.customerId && placesByCustomer ? placesByCustomer.get(order.customerId) : null);
+  if (place && Number.isFinite(place.lat) && Number.isFinite(place.lng)) return { lat: place.lat, lng: place.lng, source: 'restaurant_record' };
   return null;
 }
 
@@ -42,6 +46,14 @@ function expectedLocation(order, placesById) {
  */
 function matchDeliveries(segments, orders, places, ctx, cfg) {
   const placesById = new Map((places || []).map((p) => [p.id, p]));
+  // A customer id that belongs to two restaurant rows is ambiguous: not used.
+  const placesByCustomer = new Map();
+  const dupCustomer = new Set();
+  for (const p of places || []) {
+    if (!p.customerId) continue;
+    if (placesByCustomer.has(p.customerId)) dupCustomer.add(p.customerId); else placesByCustomer.set(p.customerId, p);
+  }
+  for (const c of dupCustomer) placesByCustomer.delete(c);
   const visits = segments.filter((s) => s.type === SEGMENT_TYPE.LIKELY_RESTAURANT_VISIT);
   const tolMs = cfg.matchTimeToleranceMin * 60000;
 
@@ -51,7 +63,7 @@ function matchDeliveries(segments, orders, places, ctx, cfg) {
     for (const order of orders || []) {
       if (!order.customerId || !visit.place || order.customerId !== visit.place.customerId) continue;
 
-      const loc = expectedLocation(order, placesById);
+      const loc = expectedLocation(order, placesById, placesByCustomer);
       const distanceM = loc ? haversineM(visit.stop.center, loc) : null;
       // Proximity alone never makes a match, but being outside the tolerance
       // radius does rule one out.

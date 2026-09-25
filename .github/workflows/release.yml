@@ -29,6 +29,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
+
+      # Nothing ships unless the whole test suite passes on this commit.
+      - name: Run the test suite
+        run: |
+          (cd backend && npm ci --no-audit --no-fund)
+          npm test
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 21 }
 

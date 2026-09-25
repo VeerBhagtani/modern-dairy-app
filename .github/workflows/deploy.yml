@@ -56,6 +56,12 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
 
+      # Nothing ships unless the whole test suite passes on this commit.
+      - name: Run the test suite
+        run: |
+          (cd backend && npm ci --no-audit --no-fund)
+          npm test
+
       # The secrets arrive as environment variables, never interpolated into the
       # script text: the key is multi-line JSON, and pasting it into a bash
       # condition breaks the script's own syntax before it can test anything.
@@ -217,6 +223,7 @@ jobs:
           # office dashboard and forty phones all reach this over the internet.
           gcloud run deploy "$S" --project "$P" --region "$R" --source backend \
             --allow-unauthenticated --ingress=all --port 8080 --quiet \
+            --max-instances 4 \
             --set-env-vars "^@^GCP_PROJECT_ID=${P}@NODE_ENV=production@ALLOWED_ORIGINS=${ORIGINS}@SEED_ADMIN_USERNAME=${SEED_USER}@SEED_ADMIN_NAME=${SEED_NAME}@SEED_ADMIN_HASH=${SEED_HASH}"
           # Cloud Run can hold more than one address for a service, and
           # `status.url` has handed back a legacy one that 404s while the

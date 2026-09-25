@@ -76,7 +76,10 @@ app.use(cors({
       origin,
       allowedOrigins.join(', ') || '(none configured)',
     );
-    callback(new Error(`Origin ${origin} is not allowed to call this API.`));
+    const err = new Error(`Origin ${origin} is not allowed to call this API.`);
+    err.status = 403;
+    err.corsRefused = true;
+    callback(err);
   },
 }));
 
@@ -130,7 +133,9 @@ app.use((err, req, res, next) => {
   if (err.type === 'entity.too.large' || err.status === 413) {
     return res.status(413).json({ success: false, message: 'Request body is too large' });
   }
-  if (err.message === 'Not allowed by CORS') {
+  // (This compared the message with a string the CORS check never used, so a
+  // refused origin came back as a 500.)
+  if (err.corsRefused) {
     return res.status(403).json({ success: false, message: 'Origin not allowed' });
   }
   res.status(500).json({ success: false, message: 'Internal server error' });

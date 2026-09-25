@@ -34,7 +34,11 @@ const { CALC_VERSION } = require('../drivers/config');
 
 // See needsCalc: rides this recent are recalculated when the rules change.
 const RECALC_ON_VERSION_DAYS = 35;
-const FRESH_MS = 5 * 60 * 1000;
+// How stale a RUNNING ride's figures may get before it is recalculated.
+// Each recalculation re-reads every point of the ride, so at 5 minutes forty
+// drivers cost about 3 million Firestore reads a day with the dashboard open;
+// 15 minutes cuts that by two thirds. A finished ride is recalculated at once.
+const FRESH_MS = 15 * 60 * 1000;
 const HOUSEKEEPING_EVERY_MS = 10 * 60 * 1000;
 // A ride whose calculation failed is retried after this, or sooner if new
 // points arrive — not on every look.

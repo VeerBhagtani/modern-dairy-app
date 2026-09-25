@@ -44,7 +44,7 @@ function load() {
 
 test('nothing is stored as a password unless it is a bcrypt hash', async () => {
   const { seed, store } = load();
-  for (const bad of ['Mdairypune@1942', '', 'not-a-hash', '$2a$12$tooshort']) {
+  for (const bad of ['a-plain-text-password', '', 'not-a-hash', '$2a$12$tooshort']) {
     const r = await seed({ username: 'someone', passwordHash: bad });
     assert.equal(r.seeded, false, `"${bad}" must not be stored`);
   }

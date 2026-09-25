@@ -30,6 +30,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+
+      # Nothing ships unless the whole test suite passes on this commit.
+      - name: Run the test suite
+        run: |
+          (cd backend && npm ci --no-audit --no-fund)
+          npm test
 
       - name: Point it at the API, if we know the address yet
         env:

@@ -83,13 +83,31 @@ const writeLimiter = rateLimit({
 });
 
 // General baseline for everything else (reads, config, health) — a backstop
-// against scraping/DoS, loose enough not to bother normal app usage.
+// against scraping/DoS, loose enough not to bother normal app usage. Counted
+// per IP because it runs before anyone is identified, and the office is
+// several people behind one address, each dashboard refreshing every 20 s and
+// a location audit making a hundred calls: 300 was reachable on a busy
+// morning. The per-account write limits below are the real control.
 const generalLimiter = rateLimit({
+  windowMs: FIFTEEN_MIN,
+  limit: 1500,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: jsonHandler('Too many requests. Please try again shortly.'),
+});
+
+// Long office jobs that the dashboard runs as a loop of batches (the location
+// audit, the location lookup): about a hundred calls for three thousand
+// restaurants. Under writeLimiter's 30 they stalled a third of the way in.
+// Per signed-in admin, and still bounded, because each call costs Google
+// requests.
+const batchLimiter = rateLimit({
   windowMs: FIFTEEN_MIN,
   limit: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  handler: jsonHandler('Too many requests. Please try again shortly.'),
+  keyGenerator: writeKey,
+  handler: jsonHandler('Too many batches in a short time. Wait a few minutes and carry on — nothing is lost.'),
 });
 
 // Admin password-recovery texts: ONE budget for the whole service rather than
@@ -163,5 +181,5 @@ const driverLimiter = rateLimit({
 module.exports = {
   refreshLimiter, driverLimiter,
   authLimiter, otpPhoneLimiter, adminLoginLimiter, writeLimiter, generalLimiter,
-  gpsIngestLimiter, registerLimiter, writeKey,
+  gpsIngestLimiter, registerLimiter, writeKey, batchLimiter,
 };
