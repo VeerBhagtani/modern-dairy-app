@@ -63,7 +63,7 @@ test('which restaurants need a check', () => {
 
 test('the check never moves a pin by itself; the office does, and it is audited', () => {
   const admin = read('backend/src/routes/admin.js');
-  const run = admin.slice(admin.indexOf("router.post('/restaurants/google-check'"), admin.indexOf("router.post('/restaurants/:id/use-google-pin'"));
+  const run = admin.slice(admin.indexOf("router.post('/restaurants/google-check'"), admin.indexOf('function googlePinUpdate'));
   assert.doesNotMatch(run, /\blat: /, 'the batch check writes only its verdict');
   const use = admin.slice(admin.indexOf("router.post('/restaurants/:id/use-google-pin'"));
   assert.match(use, /action: 'restaurants\.use_google_pin'/);
@@ -73,4 +73,24 @@ test('a re-check run uses the server\'s clock, so it always finishes', () => {
   const admin = read('backend/src/routes/admin.js');
   assert.match(admin, /req\.body\?\.recheck === true \? Date\.now\(\)/);
   assert.match(read('dashboard/views.js'), /if \(recheck\) run = r\.recheckBefore;/);
+});
+
+test('"fix all" moves only restaurants Google has elsewhere, against a current check, audited, and respects the lock', () => {
+  const admin = read('backend/src/routes/admin.js');
+  const bulk = admin.slice(admin.indexOf("router.post('/restaurants/use-google-pins'"), admin.indexOf("router.get('/restaurants/export.csv'"));
+  assert.match(bulk, /if \(await refuseIfLocked\(req, res\)\) return;/);
+  assert.match(bulk, /c\.status === googleCheck\.STATUS\.MOVED/);
+  assert.match(bulk, /c\.pinLat === before\.lat && c\.pinLng === before\.lng/);
+  assert.match(bulk, /action: 'restaurants\.use_google_pin'/);
+  assert.match(bulk, /\.slice\(0, 500\)/);
+});
+
+test('the wrong-locations screen shows both positions with Google Maps links, and downloads the list', () => {
+  const views = read('dashboard/views.js');
+  assert.match(views, /function renderWrongLocations\(\)/);
+  assert.match(views, /https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=' \+ lat \+ ',' \+ lng/);
+  assert.match(views, /query_place_id=/);
+  assert.match(views, /API\.useGooglePins\(movedIds\)/);
+  assert.match(views, /wrong-restaurant-locations\.csv/);
+  assert.match(read('dashboard/api.js'), /useGooglePins: function \(ids\)/);
 });

@@ -216,8 +216,9 @@
     var fresh = !HAS_SERVER || !(state.tokens && state.tokens.accessToken)
       ? Promise.resolve(null)
       : apiFetch('/driver/maps-config').then(function (c) {
-        // A key Google refused on this phone stays refused until the office replaces it.
-        if (cached && cached.refusedKey && c && c.key === cached.refusedKey) return cached;
+        // A key Google refused on this phone is not tried again at once…
+        // …for half an hour, so fixing the key in the Google console is picked up.
+        if (cached && cached.refusedKey && c && c.key === cached.refusedKey && Date.now() - (cached.refusedAt || 0) < 30 * 60 * 1000) return cached;
         LS.set('mapsCfg', c);
         return c;
       }).catch(function () { return null; });
@@ -231,7 +232,7 @@
       if (window.google && google.maps && google.maps.Map) { resolve(); return; }
       window.gm_authFailure = function () {
         // Refused key: forget it and fall back to the free map now.
-        LS.set('mapsCfg', { provider: 'free', refusedKey: key });
+        LS.set('mapsCfg', { provider: 'free', refusedKey: key, refusedAt: Date.now() });
         if (gmap) { gmap = null; var el = $('map'); if (el) el.innerHTML = ''; initFreeMap(); }
       };
       window.__mdGoogleMapsLoaded = function () {

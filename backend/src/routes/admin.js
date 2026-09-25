@@ -1272,29 +1272,73 @@ router.post('/restaurants/google-check', requireRole('admin'), writeLimiter, asy
 
 // POST /admin/restaurants/:id/use-google-pin — move the pin to where Google
 // Maps has the business. The office's decision, one restaurant at a time.
+// Moving a pin to Google's position, and marking the check confirmed against
+// it. Null when Google has no position to move to.
+function googlePinUpdate(before, adminId) {
+  const c = before.googleCheck || {};
+  if (!Number.isFinite(c.googleLat) || !Number.isFinite(c.googleLng)) return null;
+  return {
+    lat: c.googleLat,
+    lng: c.googleLng,
+    locationStatus: 'confirmed',
+    locationSource: 'google_maps',
+    confirmedBy: adminId,
+    confirmedAt: Date.now(),
+    // The pin is now Google's own, so the check stands as confirmed against it.
+    googleCheck: { ...c, status: googleCheck.STATUS.CONFIRMED, distanceM: 0, pinLat: c.googleLat, pinLng: c.googleLng, detail: 'Pin moved to Google Maps\' position by the office.' },
+  };
+}
+
 router.post('/restaurants/:id/use-google-pin', requireRole('admin'), writeLimiter, async (req, res) => {
   const { id } = req.params;
   if (!isValidId(id)) return bad(res, 'Invalid id');
   const doc = await repo.C.restaurants().doc(id).get();
   if (!doc.exists) return res.status(404).json({ success: false, message: 'Not found' });
   const before = doc.data();
-  const c = before.googleCheck || {};
-  if (!Number.isFinite(c.googleLat) || !Number.isFinite(c.googleLng)) {
-    return bad(res, 'Google Maps has no position for this restaurant. Run the check first.');
-  }
-  await doc.ref.set({
-    lat: c.googleLat,
-    lng: c.googleLng,
-    locationStatus: 'confirmed',
-    locationSource: 'google_maps',
-    confirmedBy: req.adminId,
-    confirmedAt: Date.now(),
-    // The pin is now Google's own, so the check stands as confirmed against it.
-    googleCheck: { ...c, status: googleCheck.STATUS.CONFIRMED, distanceM: 0, pinLat: c.googleLat, pinLng: c.googleLng, detail: 'Pin moved to Google Maps\' position by the office.' },
-  }, { merge: true });
+  const update = googlePinUpdate(before, req.adminId);
+  if (!update) return bad(res, 'Google Maps has no position for this restaurant. Run the check first.');
+  await doc.ref.set(update, { merge: true });
   repo.invalidatePlaceCache();
-  await repo.writeAudit({ adminId: req.adminId, action: 'restaurants.use_google_pin', target: id, before: { lat: before.lat, lng: before.lng }, after: { lat: c.googleLat, lng: c.googleLng } });
-  res.json({ success: true, data: { id, lat: c.googleLat, lng: c.googleLng } });
+  await repo.writeAudit({ adminId: req.adminId, action: 'restaurants.use_google_pin', target: id, before: { lat: before.lat, lng: before.lng }, after: { lat: update.lat, lng: update.lng } });
+  res.json({ success: true, data: { id, lat: update.lat, lng: update.lng } });
+});
+
+// POST /admin/restaurants/use-google-pins { ids }
+//
+// "Fix all": move every listed restaurant that Google has, by name, somewhere
+// else (status "moved") to Google's position. Only "moved" — a different name
+// at the pin or no match at all still needs a person to look. A check made
+// against a pin that has since moved is skipped: it no longer describes the
+// pin. One audit entry per restaurant, exactly as the one-at-a-time button.
+router.post('/restaurants/use-google-pins', requireRole('admin'), writeLimiter, async (req, res) => {
+  if (await refuseIfLocked(req, res)) return;
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(isValidId).slice(0, 500) : [];
+  if (!ids.length) return bad(res, 'No restaurants given.');
+  const moved = [];
+  const skipped = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    /* eslint-disable no-await-in-loop */
+    const docs = await Promise.all(ids.slice(i, i + 100).map((id) => repo.C.restaurants().doc(id).get()));
+    const batch = db.batch();
+    const audits = [];
+    for (const doc of docs) {
+      const before = doc.exists ? doc.data() : null;
+      const c = before?.googleCheck || {};
+      const current = before && c.pinLat === before.lat && c.pinLng === before.lng;
+      const update = before && current && c.status === googleCheck.STATUS.MOVED ? googlePinUpdate(before, req.adminId) : null;
+      if (!update) { skipped.push(doc.id); continue; }
+      batch.set(doc.ref, update, { merge: true });
+      moved.push(doc.id);
+      audits.push({ adminId: req.adminId, action: 'restaurants.use_google_pin', target: doc.id, before: { lat: before.lat, lng: before.lng }, after: { lat: update.lat, lng: update.lng, bulk: true } });
+    }
+    if (audits.length) {
+      await batch.commit();
+      for (const a of audits) await repo.writeAudit(a);
+    }
+    /* eslint-enable no-await-in-loop */
+  }
+  if (moved.length) repo.invalidatePlaceCache();
+  res.json({ success: true, data: { moved: moved.length, skipped: skipped.length } });
 });
 
 router.get('/restaurants/export.csv', requireRole('viewer'), async (req, res) => {

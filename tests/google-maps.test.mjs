@@ -61,3 +61,17 @@ test('the driver app loads Google Maps under its CSP, and keeps the free map as 
   assert.match(app, /window\.gm_authFailure = function/);
   assert.doesNotMatch(app, /\n\s+if \(map\) map\.setCenter/, 'centring goes through mapCenter for both maps');
 });
+
+test('the page says why a map is not Google Maps, and a refusal is not remembered for ever', () => {
+  const map = read('dashboard/map.js');
+  for (const code of ['RefererNotAllowedMapError', 'ApiNotActivatedMapError', 'ApiTargetBlockedMapError', 'BillingNotEnabledMapError', 'InvalidKeyMapError']) {
+    assert.match(map, new RegExp(code + ':'), code);
+  }
+  assert.match(map, /Google Maps JavaScript API \(\?:error\|warning\): \(\\w\+\)/);
+  assert.match(map, /Date\.now\(\) - r\.at < 2 \* 60 \* 1000/);
+  assert.match(map, /state: 'no_key'/);
+  const views = read('dashboard/views.js');
+  assert.match(views, /Free map, not Google Maps:/);
+  assert.match(views, /MAPS\.retry\(\)/);
+  assert.match(read('app/www/app.js'), /Date\.now\(\) - \(cached\.refusedAt \|\| 0\) < 30 \* 60 \* 1000/);
+});
