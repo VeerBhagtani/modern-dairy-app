@@ -256,3 +256,13 @@ test('secrets reach the backend through Secret Manager, not the environment', ()
   assert.ok(/getSecret\('gofrugal'\)/.test(gf));
   assert.ok(!/process\.env\.GOFRUGAL_API_KEY/.test(gf));
 });
+
+test('named rounds: validated server-side, the driver\'s own, name only on their own running ride', () => {
+  const fs2 = fs;
+  const d = fs2.readFileSync(path.join(ROOT, 'backend/src/routes/driver.js'), 'utf8');
+  const plan = d.slice(d.indexOf("router.post('/plan'"));
+  assert.match(plan, /ride\.driverId === req\.driverId && ride\.status === 'active'/);
+  assert.ok(d.includes('if (/[<>{}\\\\]/.test(name))'), 'markup characters refused in a round name');
+  assert.match(d, /repo\.getRounds\(req\.driverId\)/);
+  assert.match(d, /repo\.deleteRound\(req\.driverId, req\.params\.roundId\)/);
+});

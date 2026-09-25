@@ -601,6 +601,46 @@ const LEG_LIMIT_PER_DRIVER = 400;   // a driver covering 400 distinct legs is no
 const RUNS_KEPT_PER_LEG = 12;       // enough for a stable median, cheap to store
 const SEQUENCES_KEPT = 60;          // roughly three months of working days
 
+// A driver's named rounds ("Camp round"): the set of restaurants they plan
+// together, saved so the same round is one tap next time. One document per
+// driver; there are only ever a handful.
+const MAX_ROUNDS = 30;
+function roundsDoc(driverId) { return db.collection('driver_rounds').doc(driverId); }
+async function getRounds(driverId) {
+  const doc = await roundsDoc(driverId).get();
+  return (doc.exists && Array.isArray(doc.data().rounds)) ? doc.data().rounds : [];
+}
+/* Saved under its name: the same name (any case) replaces the old stops. */
+async function saveRound(driverId, { name, stopIds }) {
+  return db.runTransaction(async (tx) => {
+    const ref = roundsDoc(driverId);
+    const doc = await tx.get(ref);
+    const rounds = (doc.exists && Array.isArray(doc.data().rounds)) ? doc.data().rounds : [];
+    const key = name.toLowerCase();
+    const existing = rounds.find((r) => r.name.toLowerCase() === key);
+    const now = Date.now();
+    let saved;
+    if (existing) { existing.name = name; existing.stopIds = stopIds; existing.updatedAt = now; saved = existing; }
+    else {
+      if (rounds.length >= MAX_ROUNDS) throw Object.assign(new Error(`You can keep up to ${MAX_ROUNDS} rounds. Delete one first.`), { status: 400 });
+      saved = { id: `r${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`, name, stopIds, createdAt: now, updatedAt: now };
+      rounds.push(saved);
+    }
+    tx.set(ref, { driverId, rounds, updatedAt: now });
+    return { saved, rounds };
+  });
+}
+async function deleteRound(driverId, roundId) {
+  return db.runTransaction(async (tx) => {
+    const ref = roundsDoc(driverId);
+    const doc = await tx.get(ref);
+    const rounds = (doc.exists && Array.isArray(doc.data().rounds)) ? doc.data().rounds : [];
+    const left = rounds.filter((r) => r.id !== roundId);
+    tx.set(ref, { driverId, rounds: left, updatedAt: Date.now() });
+    return left;
+  });
+}
+
 function legsDoc(driverId) { return db.collection('driver_legs').doc(driverId); }
 
 async function loadDriverLegs(driverId) {
@@ -867,6 +907,7 @@ async function loadProcessing(rideId, { withSegments = true } = {}) {
 }
 
 module.exports = {
+  getRounds, saveRound, deleteRound,
   getStopNames, addStopName, removeStopName,
   C, dayKeyFor, endOfDayMs, closeIfDayOver, acquireCalcLease, releaseCalcLease, markCalcFailed, markInputsChanged,
   getConfig, setConfigOverrides,

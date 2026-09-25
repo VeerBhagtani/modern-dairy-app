@@ -336,6 +336,45 @@ jobs:
             git push -q "$URL" gh-pages
           fi
 
+      # The office's own address, https://<project>.web.app: the same site,
+      # served from the company's Google project instead of github.io. Never
+      # fails the run — GitHub Pages above is already published — but says why
+      # if it could not publish.
+      - name: Is the Google project configured?
+        id: gcp
+        env:
+          SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          if [ -n "$SA_KEY" ] && [ -n "$PROJECT_ID" ]; then
+            echo "has=yes" >> "$GITHUB_OUTPUT"
+            echo "project=$(printf '%s' "$PROJECT_ID" | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+          else
+            echo "has=no" >> "$GITHUB_OUTPUT"
+          fi
+      - id: gauth
+        if: steps.gcp.outputs.has == 'yes'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - name: Publish to Firebase Hosting (https://<project>.web.app)
+        if: steps.gcp.outputs.has == 'yes'
+        continue-on-error: true
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.gauth.outputs.credentials_file_path }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if ! bash scripts/publish-hosting.sh "${{ steps.gcp.outputs.project }}"; then
+            {
+              echo "## Firebase Hosting was not published"
+              echo
+              echo "The deploy account needs the **Firebase Hosting Admin** role in project"
+              echo "\`${{ steps.gcp.outputs.project }}\`, and Hosting must be switched on once"
+              echo "(Firebase console → Hosting → Get started). GitHub Pages is still up to date."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
       - name: What is left
         run: |
           P="${{ steps.cfg.outputs.project }}"

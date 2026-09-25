@@ -177,6 +177,8 @@ router.get('/dashboard', requireRole('viewer'), async (req, res) => {
       rideStatus: active ? 'active' : (driverRides.length ? 'finished' : 'not_started'),
       rideId: active?.id || null,
       rideStartedAt: active?.startedAt || null,
+      // The round the driver named when planning ("Camp round"), if any.
+      roundName: active?.roundName || null,
       lastLocation: l ? { lat: l.lat, lng: l.lng, accuracyM: l.accuracyM ?? null } : null,
       lastUpdateAt: l?.deviceTs || null,
       lastUpdateAgeSec: ageSec,

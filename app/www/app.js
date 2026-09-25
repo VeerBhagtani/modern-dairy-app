@@ -1428,6 +1428,10 @@
 
   var stopsCache = null;
   var picked = {};
+  // Named rounds ("Camp round"): the driver's saved sets of restaurants.
+  var roundsCache = null;
+  var roundNameDraft = '';
+  var saveRoundDraft = true;
 
   function km(m) { return (m / 1000).toFixed(1) + ' km'; }
   function mins(s) {
@@ -1441,7 +1445,12 @@
     $('sheetBg').classList.add('on');
 
     var load = stopsCache ? Promise.resolve(stopsCache) : apiFetch('/driver/stops');
-    load.then(function (d) {
+    // Rounds are small and change from this phone only; a failure to load them
+    // must not stop a driver planning.
+    var loadRounds = apiFetch('/driver/rounds').then(function (r) { return r.rounds || []; }).catch(function () { return roundsCache || []; });
+    Promise.all([load, loadRounds]).then(function (r) {
+      var d = r[0];
+      roundsCache = r[1];
       stopsCache = d;
       renderPicker('');
     }).catch(function (e) {
@@ -1461,7 +1470,20 @@
       return !needle || ((s.name + ' ' + (s.area || '')).toLowerCase().indexOf(needle) !== -1);
     }).slice(0, 80);
 
-    $('sheetBody').innerHTML = '<input id="pickSearch" placeholder="Search" value="' + esc(q || '') + '">'
+    var rounds = roundsCache || [];
+    $('sheetBody').innerHTML = (rounds.length
+      ? '<p class="muted" style="margin:0 0 6px;font-size:.8rem;font-weight:700">YOUR ROUNDS</p>'
+        + '<div class="rounds">' + rounds.map(function (r) {
+          return '<span class="roundchip"><button type="button" data-round="' + esc(r.id) + '">' + esc(r.name)
+            + ' <small>' + r.stopIds.length + '</small></button>'
+            + '<button type="button" class="x" data-rounddel="' + esc(r.id) + '" aria-label="Delete ' + esc(r.name) + '">×</button></span>';
+        }).join('') + '</div>'
+      : '')
+      + '<label style="display:block;font-size:.8rem;font-weight:700;margin:8px 0 4px">NAME THIS ROUND <span style="font-weight:400">(optional)</span></label>'
+      + '<input id="roundName" maxlength="40" placeholder="e.g. Camp round" value="' + esc(roundNameDraft) + '">'
+      + '<label style="display:flex;gap:8px;align-items:center;margin:6px 0 12px;font-size:.85rem"><input type="checkbox" id="roundSave"'
+      + (saveRoundDraft ? ' checked' : '') + ' style="width:auto"> Save it, to pick the same round again</label>'
+      + '<input id="pickSearch" placeholder="Search" value="' + esc(q || '') + '">'
       + '<div class="picklist">'
       + rows.map(function (s) {
         return '<label><input type="checkbox" data-pick="' + esc(s.id) + '"'
@@ -1494,6 +1516,28 @@
       });
     });
     $('pickGo').addEventListener('click', requestPlan);
+    $('roundName').addEventListener('input', function (e) { roundNameDraft = e.target.value; });
+    $('roundSave').addEventListener('change', function (e) { saveRoundDraft = e.target.checked; });
+    // A saved round ticks its restaurants and fills in its name.
+    document.querySelectorAll('[data-round]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var r = (roundsCache || []).find(function (x) { return x.id === b.getAttribute('data-round'); });
+        if (!r) return;
+        picked = {};
+        r.stopIds.forEach(function (id) { picked[id] = true; });
+        roundNameDraft = r.name;
+        renderPicker($('pickSearch') ? $('pickSearch').value : '');
+      });
+    });
+    document.querySelectorAll('[data-rounddel]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var r = (roundsCache || []).find(function (x) { return x.id === b.getAttribute('data-rounddel'); });
+        if (!r || !confirm('Delete the round "' + r.name + '"?')) return;
+        apiFetch('/driver/rounds/' + encodeURIComponent(r.id), { method: 'DELETE' })
+          .then(function (out) { roundsCache = out.rounds || []; renderPicker($('pickSearch') ? $('pickSearch').value : ''); })
+          .catch(function (e) { alert(e.message); });
+      });
+    });
     countPicked();
   }
 
@@ -1513,15 +1557,23 @@
 
     // The plan starts from where the driver is standing, so a fresh fix is
     // taken rather than reusing one from an hour ago.
+    var name = String(roundNameDraft || '').replace(/\s+/g, ' ').trim();
     readOneFix().then(function (fix) {
       state.lastFix = fix;
       return apiFetch('/driver/plan', {
         method: 'POST',
-        body: { stopIds: ids, from: { lat: fix.lat, lng: fix.lng } },
+        body: { stopIds: ids, from: { lat: fix.lat, lng: fix.lng }, name: name || undefined },
       });
     }).then(function (plan) {
       $('sheetBg').classList.remove('on');
       showPlan(plan);
+      // Saved after the plan worked, so a round is never saved with a name the
+      // server refused. A failure to save does not undo the plan.
+      if (name && saveRoundDraft) {
+        apiFetch('/driver/rounds', { method: 'POST', body: { name: name, stopIds: ids } })
+          .then(function (out) { roundsCache = out.rounds || roundsCache; })
+          .catch(function () { /* the plan stands; the round can be saved next time */ });
+      }
     }).catch(function (e) {
       go.disabled = false;
       go.textContent = 'Work out the best order';
@@ -1553,7 +1605,8 @@
       ? plan.learnedLegs + ' of these ' + plan.legs.length + ' journeys are measured from your own past trips.'
       : 'Estimated for now — this gets more accurate as you drive these roads.';
 
-    box.innerHTML = '<div class="planhead">' + headline
+    box.innerHTML = (plan.name ? '<div class="planname">' + esc(plan.name) + '</div>' : '')
+      + '<div class="planhead">' + headline
       + '<span style="display:block;margin-top:6px;font-size:.76rem;color:var(--ink-2)">'
       + esc(learned) + '</span></div>'
       + '<ol class="route">'
@@ -1592,6 +1645,7 @@
     show(box, true);
     $('planClear').addEventListener('click', function () {
       picked = {};
+      roundNameDraft = '';
       show(box, false);
       box.innerHTML = '';
     });

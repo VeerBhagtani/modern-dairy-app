@@ -1,162 +1,106 @@
 #!/usr/bin/env python3
-"""Generate the Modern Drivers launcher icon from the Modern Dairy logo.
+"""Generate every Modern Drivers image from the one logo file.
 
-Why this exists: both apps install on the same phone, side by side. They
-already have different application ids and different names, so neither
-overwrites the other — but `npx cap add android` generates the stock Capacitor
-icon for the driver app, which would put a meaningless grey default icon next
-to the real Modern Dairy one. Two apps from the same company, one of them
-looking like a developer sample.
+Source: app/resources/source-logo.png — the Modern Drivers lockup (red M mark,
+blue "Modern" script, "DRIVERS", and the red "Melange of health and freshness"
+banner) on white.
 
-The design brief is a launcher icon, not a logo: at 48dp nobody reads text, so
-the thing that has to differ is the COLOUR BLOCK and the SHAPE.
+Writes:
+  app/resources/icon.png, icon-foreground.png, icon-background.png,
+    splash.png, splash-dark.png   (turned into every Android density by
+                                   `npx @capacitor/assets generate`)
+  app/www/logo.png, app/www/mark.png, dashboard/logo.png, dashboard/mark.png
 
-  Modern Dairy    white tile, red mark, blue script  (unchanged)
-  Modern Drivers  navy tile, white mark, route line
+The launcher icon is the logo itself on a white tile, as the office asked,
+kept inside the centre of the canvas because Android crops adaptive icons to a
+circle or squircle. The red M on its own (mark.png) is for the small places —
+the 26 px header — where the lockup's text would be an unreadable smudge.
 
-Same brand mark, inverted palette. Distinguishable across a room, and still
-obviously the same company.
-
-Run: python3 scripts/make-drivers-icon.py
-Outputs driver-app/resources/{icon,icon-foreground,icon-background,splash,
-splash-dark}.png, which `npx @capacitor/assets generate` turns into every
-density Android needs.
+Run: python3 scripts/make-icon.py
 """
 import os
 import sys
 
 try:
-    from PIL import Image, ImageDraw
+    from PIL import Image
 except ImportError:
     sys.exit("Pillow is required:  pip install Pillow")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCE_LOGO = os.path.join(ROOT, "app", "resources", "source-logo.png")
-OUT_DIR = os.path.join(ROOT, "app", "resources")
-
-NAVY = (27, 42, 107, 255)        # --brand, same token the apps use
-NAVY_DEEP = (16, 27, 73, 255)    # --brand-dark
+RES = os.path.join(ROOT, "app", "resources")
 WHITE = (255, 255, 255, 255)
-
 SIZE = 1024
 SPLASH = 2732
 
 
-def extract_mark(path):
-    """Cut the red 'M' mark out of the company logo and return it as a mask.
+def transparent(img):
+    """White background to transparent, keeping the anti-aliased edges."""
+    img = img.convert("RGBA")
+    px = img.load()
+    for y in range(img.size[1]):
+        for x in range(img.size[0]):
+            r, g, b, a = px[x, y]
+            lightness = min(r, g, b)
+            if lightness >= 250:
+                px[x, y] = (r, g, b, 0)
+            elif lightness > 200:
+                # Edge pixels: fade in proportion to how close to white they are.
+                px[x, y] = (r, g, b, int(a * (250 - lightness) / 50))
+    return img.crop(img.getbbox())
 
-    The mark is the only strongly red thing in the logo — the script wordmark
-    is blue and the background is white — so selecting red pixels isolates it
-    without needing the shape hand-traced. The banner at the bottom is red too,
-    so only the top half is considered.
-    """
-    logo = Image.open(path).convert("RGBA")
-    w, h = logo.size
-    top = logo.crop((0, 0, w, int(h * 0.45)))
+
+def red_mark(img):
+    """The red M, cut out of the top part of the logo (the banner is red too)."""
+    img = img.convert("RGBA")
+    w, h = img.size
+    top = img.crop((0, 0, w, int(h * 0.45)))
     px = top.load()
-
-    mask = Image.new("L", top.size, 0)
-    mpx = mask.load()
+    out = Image.new("RGBA", top.size, (0, 0, 0, 0))
+    opx = out.load()
     for y in range(top.size[1]):
         for x in range(top.size[0]):
             r, g, b, a = px[x, y]
-            if a > 40 and r > 120 and r > g * 1.6 and r > b * 1.6:
-                mpx[x, y] = 255
-
-    bbox = mask.getbbox()
+            if r > 120 and r > g * 1.6 and r > b * 1.6:
+                opx[x, y] = (r, g, b, 255)
+    bbox = out.getbbox()
     if not bbox:
         sys.exit("Could not find the red mark in the logo — has the artwork changed?")
-    return mask.crop(bbox)
+    return out.crop(bbox)
 
 
-def compose_icon(mark, size, with_route=True, safe_fraction=0.52):
-    """Navy tile, white mark, and a route line that says 'tracking'.
+def fit(art, box):
+    w, h = art.size
+    s = min(box / w, box / h)
+    return art.resize((max(1, int(w * s)), max(1, int(h * s))), Image.LANCZOS)
 
-    `safe_fraction` keeps the artwork inside the centre of the canvas, because
-    Android adaptive icons crop to a circle, a squircle or a rounded square
-    depending on the launcher, and anything near the edge can be cut off.
-    """
-    img = Image.new("RGBA", (size, size), NAVY)
-    d = ImageDraw.Draw(img)
 
-    # A soft deeper panel behind the mark, so the white shape has something to
-    # sit on rather than floating on flat colour.
-    pad = int(size * 0.14)
-    d.rounded_rectangle([pad, pad, size - pad, size - pad],
-                        radius=int(size * 0.16), fill=NAVY_DEEP)
-
-    # The mark, scaled into the safe zone and nudged up to leave room for the
-    # route line beneath it.
-    target = int(size * safe_fraction)
-    mw, mh = mark.size
-    scale = min(target / mw, target / mh)
-    nw, nh = max(1, int(mw * scale)), max(1, int(mh * scale))
-    m = mark.resize((nw, nh), Image.LANCZOS)
-
-    white = Image.new("RGBA", (nw, nh), WHITE)
-    y_offset = int(size * (-0.10 if with_route else 0))
-    img.paste(white, ((size - nw) // 2, (size - nh) // 2 + y_offset), m)
-
-    if with_route:
-        # A dashed line with a stop at each end: the journey the app records.
-        y = int(size * 0.76)
-        x0, x1 = int(size * 0.26), int(size * 0.74)
-        dash, gap = int(size * 0.045), int(size * 0.028)
-        x = x0
-        while x < x1:
-            d.line([(x, y), (min(x + dash, x1), y)], fill=WHITE, width=max(2, int(size * 0.018)))
-            x += dash + gap
-        r = int(size * 0.032)
-        for cx in (x0, x1):
-            d.ellipse([cx - r, y - r, cx + r, y + r], fill=WHITE)
-
-    return img
+def centred(canvas, art):
+    canvas.alpha_composite(art, ((canvas.size[0] - art.size[0]) // 2, (canvas.size[1] - art.size[1]) // 2))
+    return canvas
 
 
 def main():
     if not os.path.exists(SOURCE_LOGO):
         sys.exit(f"Missing {SOURCE_LOGO}")
-    os.makedirs(OUT_DIR, exist_ok=True)
+    source = Image.open(SOURCE_LOGO).convert("RGBA")
+    logo = transparent(source)
+    mark = red_mark(source)
 
-    mark = extract_mark(SOURCE_LOGO)
-    print(f"Extracted the brand mark: {mark.size[0]}x{mark.size[1]}")
+    # Launcher icon: the whole logo on white, inside the adaptive safe zone.
+    centred(Image.new("RGBA", (SIZE, SIZE), WHITE), fit(logo, int(SIZE * 0.84))).save(os.path.join(RES, "icon.png"))
+    centred(Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0)), fit(logo, int(SIZE * 0.62))).save(os.path.join(RES, "icon-foreground.png"))
+    Image.new("RGBA", (SIZE, SIZE), WHITE).save(os.path.join(RES, "icon-background.png"))
+    # Splash: the logo on white, both themes — the blue script would vanish on
+    # a dark ground.
+    for name in ("splash.png", "splash-dark.png"):
+        centred(Image.new("RGBA", (SPLASH, SPLASH), WHITE), fit(logo, int(SPLASH * 0.34))).save(os.path.join(RES, name))
 
-    # The icon proper.
-    compose_icon(mark, SIZE).save(os.path.join(OUT_DIR, "icon.png"))
+    for d in (os.path.join(ROOT, "app", "www"), os.path.join(ROOT, "dashboard")):
+        logo.save(os.path.join(d, "logo.png"), optimize=True)   # never upscaled
+        fit(mark, 256).save(os.path.join(d, "mark.png"), optimize=True)
 
-    # Adaptive icon: Android composites foreground over background and crops to
-    # the launcher's shape, so the foreground gets a smaller safe fraction and a
-    # transparent ground, and the background is flat colour.
-    fg = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    art = compose_icon(mark, SIZE, with_route=False, safe_fraction=0.42)
-    art_mark = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    # Re-render just the mark, without the tile, for the foreground layer.
-    target = int(SIZE * 0.42)
-    mw, mh = mark.size
-    scale = min(target / mw, target / mh)
-    nw, nh = int(mw * scale), int(mh * scale)
-    m = mark.resize((nw, nh), Image.LANCZOS)
-    art_mark.paste(Image.new("RGBA", (nw, nh), WHITE), ((SIZE - nw) // 2, (SIZE - nh) // 2), m)
-    fg.alpha_composite(art_mark)
-    fg.save(os.path.join(OUT_DIR, "icon-foreground.png"))
-    Image.new("RGBA", (SIZE, SIZE), NAVY).save(os.path.join(OUT_DIR, "icon-background.png"))
-    del art
-
-    # Splash: the mark on navy, centred, with generous margin so it survives
-    # every screen aspect ratio.
-    for name, bg in (("splash.png", NAVY), ("splash-dark.png", NAVY_DEEP)):
-        s = Image.new("RGBA", (SPLASH, SPLASH), bg)
-        target = int(SPLASH * 0.22)
-        scale = min(target / mw, target / mh)
-        nw2, nh2 = int(mw * scale), int(mh * scale)
-        m2 = mark.resize((nw2, nh2), Image.LANCZOS)
-        s.paste(Image.new("RGBA", (nw2, nh2), WHITE), ((SPLASH - nw2) // 2, (SPLASH - nh2) // 2), m2)
-        s.save(os.path.join(OUT_DIR, name))
-
-    for f in sorted(os.listdir(OUT_DIR)):
-        p = os.path.join(OUT_DIR, f)
-        print(f"  {f:24} {os.path.getsize(p) // 1024:>5} KB")
-    print(f"\nWrote {OUT_DIR}")
+    print("Wrote icon, adaptive icon, splash, logo.png and mark.png")
 
 
 if __name__ == "__main__":

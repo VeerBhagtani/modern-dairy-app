@@ -2,30 +2,5 @@
   "firestore": {
     "rules": "backend/firestore.rules",
     "indexes": "backend/firestore.indexes.json"
-  },
-  "hosting": {
-    "public": "dashboard",
-    "ignore": ["firebase.json", "**/.*"],
-    "headers": [
-      {
-        "source": "**/*.@(html|js)",
-        "headers": [{ "key": "Cache-Control", "value": "no-cache, max-age=0, must-revalidate" }]
-      },
-      {
-        "source": "**",
-        "headers": [
-          {
-            "key": "Content-Security-Policy",
-            "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self' https://tiles.openfreemap.org https://*.run.app; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'; upgrade-insecure-requests"
-          },
-          { "key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains; preload" },
-          { "key": "X-Content-Type-Options", "value": "nosniff" },
-          { "key": "X-Frame-Options", "value": "DENY" },
-          { "key": "Referrer-Policy", "value": "no-referrer" },
-          { "key": "Permissions-Policy", "value": "geolocation=(), microphone=(), camera=(), payment=(), usb=()" },
-          { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" }
-        ]
-      }
-    ]
   }
 }

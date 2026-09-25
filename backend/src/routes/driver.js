@@ -431,9 +431,50 @@ router.get('/stops', async (req, res) => {
 // that the distances are this driver's own, learned from their past rides, so
 // the answer reflects the roads they actually use rather than the ones a map
 // would pick for a stranger.
+// A round's name, as the driver typed it: "Camp round", "Kothrud morning".
+function roundName(v) {
+  if (v == null || v === '') return { name: null };
+  if (typeof v !== 'string') return { error: 'The round name must be text.' };
+  const name = v.replace(/\s+/g, ' ').trim();
+  if (name.length < 2 || name.length > 40) return { error: 'Give the round a name of 2 to 40 characters.' };
+  // Plain words only: it is shown to the office and must not carry markup.
+  if (/[<>{}\\]/.test(name)) return { error: 'Use letters, numbers and ordinary punctuation in the name.' };
+  return { name };
+}
+
+// GET /driver/rounds — the driver's saved rounds.
+router.get('/rounds', async (req, res) => {
+  res.json({ success: true, data: { rounds: await repo.getRounds(req.driverId) } });
+});
+
+// POST /driver/rounds { name, stopIds } — save (or replace, by name) a round.
+router.post('/rounds', writeLimiter, async (req, res) => {
+  const body = req.body || {};
+  if (hasForbiddenKeys(body)) return res.status(400).json({ success: false, message: 'Bad request' });
+  const { name, error } = roundName(body.name);
+  if (error || !name) return res.status(400).json({ success: false, message: error || 'Give the round a name.' });
+  const stopIds = [...new Set((Array.isArray(body.stopIds) ? body.stopIds : []).filter(isValidId))].slice(0, 12);
+  if (stopIds.length < 2) return res.status(400).json({ success: false, message: 'A round needs at least two restaurants.' });
+  try {
+    const out = await repo.saveRound(req.driverId, { name, stopIds });
+    res.json({ success: true, data: out });
+  } catch (e) {
+    if (e.status === 400) return res.status(400).json({ success: false, message: e.message });
+    throw e;
+  }
+});
+
+// DELETE /driver/rounds/:roundId
+router.delete('/rounds/:roundId', writeLimiter, async (req, res) => {
+  if (!/^[a-z0-9]{4,32}$/.test(req.params.roundId)) return res.status(400).json({ success: false, message: 'Invalid round' });
+  res.json({ success: true, data: { rounds: await repo.deleteRound(req.driverId, req.params.roundId) } });
+});
+
 router.post('/plan', writeLimiter, async (req, res) => {
   const body = req.body || {};
   if (hasForbiddenKeys(body)) return res.status(400).json({ success: false, message: 'Bad request' });
+  const named = roundName(body.name);
+  if (named.error) return res.status(400).json({ success: false, message: named.error });
 
   const stopIds = [...new Set(
     (Array.isArray(body.stopIds) ? body.stopIds : []).filter(isValidId),
@@ -461,6 +502,18 @@ router.post('/plan', writeLimiter, async (req, res) => {
       returnTo: body.returnToStart ? '__start__' : null,
     });
     if (plan.error) return res.status(400).json({ success: false, message: plan.error, data: plan });
+    if (named.name) {
+      plan.name = named.name;
+      // The office sees which round a driver is on. Only on the driver's own
+      // running ride, and only the name — the plan changes nothing else.
+      const rideId = req.driver.activeRideId;
+      if (rideId) {
+        const ride = await repo.getRide(rideId);
+        if (ride && ride.driverId === req.driverId && ride.status === 'active') {
+          await repo.C.rides().doc(rideId).set({ roundName: named.name, roundNamedAt: Date.now() }, { merge: true });
+        }
+      }
+    }
     return res.json({ success: true, data: plan });
   } catch (e) {
     return res.status(500).json({ success: false, message: 'The route could not be worked out just now.' });

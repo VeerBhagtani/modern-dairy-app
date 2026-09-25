@@ -109,3 +109,19 @@ test('the office password is not in the repository', () => {
 test('Cloud Run is capped at a few instances', () => {
   assert.match(read('.github/workflows/deploy.yml'), /--max-instances 4/);
 });
+
+test('the dashboard and APK are published at the project\'s own address, under a strict CSP', () => {
+  const cfg = JSON.parse(read('firebase-hosting.json'));
+  const all = cfg.hosting.headers.find((h) => h.source === '**').headers;
+  const csp = all.find((h) => h.key === 'Content-Security-Policy').value;
+  assert.doesNotMatch(csp, /script-src[^;]*'unsafe-inline'/, 'no inline scripts');
+  assert.match(csp, /script-src[^;]*https:\/\/maps\.googleapis\.com/);
+  // Google checks a browser key against the referrer; "no-referrer" would
+  // make every map refuse the key.
+  assert.notEqual(all.find((h) => h.key === 'Referrer-Policy').value, 'no-referrer');
+  assert.ok(cfg.hosting.headers.some((h) => h.source === '**/*.apk'));
+  for (const wf of ['dashboard.yml', 'release.yml', 'deploy.yml']) {
+    assert.match(read(`.github/workflows/${wf}`), /bash scripts\/publish-hosting\.sh/, wf);
+  }
+  assert.doesNotMatch(read('dashboard/views.js'), /onclick=/, 'no inline handlers (the CSP would block them)');
+});
