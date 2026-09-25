@@ -11,6 +11,7 @@
 const { asyncRouter } = require('../middleware/asyncRoutes');
 // Every handler's errors reach index.js's error handler; see asyncRoutes.js.
 const router = asyncRouter(require('express').Router());
+const { depotCheck } = require('../services/depotCheck');
 const repo = require('../services/repo');
 const { db, FieldValue } = require('../services/firestore');
 const { writeLimiter, batchLimiter } = require('../middleware/rateLimit');
@@ -84,6 +85,7 @@ router.post('/password', writeLimiter, async (req, res) => {
   }
   const ok = await verifyLogin(req.adminId, currentPassword);
   if (!ok) return res.status(401).json({ success: false, message: 'That is not your current password.' });
+  if (newPassword === currentPassword) return bad(res, 'Choose a password different from the current one.');
 
   await db.collection('admins').doc(req.adminId).set({
     passwordHash: await bcrypt.hash(newPassword, 12),
@@ -219,6 +221,8 @@ router.get('/dashboard', requireRole('viewer'), async (req, res) => {
         unprocessedRides: rides.filter((r) => r.status !== 'active' && !resultByRide.get(r.id)).length,
       },
       alerts: alerts.slice(0, 50),
+      // Cached with the places the engine uses, so this costs no extra read.
+      depot: depotCheck((await repo.loadPlaces()).facilities),
     },
   });
 });
@@ -316,7 +320,10 @@ router.get('/rides/:rideId', requireRole('viewer'), async (req, res) => {
       points: req.query.points === 'raw' ? points : null,
       declarations,
       reviews,
-      processingNote: processing ? null : 'This ride has not been processed yet. No distance has been calculated.',
+      processingNote: processing ? null
+        : ride.processedResultDeletedAt
+          ? `The detailed result was deleted under the ${ride.processedRetentionDays || ''}-day retention policy; the day's totals are kept on the ride.`
+          : 'This ride has not been processed yet. No distance has been calculated.',
     },
   });
 });

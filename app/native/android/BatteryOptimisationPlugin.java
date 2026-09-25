@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.location.LocationManager;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Build;
 import android.os.PowerManager;
@@ -76,6 +77,20 @@ public class BatteryOptimisationPlugin extends Plugin {
             return context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED;
         }
         return context.checkCallingOrSelfPermission(permission) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /* Whether a ride is being recorded, kept where BootReceiver can read it
+     * after a restart (the web view's storage is not readable from there). */
+    @PluginMethod
+    public void setRideActive(PluginCall call) {
+        boolean active = Boolean.TRUE.equals(call.getBoolean("active", false));
+        SharedPreferences prefs = getContext().getSharedPreferences(BootReceiver.PREFS, Context.MODE_PRIVATE);
+        prefs.edit().putBoolean(BootReceiver.KEY_ACTIVE, active).apply();
+        // Recording again: the "not being recorded" notice is out of date.
+        if (active) BootReceiver.clear(getContext());
+        JSObject result = new JSObject();
+        result.put("active", active);
+        call.resolve(result);
     }
 
     @PluginMethod

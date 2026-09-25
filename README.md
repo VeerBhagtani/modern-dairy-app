@@ -239,6 +239,7 @@ Google Cloud has **no hard spending cap**. Set a budget alert.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the stack and why, the database, how GPS becomes kilometres, and what the system refuses to claim
 - [`docs/TESTING.md`](docs/TESTING.md) — automated and manual test plans, and odometer field validation
 - [`docs/PRIVACY.md`](docs/PRIVACY.md) — what is collected, when, who can see it, how long it is kept
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — password rotation, backups, budget, depot, restaurant audit, APK install, rollback
 - [`docs/PLAY_BACKGROUND_LOCATION.md`](docs/PLAY_BACKGROUND_LOCATION.md) — read before submitting to Google Play
 
 ## Before you trust the numbers

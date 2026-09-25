@@ -607,6 +607,15 @@
     return BAT;
   }
 
+  /* Tell the native side whether a ride is being recorded, so a phone restart
+   * mid-ride ends in a "tap to continue" notification rather than silence
+   * (app/native/android/BootReceiver.java). Older APKs lack the method. */
+  function markRideNative(active) {
+    var p = batteryPlugin();
+    if (!p || typeof p.setRideActive !== 'function') return;
+    try { p.setRideActive({ active: !!active }).catch(function () {}); } catch (e) { /* older build */ }
+  }
+
   /* Refresh state.batteryExempt; with askIfNeeded, show Android's own dialog
    * the first time a ride starts on a restricted phone. Once only, on its own:
    * after that the status line and the button offer it, so a driver who said
@@ -835,6 +844,7 @@
       state.backgroundTracking = true;
       state.startError = null;
       render();
+      markRideNative(true);
       // Asked here, once the recorder is known to be running, because this is
       // the moment the answer starts to matter.
       checkBattery(true).then(reportHealth);
@@ -900,6 +910,8 @@
 
   function stopWatcher() {
     var p = bg();
+    // Cleared whenever the ride is known to be over, recorder running or not.
+    if (!riding()) markRideNative(false);
     if (!p || !state.watcherId) return Promise.resolve();
     var id = state.watcherId;
     state.watcherId = null;

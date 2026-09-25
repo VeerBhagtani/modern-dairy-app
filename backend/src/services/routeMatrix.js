@@ -103,4 +103,59 @@ function parseDuration(v) {
   return m ? Number(m[1]) : NaN;
 }
 
-module.exports = { MAX_ELEMENTS, fetchLegs, readMatrix, parseDuration };
+// ---------------------------------------------------------------------------
+// Cache. The same depot-to-restaurant leg is asked about on many mornings; the
+// road between two fixed points does not change from one day to the next, so
+// a paid answer is kept for CACHE_TTL_MS and reused. Keyed by the two points
+// rounded to about 11 m (4 decimals) and the travel mode, so a pin nudged by a
+// metre reuses the answer and a pin moved down the street does not.
+
+const CACHE_TTL_MS = 30 * 24 * 3600 * 1000;
+const MODE = 'DRIVE';
+
+const r4 = (x) => Number(x).toFixed(4);
+function cacheKey(from, to, mode = MODE) {
+  return `${r4(from.lat)},${r4(from.lng)}>${r4(to.lat)},${r4(to.lng)}:${mode}`;
+}
+
+/* fetchLegs, asking Google only about legs not already cached and fresh.
+ *
+ * @param cache  { getMany(keys) -> { key: { distanceM, durationS, cachedAt } },
+ *                 putMany({ key: { distanceM, durationS, cachedAt } }) }
+ * @returns      the same shape as fetchLegs, plus a { hits, misses } count
+ *               on a non-enumerable `stats` property.
+ */
+async function cachedFetchLegs(legs, apiKey, { cache, nowMs = Date.now(), ttlMs = CACHE_TTL_MS, ...opts } = {}) {
+  const out = {};
+  if (!legs || !legs.length) return withStats(out, 0, 0);
+  const keyOf = (l) => cacheKey(l.from, l.to);
+  let cached = {};
+  try { cached = cache ? (await cache.getMany([...new Set(legs.map(keyOf))])) || {} : {}; } catch { cached = {}; }
+  const missing = [];
+  for (const l of legs) {
+    const hit = cached[keyOf(l)];
+    if (hit && Number.isFinite(hit.distanceM) && nowMs - hit.cachedAt < ttlMs) {
+      out[`${l.from.id}>${l.to.id}`] = { distanceM: hit.distanceM, durationS: hit.durationS };
+    } else missing.push(l);
+  }
+  const hits = legs.length - missing.length;
+  if (!missing.length) return withStats(out, hits, 0);
+  const fresh = await fetchLegs(missing, apiKey, opts);
+  const toStore = {};
+  for (const l of missing) {
+    const got = fresh[`${l.from.id}>${l.to.id}`];
+    if (!got) continue;   // no road found stays unknown, and is not cached
+    out[`${l.from.id}>${l.to.id}`] = got;
+    toStore[keyOf(l)] = { ...got, cachedAt: nowMs };
+  }
+  // A cache that cannot be written costs money next time, not correctness now.
+  if (cache && Object.keys(toStore).length) await Promise.resolve(cache.putMany(toStore)).catch(() => {});
+  return withStats(out, hits, missing.length);
+}
+
+function withStats(out, hits, misses) {
+  Object.defineProperty(out, 'stats', { value: { hits, misses }, enumerable: false });
+  return out;
+}
+
+module.exports = { MAX_ELEMENTS, CACHE_TTL_MS, fetchLegs, cachedFetchLegs, cacheKey, readMatrix, parseDuration };

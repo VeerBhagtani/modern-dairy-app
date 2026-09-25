@@ -15,7 +15,7 @@ Android app, the ride lifecycle or the Firestore rules.
 npm run test:drivers
 ```
 
-112 tests, no database and no network. What they cover:
+About 400 tests (`npm test`), no database and no network. What they cover:
 
 | File | Covers |
 |---|---|
@@ -58,6 +58,17 @@ tunnel gap and a 4 km multipath spike. It asserts:
 
 ## 2. Manual — Android driver app
 
+Record, for every run: phone make/model, Android version, APK versionCode
+(Settings → Apps → Modern Drivers), and the Diagnostics screen (tap the
+version line five times) before and after. Minimum set: one Android 14+
+phone, one Android 11–13, and one Xiaomi/Realme/Oppo/Vivo (aggressive battery
+manager).
+
+**The first install of a permanently-signed APK over an older debug-signed
+one fails with "App not installed".** Let the old app empty its queue (Waiting
+to send = 0), uninstall it, then install. Every later update installs over
+the top.
+
 Do these on a real phone on a real network. An emulator will not reproduce the
 OEM battery-manager behaviour that causes most real gaps.
 
@@ -74,7 +85,10 @@ OEM battery-manager behaviour that causes most real gaps.
 8. Grant "Allow all the time" → tracking survives the screen going off.
 9. Press Start Ride twice quickly → one ride, not two. Check the dashboard shows one.
 10. Force-stop the app, reopen → it re-attaches to the same ride and resumes tracking.
-11. Reboot the phone, reopen the app → it re-attaches. (It does **not** resume by itself before being opened — Android does not guarantee that, and the app does not claim it does.)
+11. Reboot the phone mid-ride, unlock it, do **not** open the app → within a minute a notification "Your ride is not being recorded" appears. Tap it → the app opens, re-attaches to the same ride and the status turns green. (Android 10+ forbids restarting location tracking from the background, so the app asks rather than resuming silently. On Android 13+ this needs the notification permission.)
+11a. Reboot with **no** ride running → no notification.
+11b. Mid-ride, let the office stop the ride while the phone is off, then reboot → the notification appears; tapping it opens the app, which shows the ride as stopped and does not record.
+11c. Install a newer APK over the old one mid-ride → the same notification (app updates also end recording).
 
 ### Tracking
 12. Walk/drive 2 km → the dashboard marker follows; "Points sent" climbs.

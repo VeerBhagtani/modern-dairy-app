@@ -92,6 +92,23 @@ if (!xml.includes('BackgroundGeolocationService')) {
   );
 }
 
+// After a restart or an app update, remind a driver whose ride was being
+// recorded to reopen the app (app/native/android/BootReceiver.java). Android
+// does not allow restarting location tracking from here, so it only notifies.
+if (!xml.includes('.BootReceiver"')) {
+  xml = xml.replace(
+    /<\/application>/,
+    '        <receiver android:name=".BootReceiver" android:exported="false">\n'
+    + '            <intent-filter>\n'
+    + '                <action android:name="android.intent.action.BOOT_COMPLETED" />\n'
+    + '                <action android:name="android.intent.action.QUICKBOOT_POWERON" />\n'
+    + '                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />\n'
+    + '            </intent-filter>\n'
+    + '        </receiver>\n'
+    + '    </application>',
+  );
+}
+
 if (xml === before) {
   console.log('AndroidManifest.xml already patched — nothing to do.');
 } else {

@@ -11,7 +11,7 @@ const freshness = require('./freshness');
 const { processRideData } = require('../drivers/pipeline');
 const { evaluateResultAlerts } = require('../drivers/alerts');
 const legObservations = require('../drivers/legObservations');
-const { autoCloseStaleRides, enforceRetention } = require('../jobs/maintenance');
+const { autoCloseStaleRides, enforceRetention, enforceProcessedRetention, enforceEventRetention } = require('../jobs/maintenance');
 
 const RETENTION_EVERY_MS = 6 * 3600 * 1000;
 let lastRetentionAt = 0;
@@ -141,6 +141,13 @@ const housekeeping = freshness.makeHousekeeper(async (nowMs) => {
     lastRetentionAt = nowMs;
     retention = await enforceRetention(config, nowMs, { maxRides: 20 })
       .then((r) => ({ deleted: r.deleted, kept: r.skipped.length }))
+      .catch((e) => ({ error: String(e.message || e) }));
+    // Each independent: one failing must not stop the others.
+    retention.results = await enforceProcessedRetention(config, nowMs, { maxRides: 20 })
+      .then((r) => ({ deleted: r.deleted, kept: r.skipped.length }))
+      .catch((e) => ({ error: String(e.message || e) }));
+    retention.events = await enforceEventRetention(config, nowMs, { maxDelete: 2000 })
+      .then((r) => ({ deleted: r.deleted, kept: r.keptForActiveRides }))
       .catch((e) => ({ error: String(e.message || e) }));
   }
   return { dayClosed, timedOut, retention };

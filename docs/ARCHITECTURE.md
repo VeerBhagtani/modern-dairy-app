@@ -197,17 +197,19 @@ Storage: ~250 bytes/point ⇒ ~14 MB/day ⇒ ~5 GB/year
 That is comfortable. It is also why points are uploaded in **batches of up to
 200 in one `BulkWriter` commit** rather than one HTTP request per fix.
 
-Retention (`drivers_config.retention`), all configurable:
+Retention (`drivers_config.retention`), all configurable, all run by
+`backend/src/jobs/maintenance.js` from the six-hourly housekeeping. Every
+deletion is idempotent, writes an audit row, and never touches an active ride
+or a ride with no processed result:
 
-* `rawGpsDays` (default 180) — raw points are deleted after this by
-  `backend/src/jobs/retention.js`, and **only** after the ride has processed
-  results, so reports stay auditable.
-* `processedDays` (default 1095) — segments, distances and audit stay 3 years.
-* Audit, review history and alerts are **never** auto-deleted inside the
-  retention window; deleting them would defeat their purpose.
-* Archival: rides older than `rawGpsDays` keep `ride_processing` (a few kB each)
-  and lose only the point cloud. Export the point cloud to Cloud Storage first
-  if it must be kept longer — `retention.js` supports an `archiveTo` hook.
+* `rawGpsDays` (default 180) — the `gps_raw` points, only once the ride has a
+  processed result, so reports stay auditable.
+* `processedDays` (default 1095) — `ride_processing/{ride}`, its segments and
+  its `delivery_matches`. The day's km totals are first copied onto the ride
+  as `retainedSummary`, so old months still add up.
+* `trackingEventDays` (default 365) — `tracking_events`, except events of a
+  ride still running.
+* Audit, review history and alerts are **never** auto-deleted.
 
 ---
 

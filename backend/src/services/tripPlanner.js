@@ -74,8 +74,9 @@ async function planTrip(driverId, { start, stopIds, returnTo = null, useRoadApi 
       const apiKey = await getSecret('geocoding');
       if (apiKey) {
         roadApi.asked = legs.length;
-        apiPrior = await routeMatrix.fetchLegs(legs, apiKey, { departureTime: Date.now() });
+        apiPrior = await routeMatrix.cachedFetchLegs(legs, apiKey, { cache: repo.routeCache, departureTime: Date.now() });
         roadApi.answered = Object.keys(apiPrior).length;
+        roadApi.cached = apiPrior.stats ? apiPrior.stats.hits : 0;
       }
     } catch (e) {
       // A plan built on straight lines is worse than one built on roads, but

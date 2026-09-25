@@ -34,6 +34,7 @@ const C = {
   alerts: () => db.collection('drivers_alerts'),
   integrationLogs: () => db.collection('integration_logs'),
   audit: () => db.collection('drivers_audit_log'),
+  routeCache: () => db.collection('route_cache'),
   config: () => db.collection('drivers_config').doc('singleton'),
 };
 
@@ -906,7 +907,27 @@ async function loadProcessing(rideId, { withSegments = true } = {}) {
   return { ...head, segments: segs.docs.map((d) => d.data()) };
 }
 
+// Paid road distances, reused (services/routeMatrix.js decides freshness).
+const routeCache = {
+  async getMany(keys) {
+    if (!keys.length) return {};
+    const snaps = await db.getAll(...keys.map((k) => C.routeCache().doc(k)));
+    const out = {};
+    for (const s of snaps) if (s.exists) out[s.id] = s.data();
+    return out;
+  },
+  async putMany(entries) {
+    const writer = db.bulkWriter();
+    for (const [k, v] of Object.entries(entries)) {
+      // expiresAt lets a Firestore TTL policy on route_cache clear old rows.
+      writer.set(C.routeCache().doc(k), { ...v, expiresAt: new Date(v.cachedAt + 31 * 24 * 3600 * 1000) });
+    }
+    await writer.close();
+  },
+};
+
 module.exports = {
+  routeCache,
   getRounds, saveRound, deleteRound,
   getStopNames, addStopName, removeStopName,
   C, dayKeyFor, endOfDayMs, closeIfDayOver, acquireCalcLease, releaseCalcLease, markCalcFailed, markInputsChanged,

@@ -18,6 +18,8 @@ const path = require('path');
 const androidDir = process.argv[2] || path.join(__dirname, '..', 'app', 'android');
 const sourceDir = path.join(__dirname, '..', 'app', 'native', 'android');
 const PLUGINS = ['BatteryOptimisationPlugin'];
+// Copied too, but not plugins: nothing to register (the manifest declares them).
+const OTHERS = ['BootReceiver'];
 
 function findMainActivity(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -48,7 +50,7 @@ if (!mainActivity) {
 // fail here, saying why.
 const activitySrc = fs.readFileSync(mainActivity, 'utf8');
 const pkg = (activitySrc.match(/^package\s+([\w.]+);/m) || [])[1];
-for (const name of PLUGINS) {
+for (const name of PLUGINS.concat(OTHERS)) {
   const src = fs.readFileSync(path.join(sourceDir, `${name}.java`), 'utf8');
   const srcPkg = (src.match(/^package\s+([\w.]+);/m) || [])[1];
   if (srcPkg !== pkg) {

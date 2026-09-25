@@ -24,6 +24,7 @@
 
 const repo = require('./repo');
 const { resolveConfig, DEFAULTS } = require('../drivers/config');
+const { depotCheck } = require('./depotCheck');
 
 const DAY = 24 * 3600 * 1000;
 
@@ -68,6 +69,8 @@ async function gather({ now = Date.now() } = {}) {
     facilities: facilitySnap.size,
     listLocked: lockState.locked,
   };
+  // Counts and a distance only — no coordinates leave (rule 2).
+  const depot = depotCheck(facilitySnap.docs.map((d) => d.data()));
 
   // ── are drivers actually using it ──────────────────────────────────────
   const activeDrivers = drivers.filter((d) => d.status === 'active');
@@ -170,6 +173,7 @@ async function gather({ now = Date.now() } = {}) {
   return {
     generatedAt: now,
     locations,
+    depot,
     fleet,
     calculation,
     evidence,

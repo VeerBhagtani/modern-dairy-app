@@ -121,6 +121,12 @@ function requireAdmin() {
       }
       req.adminId = payload.sub;
       req.adminRole = ROLES[account.role] ? account.role : 'viewer';
+      // A seeded or reset password was not chosen by this office, so until it
+      // is replaced the account can do one thing: replace it. Enforced here,
+      // not only by the dashboard's dialog, which a script would never see.
+      if (account.mustChangePassword === true && req.path !== '/password') {
+        return res.status(403).json({ success: false, code: 'PASSWORD_CHANGE_REQUIRED', message: 'Change the password this account was set up with before continuing.' });
+      }
       return next();
     } catch {
       return res.status(401).json({ success: false, message: 'Your session has expired. Sign in again.' });

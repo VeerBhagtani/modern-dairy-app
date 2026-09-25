@@ -4,7 +4,8 @@
 //     status, a reason, an audit row and a tracking event)
 //  2. Raise and resolve live tracking alerts
 //  3. Process finished rides that have no result yet
-//  4. Enforce the retention policy on raw GPS
+//  4. Enforce the retention policy: raw GPS (180 d), processed results
+//     (3 years), tracking events (1 year)
 //
 // Each step is independent and failure-isolated: a retention error must not
 // stop rides being auto-closed.
@@ -122,6 +123,106 @@ async function enforceRetention(cfg, nowMs, { dryRun = false, maxRides = 50, max
   return { deleted: deleted.length, skipped, scanned, detail: deleted };
 }
 
+// ---------------------------------------------------------------------------
+// Processed results (3 years) and tracking events (1 year).
+//
+// Same rules as raw GPS: never an active ride, never a ride with no result,
+// idempotent (a second run finds nothing left to do), and every deletion
+// leaves an audit row. The ride document itself is kept, with the day's
+// kilometre totals copied onto it first, so a four-year-old month still adds
+// up even though its segment-by-segment detail is gone.
+
+/* What to do with one ride older than the processed-result cutoff. Pure. */
+function processedRetentionDecision(ride) {
+  if (ride.status === 'active') return 'keep';
+  if (ride.processedResultDeletedAt) return 'done';
+  if (!ride.processedAt) return 'keep';
+  return 'delete';
+}
+
+/* The totals worth keeping once the detail goes. Pure. */
+function retainedSummary(head) {
+  const d = head && head.distance;
+  if (!d || !d.km) return null;
+  return { km: { ...d.km }, calcVersion: head.calcVersion || null, reconciled: !!(d.reconciliation && d.reconciliation.ok) };
+}
+
+async function enforceProcessedRetention(cfg, nowMs, { dryRun = false, maxRides = 20, maxScan = 2000 } = {}) {
+  const days = cfg.retention.processedDays;
+  const cutoff = nowMs - days * 24 * 3600 * 1000;
+  const deleted = []; const skipped = [];
+  let last = null; let scanned = 0;
+  /* eslint-disable no-await-in-loop */
+  while (deleted.length < maxRides && scanned < maxScan) {
+    let q = repo.C.rides().where('startedAt', '<', cutoff).orderBy('startedAt').limit(200);
+    if (last) q = q.startAfter(last);
+    const snap = await q.get();
+    if (snap.empty) break;
+    scanned += snap.size;
+    last = snap.docs[snap.docs.length - 1];
+    for (const doc of snap.docs) {
+      if (deleted.length >= maxRides) break;
+      const ride = { id: doc.id, ...doc.data() };
+      const what = processedRetentionDecision(ride);
+      if (what === 'done') continue;
+      if (what === 'keep') { skipped.push({ rideId: ride.id, reason: ride.status === 'active' ? 'active ride' : 'no processed result' }); continue; }
+      if (dryRun) { deleted.push({ rideId: ride.id, dryRun: true }); continue; }
+      const headDoc = await repo.C.processing().doc(ride.id).get();
+      const summary = headDoc.exists ? retainedSummary(headDoc.data()) : null;
+      const segRefs = await repo.C.segments(ride.id).listDocuments();
+      const matchSnap = await repo.C.matches().where('rideId', '==', ride.id).select().get();
+      const writer = repo.C.rides().firestore.bulkWriter();
+      segRefs.forEach((ref) => writer.delete(ref));
+      matchSnap.docs.forEach((d) => writer.delete(d.ref));
+      writer.delete(repo.C.processing().doc(ride.id));
+      await writer.close();
+      await repo.C.rides().doc(ride.id).update({ processedResultDeletedAt: nowMs, processedRetentionDays: days, retainedSummary: summary });
+      await repo.writeAudit({
+        adminId: 'system:retention',
+        action: 'result.retention_delete',
+        target: ride.id,
+        after: { retentionDays: days, segments: segRefs.length, matches: matchSnap.size, summaryKept: !!summary },
+      });
+      deleted.push({ rideId: ride.id, segments: segRefs.length, matches: matchSnap.size });
+    }
+    if (snap.size < 200) break;
+  }
+  /* eslint-enable no-await-in-loop */
+  return { deleted: deleted.length, skipped, scanned, detail: deleted };
+}
+
+async function enforceEventRetention(cfg, nowMs, { dryRun = false, maxDelete = 2000 } = {}) {
+  const days = cfg.retention.trackingEventDays;
+  const cutoff = nowMs - days * 24 * 3600 * 1000;
+  // An event that belongs to a ride still running is kept, however old; a ride
+  // that has been open for a year is itself something to investigate.
+  const active = new Set((await repo.activeRides()).map((r) => r.id));
+  let deleted = 0; let kept = 0; let last = null;
+  /* eslint-disable no-await-in-loop */
+  while (deleted < maxDelete) {
+    let q = repo.C.events().where('at', '<', cutoff).orderBy('at').limit(400);
+    if (last) q = q.startAfter(last);
+    const snap = await q.get();
+    if (snap.empty) break;
+    last = snap.docs[snap.docs.length - 1];
+    const doomed = snap.docs.filter((d) => !active.has(d.get('rideId')));
+    kept += snap.size - doomed.length;
+    const batch = doomed.slice(0, maxDelete - deleted);
+    if (!dryRun && batch.length) {
+      const writer = repo.C.events().firestore.bulkWriter();
+      batch.forEach((d) => writer.delete(d.ref));
+      await writer.close();
+    }
+    deleted += batch.length;
+    if (snap.size < 400) break;
+  }
+  /* eslint-enable no-await-in-loop */
+  if (deleted && !dryRun) {
+    await repo.writeAudit({ adminId: 'system:retention', action: 'events.retention_delete', after: { retentionDays: days, deleted, keptForActiveRides: kept } });
+  }
+  return { deleted, keptForActiveRides: kept, dryRun };
+}
+
 async function runMaintenance({ processOne, dryRunRetention = false } = {}) {
   const { config } = await repo.getConfig({ fresh: true });
   const nowMs = Date.now();
@@ -135,8 +236,14 @@ async function runMaintenance({ processOne, dryRunRetention = false } = {}) {
   await step('alerts', () => reconcileAlerts(config, nowMs));
   if (processOne) await step('processing', () => processFinishedRides(processOne));
   await step('retention', () => enforceRetention(config, nowMs, { dryRun: dryRunRetention }));
+  await step('resultRetention', () => enforceProcessedRetention(config, nowMs, { dryRun: dryRunRetention }));
+  await step('eventRetention', () => enforceEventRetention(config, nowMs, { dryRun: dryRunRetention }));
 
   return out;
 }
 
-module.exports = { runMaintenance, autoCloseStaleRides, reconcileAlerts, processFinishedRides, enforceRetention, retentionDecision };
+module.exports = {
+  runMaintenance, autoCloseStaleRides, reconcileAlerts, processFinishedRides,
+  enforceRetention, retentionDecision,
+  enforceProcessedRetention, processedRetentionDecision, retainedSummary, enforceEventRetention,
+};
