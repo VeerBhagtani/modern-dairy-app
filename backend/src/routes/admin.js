@@ -36,6 +36,7 @@ const manual = require('../services/orderSource/manual');
 // services/freshness.js.
 const { processOne, bringUpToDate, housekeeping } = require('../services/rideProcessing');
 const { driverHistory } = require('../services/history');
+const { buildReplay } = require('../services/replay');
 
 // The role was established at sign-in and is carried in the admin token, which
 // requireAdmin() has already verified, so this is a comparison rather than a
@@ -286,9 +287,10 @@ router.get('/rides/:rideId', requireRole('viewer'), async (req, res) => {
   // last calculated.
   const fresh = await bringUpToDate([{ id: rideId, ...ride }], { maxRides: 1 });
   if (fresh.calculated.length) ride = await repo.getRide(rideId);
+  const wantPoints = req.query.points === '1' || req.query.points === 'raw';
   const [processing, points, declarations, reviews] = await Promise.all([
     repo.loadProcessing(rideId),
-    req.query.points === '1' ? repo.loadPoints(rideId) : Promise.resolve(null),
+    wantPoints ? repo.loadPoints(rideId) : Promise.resolve(null),
     repo.declarationsForRide(rideId),
     repo.reviewsForRide(rideId),
   ]);
@@ -297,9 +299,12 @@ router.get('/rides/:rideId', requireRole('viewer'), async (req, res) => {
     data: {
       ride,
       processing,
-      // Raw points, exactly as uploaded. Processing never edits these, and the
-      // replay map draws from them so a reviewer sees the real track.
-      points,
+      // The replay: every fix, with whether it counted and what the stretch
+      // ending at it counted as, straight from the same track cleaning the
+      // kilometres came from.
+      replay: points ? buildReplay(points, processing) : null,
+      // Raw points, exactly as uploaded, only when asked for by name.
+      points: req.query.points === 'raw' ? points : null,
       declarations,
       reviews,
       processingNote: processing ? null : 'This ride has not been processed yet. No distance has been calculated.',
@@ -1310,6 +1315,18 @@ router.get('/restaurants/export.csv', requireRole('viewer'), async (req, res) =>
 // ---------------------------------------------------------------------------
 // Orders / integration
 // ---------------------------------------------------------------------------
+
+// GET /admin/maps-config — which maps to draw, and the browser key for them.
+//
+// The browser key is not a secret in the way the others are: a page that
+// draws a Google map has to hand its key to the browser. It is protected by
+// the website restrictions on it in the Google Cloud console. It is served
+// here, after sign-in, rather than written into the public repository, so it
+// can be changed without a rebuild and is not indexed by every code search.
+router.get('/maps-config', requireRole('viewer'), async (req, res) => {
+  const key = await getSecret('maps_browser');
+  res.json({ success: true, data: key ? { provider: 'google', key } : { provider: 'free' } });
+});
 
 // GET /admin/integration/secrets
 //

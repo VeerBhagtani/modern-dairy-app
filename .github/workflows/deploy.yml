@@ -158,7 +158,7 @@ jobs:
           # grant has something to attach to. A secret with no version reads
           # back as "not configured", which is exactly right until the office
           # saves a key from the dashboard.
-          for SECRET in jwt-signing-key geocoding-api-key anthropic-api-key gofrugal-api-key gofrugal-outlet-id gofrugal-company-id; do
+          for SECRET in jwt-signing-key geocoding-api-key anthropic-api-key maps-browser-key gofrugal-api-key gofrugal-outlet-id gofrugal-company-id; do
             gcloud secrets describe "$SECRET" --project "$P" >/dev/null 2>&1 \
               || gcloud secrets create "$SECRET" --project "$P" --replication-policy=automatic --quiet
             gcloud secrets add-iam-policy-binding "$SECRET" \

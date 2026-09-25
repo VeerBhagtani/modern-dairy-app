@@ -17,6 +17,12 @@ const KNOWN_SECRETS = {
   // Anthropic, for the maintenance audit. Absent means the Maintenance screen
   // says it needs a key rather than reporting nothing and looking healthy.
   anthropic: 'anthropic-api-key',
+  // Google Maps in the browser: the dashboard's maps and search, and the map
+  // in the driver app. A separate key from `geocoding`, because this one is
+  // handed to browsers and phones and so is visible to anyone signed in; it is
+  // protected by the website restrictions set on it in the Google console, not
+  // by being secret. The geocoding key never leaves the server.
+  maps_browser: 'maps-browser-key',
   gofrugal: 'gofrugal-api-key',
   gofrugal_outlet_id: 'gofrugal-outlet-id',
   gofrugal_company_id: 'gofrugal-company-id',

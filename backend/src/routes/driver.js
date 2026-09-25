@@ -21,6 +21,7 @@ const { ALERT } = require('../drivers/alerts');
 const tripPlanner = require('../services/tripPlanner');
 const { canVisit } = require('../drivers/eligibility');
 const { driverHistory } = require('../services/history');
+const { getSecret } = require('../services/secretManager');
 
 // Shown in the app before the driver registers, and again on the main
 // screen whenever tracking is on. Kept here, server-side, so the wording can be
@@ -261,6 +262,13 @@ router.post('/rides/:rideId/points', gpsIngestLimiter, async (req, res) => {
       rideActive: ride.status === 'active',
     },
   });
+});
+
+// GET /driver/maps-config — the same browser key the dashboard uses, for the
+// map on the phone. See routes/admin.js for why a browser key is handed out.
+router.get('/maps-config', async (req, res) => {
+  const key = await getSecret('maps_browser');
+  res.json({ success: true, data: key ? { provider: 'google', key } : { provider: 'free' } });
 });
 
 // GET /driver/history?days=30 — this driver's own days, newest first.

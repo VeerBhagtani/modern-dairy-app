@@ -201,12 +201,98 @@
   }
 
   // ── map ────────────────────────────────────────────────────────────────
-  // MapLibre GL with OpenFreeMap tiles: open data, no API key, no billing
-  // account, no per-view charge. The style URL below is the only line that
-  // knows which map provider this is.
+  // Google Maps when the office has saved a browser key (the server hands it
+  // out at /driver/maps-config), MapLibre with the free OpenFreeMap tiles
+  // otherwise — and whenever Google cannot be reached or refuses the key, so
+  // the driver is never left looking at a grey box. The key is remembered on
+  // the phone, so the map comes up the same way on the next start even before
+  // the server answers.
   var map = null, marker = null, markerArrow = null, mapReady = false, followMap = true, mapShown = false;
+  var gmap = null;            // { map, casing, route, start, acc, dot, arrow } when Google is in use
+  var mapStarting = false;
+
+  function mapsConfig() {
+    var cached = LS.get('mapsCfg', null);
+    var fresh = !HAS_SERVER || !(state.tokens && state.tokens.accessToken)
+      ? Promise.resolve(null)
+      : apiFetch('/driver/maps-config').then(function (c) {
+        // A key Google refused on this phone stays refused until the office replaces it.
+        if (cached && cached.refusedKey && c && c.key === cached.refusedKey) return cached;
+        LS.set('mapsCfg', c);
+        return c;
+      }).catch(function () { return null; });
+    // A remembered answer is used at once; the fresh one takes effect next start.
+    if (cached) return Promise.resolve(cached);
+    return Promise.race([fresh, new Promise(function (res) { setTimeout(function () { res(null); }, 4000); })]);
+  }
+
+  function loadGoogle(key) {
+    return new Promise(function (resolve, reject) {
+      if (window.google && google.maps && google.maps.Map) { resolve(); return; }
+      window.gm_authFailure = function () {
+        // Refused key: forget it and fall back to the free map now.
+        LS.set('mapsCfg', { provider: 'free', refusedKey: key });
+        if (gmap) { gmap = null; var el = $('map'); if (el) el.innerHTML = ''; initFreeMap(); }
+      };
+      window.__mdGoogleMapsLoaded = function () {
+        google.maps.importLibrary('maps').then(function () { resolve(); }, reject);
+      };
+      var s = document.createElement('script');
+      s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(key)
+        + '&v=weekly&loading=async&region=IN&language=en&callback=__mdGoogleMapsLoaded';
+      s.async = true;
+      s.onerror = function () { reject(new Error('Google Maps unreachable')); };
+      document.head.appendChild(s);
+      setTimeout(function () { reject(new Error('Google Maps timed out')); }, 12000);
+    });
+  }
 
   function initMap() {
+    if (map || gmap || mapStarting) return;
+    mapStarting = true;
+    mapsConfig().then(function (cfg) {
+      if (!(cfg && cfg.provider === 'google' && cfg.key)) return false;
+      return loadGoogle(cfg.key).then(function () { initGoogleMap(); return true; });
+    }).catch(function () { return false; }).then(function (google_) {
+      mapStarting = false;
+      if (!google_) initFreeMap();
+    });
+  }
+
+  function initGoogleMap() {
+    var el = $('map');
+    if (!el || gmap) return;
+    var c = state.lastFix ? { lat: state.lastFix.lat, lng: state.lastFix.lng } : { lat: (CFG.MAP_CENTER || [73.8567, 18.5204])[1], lng: (CFG.MAP_CENTER || [73.8567, 18.5204])[0] };
+    var m = new google.maps.Map(el, {
+      center: c, zoom: 16, disableDefaultUI: true, zoomControl: true, clickableIcons: false, gestureHandling: 'greedy',
+    });
+    gmap = {
+      map: m,
+      acc: new google.maps.Circle({ map: m, strokeColor: '#1B2A6B', strokeOpacity: 0.25, strokeWeight: 1, fillColor: '#1B2A6B', fillOpacity: 0.1, clickable: false, visible: false, center: c, radius: 1 }),
+      casing: new google.maps.Polyline({ map: m, strokeColor: '#fff', strokeOpacity: 0.9, strokeWeight: 8, clickable: false, zIndex: 1 }),
+      route: new google.maps.Polyline({ map: m, strokeColor: '#1B2A6B', strokeOpacity: 1, strokeWeight: 4.5, clickable: false, zIndex: 2 }),
+      start: new google.maps.Marker({ map: null, clickable: false, zIndex: 5,
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: '#fff', fillOpacity: 1, strokeColor: '#1a7a4c', strokeWeight: 3 } }),
+      dot: new google.maps.Marker({ map: null, clickable: false, zIndex: 10,
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 10, fillColor: '#1B2A6B', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 3 } }),
+      arrow: new google.maps.Marker({ map: null, clickable: false, zIndex: 11 }),
+    };
+    m.addListener('dragstart', function () { followMap = false; });
+    mapReady = true;
+    drawRoute();
+  }
+
+  function mapCenter(lng, lat) {
+    if (gmap) gmap.map.setCenter({ lat: lat, lng: lng });
+    else if (map) map.setCenter([lng, lat]);
+  }
+  function mapResize() {
+    if (map) map.resize();
+    // A Google map re-measures itself when its container changes size.
+    drawRoute();
+  }
+
+  function initFreeMap() {
     if (map || !window.maplibregl) return;
     try { if (maplibregl.setWorkerUrl) maplibregl.setWorkerUrl('vendor/maplibre/maplibre-gl-csp-worker.js'); } catch (e) {}
     try {
@@ -303,6 +389,7 @@
   }
 
   function drawRoute() {
+    if (gmap) { drawRouteGoogle(); return; }
     if (!map || !mapReady) return;
     // Before a ride there is no route, but there is a position — the marker
     // follows the latest fix either way, so the driver sees themself on the map
@@ -346,6 +433,32 @@
     }
 
     if (followMap) map.easeTo({ center: last, duration: 700 });
+  }
+
+  // The same picture on Google Maps: route with a white casing, start dot,
+  // accuracy circle, the driver's disc and, when the phone knows it, an arrow
+  // for the direction of travel.
+  function drawRouteGoogle() {
+    var g = gmap;
+    var ll = function (c) { return { lat: c[1], lng: c[0] }; };
+    var path = state.route.map(ll);
+    g.casing.setPath(path);
+    g.route.setPath(path);
+    if (state.route.length > 1) { g.start.setPosition(path[0]); g.start.setMap(g.map); } else g.start.setMap(null);
+    var lastC = state.route[state.route.length - 1] || (state.lastFix ? [state.lastFix.lng, state.lastFix.lat] : null);
+    if (!lastC) return;
+    var last = ll(lastC);
+    var r = state.lastAccuracyM;
+    if (r && r > 5 && r < 500) { g.acc.setCenter(last); g.acc.setRadius(r); g.acc.setVisible(true); } else g.acc.setVisible(false);
+    g.dot.setPosition(last); g.dot.setMap(g.map);
+    if (state.lastHeading == null) g.arrow.setMap(null);
+    else {
+      // A small arrowhead just ahead of the disc, turned about the position.
+      g.arrow.setIcon({ path: 'M 0,-4.4 L 1.1,-2.6 L 0,-3.1 L -1.1,-2.6 Z', scale: 5, rotation: state.lastHeading,
+        fillColor: '#1B2A6B', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 1.4 });
+      g.arrow.setPosition(last); g.arrow.setMap(g.map);
+    }
+    if (followMap) g.map.panTo(last);
   }
 
   // ── location on open ───────────────────────────────────────────────────
@@ -414,7 +527,7 @@
         state.lastAccuracyM = f.acc == null ? null : f.acc;
         render();                       // shows the map container first…
         initMap();                      // …so MapLibre measures a real height
-        if (map) map.setCenter([f.lng, f.lat]);
+        mapCenter(f.lng, f.lat);
         drawRoute();
       });
     }).catch(function () {
@@ -1057,7 +1170,7 @@
     show($('mapEmpty'), !wantMap);
     if (wantMap && !mapShown) {
       mapShown = true;
-      if (map) setTimeout(function () { map.resize(); drawRoute(); }, 0);
+      if (map || gmap) setTimeout(mapResize, 0);
     } else if (!wantMap) {
       mapShown = false;
     }
