@@ -322,3 +322,22 @@ test('the calculation version bump recalculates recent rides', () => {
   assert.equal(needsCalc({ ...base, calcVersion: '1.0.0' }, now), true);
   assert.equal(needsCalc({ ...base, calcVersion: '1.0.0', startedAt: now - 90 * 864e5 }, now), false, 'old rides keep their stamped result');
 });
+
+test('geofence: stopping nearby but outside the radius is not a visit', () => {
+  // Five minutes parked 150 m from A (radius 80 m).
+  const pts = route(at(1500, 0), [{ to: at(3150, 0), waitAfter: 300 }, { to: at(4500, 0) }]);
+  const r = run(pts);
+  assert.equal(r.visits.length, 0);
+  const stop = r.segments.find((s) => s.kind === 'stop');
+  assert.ok(stop.needsReview, 'flagged: a customer is close by');
+});
+
+test('geofence: GPS less accurate than the geofence cannot prove a visit', () => {
+  const pts = route(DEPOT, [{ dwellSec: 300 }, { to: A, waitAfter: 300 }, { to: DEPOT, waitAfter: 300 }])
+    .map((p) => (haversineM(p, A) < 100 ? { ...p, accuracyM: 150 } : p));
+  const r = run(pts);
+  const visit = r.segments.find((s) => s.type === 'LIKELY_RESTAURANT_VISIT');
+  assert.equal(visit.confidence, 'LOW');
+  assert.ok(visit.evidence.some((e) => e.code === 'poor_gps_for_geofence'));
+  assert.equal(r.distance.metres.verifiedBusiness + r.distance.metres.likelyBusiness, 0, 'no business on unproven evidence');
+});

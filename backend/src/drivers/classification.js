@@ -151,7 +151,14 @@ function classifySegments(segments, points, ctx, cfg) {
 
       const { support, otherDriver } = ordersSupporting(ctx.orders, place.customerId, ctx.driverId, seg.startTs, seg.endTs, cfg);
 
-      if (restaurantHits.length > 1) {
+      // Fixes typically less accurate than the geofence is wide cannot say
+      // the driver was inside it: a visit on that evidence is a guess.
+      const poorFix = Number.isFinite(stop.medianAccuracyM) && stop.medianAccuracyM > hit.radiusM;
+      if (poorFix) {
+        seg.confidence = CONFIDENCE.LOW;
+        seg.needsReview = true;
+        evidence.push(ev('poor_gps_for_geofence', `typical GPS accuracy ${stop.medianAccuracyM} m is wider than the ${Math.round(hit.radiusM)} m geofence — the visit is not proven`));
+      } else if (restaurantHits.length > 1) {
         // Two geofences over one stop: a mall, a market lane, or radii set too
         // wide. We refuse to pick. A human decides.
         seg.confidence = CONFIDENCE.LOW;
@@ -381,9 +388,12 @@ function classifySegments(segments, points, ctx, cfg) {
     while (k < out.length && isTransit(out[k])) k += 1;
     const trip = out[k] && out[k].kind === SEGMENT_KIND.TRAVEL ? out[k] : out[i - 1];
     if (!trip) continue;
+    // A pause right beside a customer is still the classic sign of a pin in
+    // the wrong place: that flag survives.
+    const nearCustomer = (seg.evidence || []).some((e) => e.code === 'near_known_place');
     seg.type = trip.type;
     seg.confidence = trip.confidence;
-    seg.needsReview = !!trip.needsReview;
+    seg.needsReview = !!trip.needsReview || nearCustomer;
     seg.anchor = 'transit';
     seg.evidence = [
       ...(seg.evidence || []).filter((e) => e.code !== 'no_known_location'),

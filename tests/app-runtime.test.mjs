@@ -17,6 +17,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -67,7 +69,7 @@ test('the release build installs the app\'s native plugin before Gradle compiles
   const add = yml.indexOf('node scripts/add-native.js');
   assert.notEqual(add, -1, 'release.yml must run add-native.js');
   assert.ok(yml.indexOf('npx cap add android') < add, 'after cap add, which creates MainActivity');
-  assert.ok(add < yml.indexOf('./gradlew assembleDebug'), 'before the APK is compiled');
+  assert.ok(add < yml.indexOf('./gradlew assembleRelease'), 'before the APK is compiled');
   assert.ok(JSON.parse(read('package.json')).scripts.apk.includes('add-native.js'), 'and in npm run apk');
 });
 
@@ -102,4 +104,47 @@ test('add-native.js installs and registers the plugin in a generated project', a
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('every APK is signed with the same permanent key, so updates install over the old app', () => {
+  const yml = read('.github/workflows/release.yml');
+  // Built as a signed release, never a throwaway-key debug build.
+  assert.doesNotMatch(yml, /assembleDebug/);
+  assert.match(yml, /\.\/gradlew assembleRelease/);
+  assert.ok(yml.indexOf('node scripts/patch-gradle.js') < yml.indexOf('./gradlew assembleRelease'));
+  // The key comes from the project's Secret Manager — made once, then reused.
+  assert.match(yml, /SECRET=android-signing-key/);
+  assert.match(yml, /fetch \|\| gcloud secrets versions add/);
+  // The build proves the signature and refuses to publish anything else.
+  assert.match(yml, /apksigner | sort -V/);
+  assert.match(yml, /"\$SIGNER" verify --print-certs/);
+  assert.match(yml, /CN=Modern Drivers/);
+  // A rising versionCode.
+  assert.match(yml, /APP_VERSION_CODE: \$\{\{ github\.run_number \}\}/);
+  // And no keystore is ever committed.
+  assert.doesNotMatch(require('child_process').execSync('git ls-files', { cwd: ROOT }).toString(), /\.(jks|keystore|p12)$/m);
+});
+
+test('the Gradle patch adds release signing and the version from the build', () => {
+  const fs2 = require('fs'); const os = require('os');
+  const tmp = path.join(os.tmpdir(), `bg-${Date.now()}.gradle`);
+  fs2.writeFileSync(tmp, `android {\n    defaultConfig {\n        versionCode 1\n        versionName "1.0"\n    }\n    buildTypes {\n        release {\n            minifyEnabled false\n        }\n    }\n}\n`);
+  require('child_process').execFileSync('node', [path.join(ROOT, 'scripts/patch-gradle.js'), tmp]);
+  const out = fs2.readFileSync(tmp, 'utf8');
+  assert.match(out, /versionCode Integer\.parseInt\(System\.getenv\('APP_VERSION_CODE'\) \?: '1'\)/);
+  assert.match(out, /signingConfigs \{\s*release \{/);
+  assert.match(out, /if \(System\.getenv\('MD_KEYSTORE'\)\) signingConfig signingConfigs\.release/);
+  // Idempotent.
+  require('child_process').execFileSync('node', [path.join(ROOT, 'scripts/patch-gradle.js'), tmp]);
+  assert.equal(fs2.readFileSync(tmp, 'utf8'), out);
+});
+
+test('diagnostics show Android\'s own permission and GPS state, the network and the last server reply', () => {
+  const java = read('app/native/android/BatteryOptimisationPlugin.java');
+  for (const f of ['fineLocation', 'backgroundLocation', 'gpsProvider', 'notifications', 'release']) assert.match(java, new RegExp(`result\\.put\\("${f}"`), f);
+  const app = read('app/www/app.js');
+  assert.match(app, /row\('"Allow all the time" \(Android\)'/);
+  assert.match(app, /row\('Last server reply'/);
+  assert.match(app, /row\('Network'/);
+  assert.match(app, /note\(0, 'no connection — '/);
 });

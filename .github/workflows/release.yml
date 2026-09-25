@@ -88,6 +88,10 @@ jobs:
       - name: Add the app's own native code
         run: node scripts/add-native.js app/android
 
+      # Release signing and a rising versionCode; see scripts/patch-gradle.js.
+      - name: Sign with the permanent key, and number the version
+        run: node scripts/patch-gradle.js app/android/app/build.gradle
+
       - name: Generate the launcher icon and splash
         working-directory: app
         run: npx --yes @capacitor/assets@3 generate --android
@@ -96,11 +100,82 @@ jobs:
         working-directory: app
         run: npx cap sync android
 
+      # The signing key. It must be the SAME key for every build, forever:
+      # Android installs an update only if it is signed by the key the app was
+      # first installed with. It is made once, kept in the project's Secret
+      # Manager (never in this public repository), and read back on every
+      # build. Key and password live in one secret so they can never drift
+      # apart.
+      - name: Is the Google project configured for signing?
+        id: gcps
+        env:
+          SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          if [ -z "$SA_KEY" ] || [ -z "$PROJECT_ID" ]; then
+            echo "::error::GCP_SA_KEY / GCP_PROJECT_ID are needed to sign the app. An unsigned or throwaway-signed APK cannot be updated in place."
+            exit 1
+          fi
+          echo "project=$(printf '%s' "$PROJECT_ID" | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+      - id: gauths
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Fetch (or, the very first time, create) the signing key
+        env:
+          P: ${{ steps.gcps.outputs.project }}
+        run: |
+          set -euo pipefail
+          SECRET=android-signing-key
+          fetch() { gcloud secrets versions access latest --secret="$SECRET" --project "$P" > "$RUNNER_TEMP/sign.txt" 2>/dev/null; }
+          if ! fetch; then
+            echo "No signing key yet: creating the permanent one."
+            PW=$(openssl rand -hex 24)
+            keytool -genkeypair -keystore "$RUNNER_TEMP/new.jks" -storetype PKCS12 -alias moderndrivers \
+              -keyalg RSA -keysize 4096 -validity 20000 -storepass "$PW" -keypass "$PW" \
+              -dname "CN=Modern Drivers, O=Modern Dairy, L=Pune, C=IN" -noprompt
+            { echo "$PW"; base64 -w0 "$RUNNER_TEMP/new.jks"; echo; } > "$RUNNER_TEMP/new.txt"
+            gcloud secrets describe "$SECRET" --project "$P" >/dev/null 2>&1 \
+              || gcloud secrets create "$SECRET" --project "$P" --replication-policy=automatic --quiet
+            # Only if nobody else stored one meanwhile: whichever was stored
+            # first is the key, for ever.
+            fetch || gcloud secrets versions add "$SECRET" --project "$P" --data-file="$RUNNER_TEMP/new.txt" --quiet
+            rm -f "$RUNNER_TEMP/new.jks" "$RUNNER_TEMP/new.txt"
+            fetch
+          fi
+          PW=$(sed -n 1p "$RUNNER_TEMP/sign.txt")
+          echo "::add-mask::$PW"
+          sed -n 2p "$RUNNER_TEMP/sign.txt" | base64 -d > "$RUNNER_TEMP/md.jks"
+          rm -f "$RUNNER_TEMP/sign.txt"
+          {
+            echo "MD_KEYSTORE=$RUNNER_TEMP/md.jks"
+            echo "MD_KEYSTORE_PASSWORD=$PW"
+            echo "MD_KEY_ALIAS=moderndrivers"
+          } >> "$GITHUB_ENV"
+
       - name: Build the APK
         working-directory: app
+        env:
+          # Always higher than the last build, so Android treats it as an update.
+          APP_VERSION_CODE: ${{ github.run_number }}
+          APP_VERSION_NAME: 2.0.${{ github.run_number }}
         run: |
           chmod +x android/gradlew
-          cd android && ./gradlew assembleDebug --no-daemon
+          cd android && ./gradlew assembleRelease --no-daemon
+          APK=app/build/outputs/apk/release/app-release.apk
+          if [ ! -f "$APK" ]; then
+            echo "::error::No signed release APK was produced (unsigned builds are not published)."
+            ls -R app/build/outputs/apk || true
+            exit 1
+          fi
+          # Prove the signature, and show which key, so a changed key is noticed.
+          SIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$SIGNER" verify --print-certs "$APK" | tee "$RUNNER_TEMP/cert.txt"
+          grep -q "CN=Modern Drivers" "$RUNNER_TEMP/cert.txt" || { echo "::error::The APK is not signed with the Modern Drivers key."; exit 1; }
+          echo "### Signed with" >> "$GITHUB_STEP_SUMMARY"
+          grep -i "SHA-256" "$RUNNER_TEMP/cert.txt" >> "$GITHUB_STEP_SUMMARY"
+          cp "$APK" ../../modern-drivers-release.apk
 
       # The APK goes into the gh-pages branch first, because that is a plain
       # file in a public repository: a link anyone can tap on a phone, with no
@@ -117,7 +192,7 @@ jobs:
           rm -rf site
           git clone -q --depth 1 --branch gh-pages "$URL" site 2>/dev/null \
             || { mkdir site && git -C site init -q -b gh-pages; }
-          cp app/android/app/build/outputs/apk/debug/app-debug.apk site/modern-drivers.apk
+          cp modern-drivers-release.apk site/modern-drivers.apk
           cd site
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -185,7 +260,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p release
-          cp app/android/app/build/outputs/apk/debug/app-debug.apk release/modern-drivers.apk
+          cp modern-drivers-release.apk release/modern-drivers.apk
 
           OWNER="${GITHUB_REPOSITORY%%/*}"; NAME="${GITHUB_REPOSITORY##*/}"
           SITE="https://${OWNER,,}.github.io/${NAME}/"

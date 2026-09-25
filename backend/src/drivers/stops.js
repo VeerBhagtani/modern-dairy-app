@@ -13,6 +13,13 @@
 
 const { haversineM, centroid } = require('./geo');
 
+function median(xs) {
+  if (!xs.length) return null;
+  const a = [...xs].sort((x, y) => x - y);
+  const m = Math.floor(a.length / 2);
+  return Math.round(a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2);
+}
+
 /**
  * @param {Array} points annotated points from cleanTrack (all of them)
  * @param {object} cfg resolved config
@@ -46,6 +53,9 @@ function detectStops(points, cfg) {
       spreadM: Math.round(Math.max(...cluster.map((p) => haversineM(c, p)))),
       // Worst accuracy in the cluster — the honest bound on "where was this".
       worstAccuracyM: cluster.reduce((m, p) => Math.max(m, p.accuracyM || 0), 0) || null,
+      // Typical accuracy: whether the fixes could place the stop inside a
+      // geofence at all.
+      medianAccuracyM: median(cluster.map((p) => p.accuracyM).filter((a) => Number.isFinite(a))),
     });
   };
 

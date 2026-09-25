@@ -129,7 +129,7 @@ const RANGES = {
 // Bumped whenever a change here or in the pipeline can change a reported
 // number. Stored on every ride_processing document so results are traceable
 // and so a recalculation can be triggered for everything below a version.
-const CALC_VERSION = '1.1.0';
+const CALC_VERSION = '1.2.0';
 
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
 

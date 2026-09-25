@@ -167,10 +167,18 @@
     if (!HAS_SERVER) return Promise.reject(new Error('No server configured'));
     var h = { 'Content-Type': 'application/json' };
     if (state.tokens && state.tokens.accessToken) h.Authorization = 'Bearer ' + state.tokens.accessToken;
+    var note = function (status, error) {
+      state.lastApi = { path: path.split('?')[0], status: status, error: error || null, at: Date.now() };
+    };
     return fetch(API + path, {
       method: opts.method || 'GET', headers: h,
       body: opts.body ? JSON.stringify(opts.body) : undefined,
+    }).catch(function (err) {
+      // No reply at all: offline, a dead zone, or the server unreachable.
+      note(0, 'no connection — ' + ((err && err.message) || 'network error'));
+      throw err;
     }).then(function (res) {
+      note(res.status, res.ok ? null : ('HTTP ' + res.status));
       return res.json().catch(function () { return { success: false, message: 'Server error ' + res.status }; })
         .then(function (j) {
           if (res.status === 401 && retry !== false && state.tokens && state.tokens.refreshToken) {
@@ -609,6 +617,9 @@
     return p.status().then(function (r) {
       state.batteryExempt = !!(r && r.exempt);
       state.phoneMaker = (r && r.manufacturer) || null;
+      // Android's own answers, for the diagnostics screen (older APKs do not
+      // send these fields; they then read as "not known").
+      state.os = r || null;
       render();
       if (!state.batteryExempt && askIfNeeded && !LS.get('askedBattery', false)) {
         LS.set('askedBattery', true);
@@ -1256,6 +1267,9 @@
         + esc(detail) + '</td></tr>';
     };
 
+    var os = state.os || {};
+    var known = function (v) { return v === true || v === false; };
+    var la = state.lastApi;
     $('sheetTitle').textContent = 'Diagnostics';
     $('sheetBody').innerHTML = '<p class="note" style="text-align:left;margin:0 0 12px">'
       + 'Read this out to the office.</p>'
@@ -1265,6 +1279,12 @@
       + row('Location service present', !!bg(), bg() ? 'yes' : 'NO — needs a new APK')
       + row('Phone\'s location switch', state.permission !== 'device-off',
         state.permission === 'device-off' ? 'OFF' : (state.lastFix ? 'on' : 'not known yet'))
+      + row('Android version', null, os.release ? os.release + ' (SDK ' + os.sdk + ')' : (navigator.userAgent.match(/Android [\d.]+/) || ['—'])[0])
+      + row('GPS switched on (Android)', known(os.gpsProvider) ? os.gpsProvider : null, known(os.gpsProvider) ? (os.gpsProvider ? 'yes' : 'NO') : 'not known')
+      + row('Precise location (Android)', known(os.fineLocation) ? os.fineLocation : null, known(os.fineLocation) ? (os.fineLocation ? 'granted' : 'NOT granted') : 'not known')
+      + row('"Allow all the time" (Android)', known(os.backgroundLocation) ? os.backgroundLocation : null,
+        known(os.backgroundLocation) ? (os.backgroundLocation ? 'granted' : 'not granted (the ride notification keeps it running)') : 'not known')
+      + row('Notifications (Android)', known(os.notifications) ? os.notifications : null, known(os.notifications) ? (os.notifications ? 'allowed' : 'NOT allowed') : 'not known')
       + row('Permission for this app', state.permission === 'granted', state.permission)
       + row('Recorder running', !!state.watcherId, state.watcherId ? 'yes' : 'no')
       + row('Last GPS fix', !!state.lastFix,
@@ -1287,6 +1307,10 @@
       + row('Points waiting to send', state.queued === 0, String(state.queued))
       + row('Last sent to office', !!state.lastSyncAt,
         state.lastSyncAt ? fmtDur(Date.now() - state.lastSyncAt) + ' ago' : 'never')
+      + row('Network', navigator.onLine !== false, navigator.onLine === false ? 'OFFLINE' : 'online')
+      + row('Last server reply', la ? !la.error : null,
+        la ? (la.error || ('OK ' + la.status)) + ' · ' + la.path + ' · ' + fmtDur(Date.now() - la.at) + ' ago' : 'none yet')
+      + row('Ride id', null, state.rideId ? String(state.rideId).slice(0, 10) : '—')
       + row('App version', null, APP_VERSION)
       + '</table>'
       + (state.startError

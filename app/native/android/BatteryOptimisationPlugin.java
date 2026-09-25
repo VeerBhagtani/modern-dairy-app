@@ -1,6 +1,9 @@
 package in.moderndairy.drivers;
 
+import android.Manifest;
 import android.content.Context;
+import android.content.pm.PackageManager;
+import android.location.LocationManager;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
@@ -38,7 +41,41 @@ public class BatteryOptimisationPlugin extends Plugin {
         // exemption does not cover (Xiaomi's Autostart, Vivo's background power).
         result.put("manufacturer", Build.MANUFACTURER);
         result.put("sdk", Build.VERSION.SDK_INT);
+        result.put("release", Build.VERSION.RELEASE);
+        // What Android itself says right now — not what the app believes. For
+        // the diagnostics screen: "the dialog was shown" is not "granted".
+        Context context = getContext();
+        result.put("fineLocation", granted(context, Manifest.permission.ACCESS_FINE_LOCATION));
+        result.put("coarseLocation", granted(context, Manifest.permission.ACCESS_COARSE_LOCATION));
+        // "Allow all the time". Only exists from Android 10; before that,
+        // foreground permission covered the background too.
+        result.put("backgroundLocation", Build.VERSION.SDK_INT < 29
+                || granted(context, "android.permission.ACCESS_BACKGROUND_LOCATION"));
+        result.put("notifications", Build.VERSION.SDK_INT < 33
+                || granted(context, "android.permission.POST_NOTIFICATIONS"));
+        LocationManager lm = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+        boolean gps = false;
+        boolean network = false;
+        try {
+            if (lm != null) {
+                gps = lm.isProviderEnabled(LocationManager.GPS_PROVIDER);
+                network = lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+            }
+        } catch (Exception ignored) {
+            // A provider the phone does not have reads as off.
+        }
+        result.put("gpsProvider", gps);
+        result.put("networkProvider", network);
         call.resolve(result);
+    }
+
+    private static boolean granted(Context context, String permission) {
+        // checkSelfPermission is API 23; the app runs from API 22, where every
+        // permission was granted at install and the older call answers the same.
+        if (Build.VERSION.SDK_INT >= 23) {
+            return context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED;
+        }
+        return context.checkCallingOrSelfPermission(permission) == PackageManager.PERMISSION_GRANTED;
     }
 
     @PluginMethod
