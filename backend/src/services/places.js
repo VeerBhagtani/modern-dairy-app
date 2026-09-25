@@ -123,35 +123,67 @@ function assessResponse(body, wantedName) {
 
 /* One Places text search, raw. Throws with notEnabled / overQuota set so the
  * callers can stop a batch with a plain reason. */
-async function textSearch(textQuery, apiKey, { fetchImpl = fetch, max = 5 } = {}) {
-  const res = await fetchImpl('https://places.googleapis.com/v1/places:searchText', {
+const BASE_FIELDS = 'places.id,places.displayName,places.formattedAddress,places.location,places.types';
+// Phone numbers are a pricier field on Google's side, so they are asked for
+// only when there is a phone number of ours to compare them with.
+const PHONE_FIELDS = ',places.nationalPhoneNumber,places.internationalPhoneNumber';
+
+async function placesPost(url, body, apiKey, { fetchImpl = fetch, phone = false } = {}) {
+  const res = await fetchImpl(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Goog-Api-Key': apiKey,
       // Places bills by the fields asked for, so ask for exactly what is used.
-      'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location',
+      'X-Goog-FieldMask': BASE_FIELDS + (phone ? PHONE_FIELDS : ''),
     },
-    body: JSON.stringify({
-      textQuery,
-      regionCode: 'IN',
-      languageCode: 'en',
-      maxResultCount: max,
-      locationBias: { circle: { center: PUNE, radius: BIAS_RADIUS_M } },
-    }),
+    body: JSON.stringify(body),
   });
-  const body = await res.json().catch(() => ({}));
+  const json = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const message = (body && body.error && body.error.message) || `Places returned ${res.status}`;
+    const message = (json && json.error && json.error.message) || `Places returned ${res.status}`;
     const err = new Error(message);
+    err.status = res.status;
     // 403 here almost always means the Places API is not enabled on the key,
     // which is a one-line fix in the console and worth saying plainly.
     err.notEnabled = res.status === 403 || /not enabled|SERVICE_DISABLED/i.test(message);
     err.overQuota = res.status === 429;
     throw err;
   }
-  return body;
+  return json;
 }
+
+/* Businesses within radiusM of a point, restaurants and the like first. */
+async function nearby(center, radiusM, apiKey, opts = {}) {
+  const body = {
+    includedTypes: ['restaurant', 'cafe', 'bakery', 'bar', 'meal_takeaway', 'meal_delivery', 'lodging'],
+    maxResultCount: 20,
+    languageCode: 'en',
+    locationRestriction: { circle: { center: { latitude: center.lat, longitude: center.lng }, radius: radiusM } },
+  };
+  try {
+    return await placesPost('https://places.googleapis.com/v1/places:searchNearby', body, apiKey, opts);
+  } catch (e) {
+    // A type Google no longer accepts must not stop the search: ask for every
+    // kind of place instead and let the name comparison decide.
+    if (e.status !== 400) throw e;
+    delete body.includedTypes;
+    return placesPost('https://places.googleapis.com/v1/places:searchNearby', body, apiKey, opts);
+  }
+}
+
+async function textSearch(textQuery, apiKey, { fetchImpl = fetch, max = 5, bias = null, phone = false } = {}) {
+  const center = bias ? { latitude: bias.lat, longitude: bias.lng } : PUNE;
+  const radius = bias ? bias.radiusM : BIAS_RADIUS_M;
+  return placesPost('https://places.googleapis.com/v1/places:searchText', {
+    textQuery,
+    regionCode: 'IN',
+    languageCode: 'en',
+    maxResultCount: max,
+    locationBias: { circle: { center, radius } },
+  }, apiKey, { fetchImpl, phone });
+}
+
 
 /* One search. The caller supplies the key, as with the geocoder, so a missing
  * or unauthorised key is a configuration problem reported once. */
@@ -216,5 +248,5 @@ function acceptNameMismatch(match) {
 
 module.exports = {
   MATCH, GENERIC, distinctive, compareNames, buildQuery, assessResponse, toPoint,
-  acceptNameMismatch, searchOne, searchByName, textSearch,
+  acceptNameMismatch, searchOne, searchByName, textSearch, nearby,
 };

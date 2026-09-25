@@ -12,7 +12,7 @@ const { asyncRouter } = require('../middleware/asyncRoutes');
 // Every handler's errors reach index.js's error handler; see asyncRoutes.js.
 const router = asyncRouter(require('express').Router());
 const repo = require('../services/repo');
-const { db } = require('../services/firestore');
+const { db, FieldValue } = require('../services/firestore');
 const { writeLimiter } = require('../middleware/rateLimit');
 const bcrypt = require('bcryptjs');
 const { verifyLogin } = require('../middleware/adminAuth');
@@ -20,9 +20,8 @@ const { placeIdFor } = require('../services/placeKey');
 const geocode = require('../services/geocode');
 const mobileVendor = require('../drivers/mobileVendor');
 const placesApi = require('../services/places');
-const googleCheck = require('../services/googleCheck');
-const sheetCheck = require('../services/sheetCheck');
-const { haversineM } = require('../drivers/geo');
+const locationAudit = require('../services/locationAudit');
+const { pinChange, pinRemoval } = require('../services/pinHistory');
 const maintenance = require('../services/maintenance');
 const { getSecret, setSecret, secretStatus, KNOWN_SECRETS } = require('../services/secretManager');
 const {
@@ -517,14 +516,21 @@ function validatePlace(body, { isFacility }) {
 for (const [path, colName, isFacility] of [['restaurants', 'restaurants', false], ['facilities', 'facilities', true]]) {
   router.get(`/${path}`, requireRole('viewer'), async (req, res) => {
     const snap = await repo.C[colName]().get();
-    res.json({ success: true, data: snap.docs.map((d) => ({ id: d.id, ...d.data() })) });
+    res.json({ success: true, data: snap.docs.map((d) => {
+      const row = { id: d.id, ...d.data() };
+      // Whether the location audit still describes this row — decided here,
+      // with the server's own rule, so the screen never disagrees with it.
+      if (!isFacility && row.locationAudit) row.auditCurrent = !locationAudit.isStale(row);
+      return row;
+    }) });
   });
 
   router.post(`/${path}`, requireRole('admin'), writeLimiter, async (req, res) => {
     const { place, error } = validatePlace(req.body || {}, { isFacility });
     if (error) return bad(res, error);
     const ref = repo.C[colName]().doc();
-    await ref.set({ ...place, createdAt: Date.now(), createdBy: req.adminId });
+    const { fields, entry } = pinChange(null, { lat: place.lat, lng: place.lng, source: 'office', by: `admin:${req.adminId}`, reason: 'Created by the office.' });
+    await ref.set({ ...place, ...fields, createdAt: Date.now(), createdBy: req.adminId, locationHistory: [entry] });
     repo.invalidatePlaceCache();
     await repo.writeAudit({ adminId: req.adminId, action: `${path}.create`, target: ref.id, after: place });
     res.json({ success: true, data: { id: ref.id, ...place } });
@@ -539,7 +545,19 @@ for (const [path, colName, isFacility] of [['restaurants', 'restaurants', false]
     const merged = { ...before.data(), ...(req.body || {}) };
     const { place, error } = validatePlace(merged, { isFacility });
     if (error) return bad(res, error);
-    await ref.set({ ...place, updatedAt: Date.now(), updatedBy: req.adminId }, { merge: true });
+    // A moved pin goes through the same trail as every other move.
+    const old = before.data();
+    const moved = place.lat !== old.lat || place.lng !== old.lng;
+    let pin = {};
+    if (moved) {
+      const { fields, entry } = pinChange(old, {
+        lat: place.lat, lng: place.lng, source: 'office', by: `admin:${req.adminId}`,
+        reason: isBoundedString(req.body?.reason, { min: 3, max: 300 }) ? req.body.reason.trim() : 'Edited by the office.',
+      });
+      pin = { ...fields, locationHistory: FieldValue.arrayUnion(entry) };
+    }
+    const { lat: _lat, lng: _lng, ...rest } = place;
+    await ref.set({ ...rest, ...pin, updatedAt: Date.now(), updatedBy: req.adminId }, { merge: true });
     repo.invalidatePlaceCache();
     await repo.writeAudit({ adminId: req.adminId, action: `${path}.update`, target: id, before: before.data(), after: place });
     res.json({ success: true, data: { id, ...place } });
@@ -581,6 +599,7 @@ router.post('/restaurants/import', requireRole('admin'), writeLimiter, async (re
     area: ['area', 'locality', 'route'],
     customer_id: ['customer_id', 'code', 'customer_code'],
     external_id: ['external_id', 'id'],
+    phone: ['phone', 'mobile', 'phone_number', 'mobile_number', 'mobile_no', 'contact', 'contact_no', 'contact_number'],
   };
   const col = (n) => {
     for (const alias of (ALIASES[n] || [n])) {
@@ -591,7 +610,11 @@ router.post('/restaurants/import', requireRole('admin'), writeLimiter, async (re
   };
   if (col('name') === -1) return bad(res, 'Missing a name column (accepted: name, customer_name, restaurant)');
 
-  const existing = new Set((await repo.C.restaurants().select().get()).docs.map((d) => d.id));
+  const known = (await repo.C.restaurants().select('lat', 'lng').get()).docs;
+  const existing = new Set(known.map((d) => d.id));
+  // Rows that already have a pin. Re-importing the spreadsheet — an old copy
+  // included — must never move a pin somebody placed, verified or corrected.
+  const existingPin = new Set(known.filter((d) => Number.isFinite(d.get('lat')) && Number.isFinite(d.get('lng'))).map((d) => d.id));
 
   const added = []; const updated = []; const problems = [];
   // Food trucks, kept out of the location machinery. Reported back so the
@@ -611,6 +634,7 @@ router.post('/restaurants/import', requireRole('admin'), writeLimiter, async (re
       name,
       customerId: at('customer_id') || null,
       address: at('address') || null,
+      phone: at('phone') || null,
       radiusM: at('radius_m') ? Number(at('radius_m')) : null,
       area,
       externalId: at('external_id') || null,
@@ -640,9 +664,16 @@ router.post('/restaurants/import', requireRole('admin'), writeLimiter, async (re
     if (hasCoords) {
       const { place, error } = validatePlace({ ...base, lat: Number(at('lat')), lng: Number(at('lng')) }, { isFacility: false });
       if (error) { problems.push({ row: r + 1, error, name }); continue; }
-      writer.set(repo.C.restaurants().doc(id),
-        { ...place, locationStatus: 'confirmed', importedAt: Date.now(), importedBy: req.adminId },
-        { merge: true });
+      // The sheet's own coordinates are always kept, as evidence, apart from
+      // the pin in use.
+      const { lat: sheetLatV, lng: sheetLngV, ...details } = place;
+      const sheet = { sheetLat: sheetLatV, sheetLng: sheetLngV, importedAt: Date.now(), importedBy: req.adminId };
+      if (existingPin.has(id)) {
+        writer.set(repo.C.restaurants().doc(id), { ...details, ...sheet }, { merge: true });
+      } else {
+        const { fields, entry } = pinChange(null, { lat: sheetLatV, lng: sheetLngV, source: 'spreadsheet', by: `admin:${req.adminId}`, reason: 'Coordinates from the imported spreadsheet.' });
+        writer.set(repo.C.restaurants().doc(id), { ...details, ...sheet, ...fields, locationHistory: [entry] }, { merge: true });
+      }
     } else if (existing.has(id)) {
       // Known row: refresh the details from the file, leave the location alone.
       writer.set(repo.C.restaurants().doc(id),
@@ -826,14 +857,11 @@ router.post('/restaurants/accept-candidates', requireRole('admin'), writeLimiter
     const batch = db.batch();
     for (const doc of take.slice(i, i + 400)) {
       const c = doc.data().candidate;
-      batch.set(doc.ref, {
-        lat: c.lat,
-        lng: c.lng,
-        locationStatus: 'confirmed',
-        locationSource: `accepted_in_bulk_${wanted}`,
-        confirmedBy: req.adminId,
-        confirmedAt: Date.now(),
-      }, { merge: true });
+      const { fields, entry } = pinChange(doc.data(), {
+        lat: c.lat, lng: c.lng, source: `accepted_in_bulk_${wanted}`, by: `admin:${req.adminId}`,
+        reason: `Lookup candidate (${wanted}) accepted in bulk.`,
+      });
+      batch.set(doc.ref, { ...fields, confirmedBy: req.adminId, confirmedAt: Date.now(), locationHistory: FieldValue.arrayUnion(entry) }, { merge: true });
       accepted += 1;
     }
     /* eslint-disable-next-line no-await-in-loop */
@@ -967,15 +995,17 @@ router.post('/restaurants/locate', requireRole('admin'), writeLimiter, async (re
     };
 
     if (found && found.autoPlace && found.point) {
-      patch.lat = found.point.lat;
-      patch.lng = found.point.lng;
-      patch.locationStatus = 'confirmed';
       // A business placed under a name that is not the office's own is marked
       // apart from the rest, so these can be listed and re-checked later
       // rather than disappearing into the pile.
-      patch.locationSource = found === hit
+      const source = found === hit
         ? (hit.match === placesApi.MATCH.STRONG ? 'places' : 'places_name_differs')
         : 'geocoded';
+      const { fields, entry } = pinChange(p, {
+        lat: found.point.lat, lng: found.point.lng, source, by: `system:locate(admin:${req.adminId})`,
+        reason: `Placed by the lookup: ${found.point.displayName || found.point.formattedAddress || 'address'}.`,
+      });
+      Object.assign(patch, fields, { locationHistory: FieldValue.arrayUnion(entry) });
       placed += 1;
       // "Precise" means the building itself, however it was found: a named
       // business, or an address the geocoder resolved to a rooftop.
@@ -1109,9 +1139,16 @@ router.post('/restaurants/:id/mobile', requireRole('manager'), writeLimiter, asy
     // Off to the mobile list, and any pin it picked up is dropped. A pin on a
     // truck is worse than no pin: it geofences somewhere the truck may never
     // park, so passers-by register visits and real deliveries register none.
+    // The position itself is kept in the history and in removedPin.
     patch.locationStatus = mobileVendor.MOBILE_STATUS;
-    patch.lat = null;
-    patch.lng = null;
+    const { fields, entry } = pinRemoval(before, { by: `admin:${req.adminId}`, reason: 'Marked as a food truck: no fixed place.' });
+    Object.assign(patch, fields);
+    if (entry) patch.locationHistory = FieldValue.arrayUnion(entry);
+  } else if (!(Number.isFinite(before.lat) && Number.isFinite(before.lng)) && before.removedPin && Number.isFinite(before.removedPin.lat)) {
+    // Back to being a place: the pin it had before the flag comes back.
+    const { fields, entry } = pinChange(before, { lat: before.removedPin.lat, lng: before.removedPin.lng, source: before.removedPin.source || 'restored',
+      by: `admin:${req.adminId}`, reason: 'Food-truck flag removed; the earlier pin is put back.' });
+    Object.assign(patch, fields, { removedPin: null, locationHistory: FieldValue.arrayUnion(entry) });
   } else {
     // Back to being a place, and back into the queue the lookup reads.
     patch.locationStatus = Number.isFinite(before.lat) && Number.isFinite(before.lng)
@@ -1193,192 +1230,112 @@ router.post('/restaurants/:id/confirm-location', requireRole('admin'), writeLimi
   if (!Number.isFinite(lat) || lat < -90 || lat > 90) return bad(res, 'A valid latitude is required');
   if (!Number.isFinite(lng) || lng < -180 || lng > 180) return bad(res, 'A valid longitude is required');
 
-  await doc.ref.set({
-    lat,
-    lng,
-    locationStatus: 'confirmed',
-    locationSource: body.lat != null ? 'office' : 'geocoded_confirmed',
-    confirmedBy: req.adminId,
-    confirmedAt: Date.now(),
-  }, { merge: true });
+  const { fields, entry } = pinChange(doc.data(), {
+    lat, lng,
+    source: body.lat != null ? 'office' : 'geocoded_confirmed',
+    by: `admin:${req.adminId}`,
+    reason: isBoundedString(body.reason, { min: 3, max: 300 }) ? body.reason.trim()
+      : body.lat != null ? 'Placed on the map by the office.' : 'Lookup candidate confirmed by the office.',
+  });
+  await doc.ref.set({ ...fields, confirmedBy: req.adminId, confirmedAt: Date.now(), locationHistory: FieldValue.arrayUnion(entry) }, { merge: true });
   repo.invalidatePlaceCache();
   await repo.writeAudit({ adminId: req.adminId, action: 'restaurants.confirm_location', target: id, after: { lat, lng } });
   res.json({ success: true, data: { id, lat, lng } });
 });
 
-// POST /admin/restaurants/google-check { limit, recheck }
-//
-// Check restaurants' pins against Google Maps, a batch at a time: the
-// dashboard calls this repeatedly until nothing is left, so no single request
-// runs long and the office sees it progress. See services/googleCheck.js for
-// what each verdict means. Never moves a pin.
-router.post('/restaurants/google-check', requireRole('admin'), writeLimiter, async (req, res) => {
+// ---------------------------------------------------------------------------
+// Location audit: every restaurant's stored location against Google Maps.
+// See services/locationAudit.js for the searches, the evidence and the five
+// verdicts. The audit never moves a pin; applying a result is a separate,
+// deliberate, audited step, and every move keeps the old position.
+// ---------------------------------------------------------------------------
+
+// POST /admin/restaurants/location-audit { recheck | recheckBefore, limit }
+// A batch at a time; the dashboard calls it until nothing is left.
+router.post('/restaurants/location-audit', requireRole('admin'), writeLimiter, async (req, res) => {
   const apiKey = await getSecret('geocoding');
   if (!apiKey) {
     return res.status(400).json({ success: false, code: 'NO_GEOCODING_KEY', message: 'No Google key is configured, so restaurants cannot be checked yet.' });
   }
-  const limit = Math.min(Math.max(Number(req.body?.limit) || 60, 1), 120);
-  // A "check all again" run: the first batch sends recheck:true and gets back
-  // the server's own start time; every later batch sends that time back, so
-  // each picks up where the last left off and the run ends. The server's clock,
-  // never the office PC's — a PC clock running ahead would make restaurants
-  // just checked look older than the run, and the run would never finish.
+  // Up to four Google requests per restaurant, so modest batches.
+  const limit = Math.min(Math.max(Number(req.body?.limit) || 30, 1), 60);
+  // A "check all again" run is timed by the server's clock, never the office
+  // PC's: a PC clock running ahead would make the run never finish.
   const before = req.body?.recheck === true ? Date.now()
     : Number.isFinite(Number(req.body?.recheckBefore)) ? Number(req.body.recheckBefore) : null;
 
   const snap = await repo.C.restaurants().get();
-  const due = snap.docs.filter((d) => googleCheck.needsCheck(d.data(), { before }));
+  const due = snap.docs.filter((d) => locationAudit.needsAudit(d.data(), { before }));
+  // The suburb-only pins first: they are the ones most likely to be wrong.
+  due.sort((a, b) => (b.get('locationSource') === 'accepted_in_bulk_AREA_ONLY') - (a.get('locationSource') === 'accepted_in_bulk_AREA_ONLY'));
   const batch = due.slice(0, limit);
-
-  const counts = { confirmed: 0, moved: 0, name_differs: 0, not_found: 0, failed: 0 };
+  const counts = {};
+  let failed = 0;
   let stoppedFor = null;
-  // A few at a time: fast enough to get through thousands of restaurants in a
-  // few minutes, gentle enough not to trip Google's per-second limits.
-  const CONCURRENCY = 4;
-  for (let i = 0; i < batch.length && !stoppedFor; i += CONCURRENCY) {
-    // eslint-disable-next-line no-await-in-loop
-    await Promise.all(batch.slice(i, i + CONCURRENCY).map(async (doc) => {
-      const place = doc.data();
-      try {
-        const verdict = await googleCheck.checkOne(place, apiKey);
-        // The pin this verdict is about, so a later move of the pin is known
-        // to make the check stale.
-        await doc.ref.set({ googleCheck: { ...verdict, pinLat: place.lat, pinLng: place.lng } }, { merge: true });
-        counts[verdict.status] += 1;
-      } catch (e) {
-        counts.failed += 1;
-        if (e.notEnabled) stoppedFor = 'The Google key cannot use the Places API. Enable "Places API (New)" on it in the Google Cloud console.';
-        else if (e.overQuota) stoppedFor = 'Google\'s rate limit was reached. Wait a minute and carry on — nothing is lost.';
-      }
-    }));
-  }
-  // Checked means a verdict was written; failed and unattempted (the batch
-  // stopped early) both still count as remaining.
-  const checked = counts.confirmed + counts.moved + counts.name_differs + counts.not_found;
-  const remaining = due.length - checked;
-  // The whole list's standing, for the screen's summary.
-  const totals = { confirmed: 0, moved: 0, name_differs: 0, not_found: 0, unchecked: 0 };
-  for (const d of snap.docs) {
-    const p = d.data();
-    if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng) || p.active === false || p.mobile === true) continue;
-    const st = p.googleCheck && p.googleCheck.status;
-    if (batch.some((b) => b.id === d.id)) continue;
-    if (st && totals[st] != null) totals[st] += 1; else totals.unchecked += 1;
-  }
-  for (const k of ['confirmed', 'moved', 'name_differs', 'not_found']) totals[k] += counts[k];
-  totals.unchecked += batch.length - checked;
-
-  await repo.writeAudit({ adminId: req.adminId, action: 'restaurants.google_check', after: { checked, counts, remaining } });
-  res.json({ success: true, data: { checked, counts, remaining: Math.max(0, remaining), totals, stoppedFor, recheckBefore: before } });
-});
-
-// POST /admin/restaurants/:id/use-google-pin — move the pin to where Google
-// Maps has the business. The office's decision, one restaurant at a time.
-// POST /admin/restaurants/sheet-check { recheck | recheckBefore }
-//
-// The Excel sheet against Google Maps, a batch at a time: each restaurant's
-// sheet address geocoded on its own, and the restaurant looked up on Google
-// Maps by name on its own, then compared. See services/sheetCheck.js. Never
-// moves a pin; it only records what the two say.
-router.post('/restaurants/sheet-check', requireRole('admin'), writeLimiter, async (req, res) => {
-  const apiKey = await getSecret('geocoding');
-  if (!apiKey) {
-    return res.status(400).json({ success: false, code: 'NO_GEOCODING_KEY', message: 'No Google key is configured, so restaurants cannot be checked yet.' });
-  }
-  // Two Google requests per restaurant, so smaller batches than the pin check.
-  const limit = Math.min(Math.max(Number(req.body?.limit) || 40, 1), 80);
-  // Same server-clock rule as the pin check: a re-check run is timed by the
-  // server, never the office PC, or it could never finish.
-  const before = req.body?.recheck === true ? Date.now()
-    : Number.isFinite(Number(req.body?.recheckBefore)) ? Number(req.body.recheckBefore) : null;
-
-  const snap = await repo.C.restaurants().get();
-  const due = snap.docs.filter((d) => sheetCheck.needsCheck(d.data(), { before }));
-  const batch = due.slice(0, limit);
-  const counts = { match: 0, far: 0, no_business: 0, no_address: 0, failed: 0 };
-  let stoppedFor = null;
-  const CONCURRENCY = 4;
+  const CONCURRENCY = 3;
   for (let i = 0; i < batch.length && !stoppedFor; i += CONCURRENCY) {
     // eslint-disable-next-line no-await-in-loop
     await Promise.all(batch.slice(i, i + CONCURRENCY).map(async (doc) => {
       try {
-        const verdict = await sheetCheck.checkOne(doc.data(), apiKey);
-        await doc.ref.set({ sheetCheck: verdict }, { merge: true });
-        counts[verdict.status] += 1;
+        const v = await locationAudit.auditOne(doc.data(), apiKey);
+        await doc.ref.set({ locationAudit: v }, { merge: true });
+        counts[v.status] = (counts[v.status] || 0) + 1;
       } catch (e) {
-        counts.failed += 1;
+        failed += 1;
         if (e.notEnabled) stoppedFor = 'The Google key cannot use the Places API. Enable "Places API (New)" on it in the Google Cloud console.';
         else if (e.overQuota || /OVER_QUERY_LIMIT/.test(e.message)) stoppedFor = 'Google\'s rate limit was reached. Wait a minute and carry on — nothing is lost.';
         else if (/refused the request/.test(e.message)) stoppedFor = 'The Google key cannot use the Geocoding API. Enable it in the Google Cloud console. (' + e.message + ')';
       }
     }));
   }
-  const checked = counts.match + counts.far + counts.no_business + counts.no_address;
+  const checked = Object.values(counts).reduce((a, b) => a + b, 0);
   const remaining = Math.max(0, due.length - checked);
-  await repo.writeAudit({ adminId: req.adminId, action: 'restaurants.sheet_check', after: { checked, counts, remaining } });
-  res.json({ success: true, data: { checked, counts, remaining, stoppedFor, recheckBefore: before } });
+  await repo.writeAudit({ adminId: req.adminId, action: 'restaurants.location_audit', after: { checked, counts, failed, remaining } });
+  res.json({ success: true, data: { checked, counts, failed, remaining, stoppedFor, recheckBefore: before } });
 });
 
-// Moving a pin to Google's position, and marking the check confirmed against
-// it. Null when Google has no position to move to.
-function googlePinUpdate(before, adminId) {
-  const c = before.googleCheck || {};
-  if (!Number.isFinite(c.googleLat) || !Number.isFinite(c.googleLng)) return null;
-  return {
-    lat: c.googleLat,
-    lng: c.googleLng,
-    locationStatus: 'confirmed',
-    locationSource: 'google_maps',
-    confirmedBy: adminId,
-    confirmedAt: Date.now(),
-    // The pin is now Google's own, so the check stands as confirmed against it.
-    googleCheck: { ...c, status: googleCheck.STATUS.CONFIRMED, distanceM: 0, pinLat: c.googleLat, pinLng: c.googleLng, detail: 'Pin moved to Google Maps\' position by the office.' },
-  };
+// Moving a pin to the business the audit found. The verdict is kept on the
+// history entry, so the move can always be explained.
+function auditMove(before, adminId, note) {
+  const a = before.locationAudit || {};
+  const { fields, entry } = pinChange(before, {
+    lat: a.found.lat, lng: a.found.lng, source: 'google_places', by: `admin:${adminId}`,
+    reason: note || `Location audit: ${a.reason}`,
+    verification: { status: a.status, confidence: a.confidence, distanceM: a.distanceM ?? null, foundName: a.found.name || null, placeId: a.found.placeId || null, auditedAt: a.at },
+  });
+  // The audit now describes the new pin: the business is where the pin is.
+  const verified = { ...a, status: locationAudit.STATUS.VERIFIED, distanceM: 0, pinLat: a.found.lat, pinLng: a.found.lng,
+    pinSource: 'google_places', placedByHand: false, storedIsSuburb: false, action: 'Keep the existing location.',
+    reason: `Moved to "${a.found.name}" on Google Maps by the office (was: ${a.status}).` };
+  return { ...fields, confirmedBy: adminId, confirmedAt: Date.now(), locationAudit: verified, locationHistory: FieldValue.arrayUnion(entry) };
 }
 
-// The same, from the Excel-sheet check: the pin goes to where Google Maps has
-// the business by name.
-function sheetPinUpdate(before, adminId) {
-  const c = before.sheetCheck || {};
-  if (!Number.isFinite(c.googleLat) || !Number.isFinite(c.googleLng)) return null;
-  return {
-    lat: c.googleLat,
-    lng: c.googleLng,
-    locationStatus: 'confirmed',
-    locationSource: 'google_maps',
-    confirmedBy: adminId,
-    confirmedAt: Date.now(),
-    sheetCheck: { ...c, pinLat: c.googleLat, pinLng: c.googleLng, pinToGoogleM: 0,
-      ...(Number.isFinite(c.addressLat) ? { pinToAddressM: Math.round(haversineM({ lat: c.googleLat, lng: c.googleLng }, { lat: c.addressLat, lng: c.addressLng })) } : {}) },
-  };
-}
-
-// A pin further than this from where the sheet and Google both put the
-// restaurant is wrong by any reading.
-const PIN_OFF_M = 150;
-
-router.post('/restaurants/:id/use-google-pin', requireRole('admin'), writeLimiter, async (req, res) => {
+// POST /admin/restaurants/:id/apply-audit-location { reason? }
+// One restaurant, after a person has looked: its pin goes to the business the
+// audit found. Refused if the audit is stale (the pin or the row changed).
+router.post('/restaurants/:id/apply-audit-location', requireRole('admin'), writeLimiter, async (req, res) => {
   const { id } = req.params;
   if (!isValidId(id)) return bad(res, 'Invalid id');
   const doc = await repo.C.restaurants().doc(id).get();
   if (!doc.exists) return res.status(404).json({ success: false, message: 'Not found' });
   const before = doc.data();
-  const update = req.body?.from === 'sheet' ? sheetPinUpdate(before, req.adminId) : googlePinUpdate(before, req.adminId);
-  if (!update) return bad(res, 'Google Maps has no position for this restaurant. Run the check first.');
+  const a = before.locationAudit;
+  if (!a || !a.found || !Number.isFinite(a.found.lat)) return bad(res, 'The location audit found no business to move to.');
+  if (locationAudit.isStale(before)) return bad(res, 'This restaurant changed since it was checked. Check it again first.');
+  const note = isBoundedString(req.body?.reason, { min: 3, max: 300 }) ? `${req.body.reason.trim()} (audit: ${a.status})` : null;
+  const update = auditMove(before, req.adminId, note);
   await doc.ref.set(update, { merge: true });
   repo.invalidatePlaceCache();
-  await repo.writeAudit({ adminId: req.adminId, action: 'restaurants.use_google_pin', target: id, before: { lat: before.lat, lng: before.lng }, after: { lat: update.lat, lng: update.lng } });
+  await repo.writeAudit({ adminId: req.adminId, action: 'restaurants.apply_audit_location', target: id,
+    before: { lat: before.lat ?? null, lng: before.lng ?? null, source: before.locationSource || null },
+    after: { lat: update.lat, lng: update.lng, status: a.status, confidence: a.confidence } });
   res.json({ success: true, data: { id, lat: update.lat, lng: update.lng } });
 });
 
-// POST /admin/restaurants/use-google-pins { ids }
-//
-// "Fix all": move the pin of every listed restaurant where the Excel sheet and
-// Google Maps AGREE on the place and the pin is somewhere else. Where the sheet
-// and Google disagree, or Google cannot find it, a person decides. A check made
-// against an older version of the sheet row is skipped. One audit entry per
-// restaurant, exactly as the one-at-a-time button.
-router.post('/restaurants/use-google-pins', requireRole('admin'), writeLimiter, async (req, res) => {
+// POST /admin/restaurants/apply-audit-locations { ids }
+// The bulk button: only HIGH-confidence significant differences, never a pin
+// the office placed by hand, never a stale verdict (locationAudit.bulkApplicable).
+router.post('/restaurants/apply-audit-locations', requireRole('admin'), writeLimiter, async (req, res) => {
   if (await refuseIfLocked(req, res)) return;
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(isValidId).slice(0, 500) : [];
   if (!ids.length) return bad(res, 'No restaurants given.');
@@ -1391,17 +1348,13 @@ router.post('/restaurants/use-google-pins', requireRole('admin'), writeLimiter, 
     const audits = [];
     for (const doc of docs) {
       const before = doc.exists ? doc.data() : null;
-      const c = before?.sheetCheck || {};
-      const eligible = before
-        && c.status === sheetCheck.STATUS.MATCH
-        && c.inputKey === sheetCheck.inputKey(before)
-        && Number.isFinite(c.googleLat) && Number.isFinite(c.googleLng)
-        && (!Number.isFinite(before.lat) || haversineM(before, { lat: c.googleLat, lng: c.googleLng }) > PIN_OFF_M);
-      const update = eligible ? sheetPinUpdate(before, req.adminId) : null;
-      if (!update) { skipped += 1; continue; }
+      if (!before || !locationAudit.bulkApplicable(before)) { skipped += 1; continue; }
+      const update = auditMove(before, req.adminId, null);
       batch.set(doc.ref, update, { merge: true });
       moved += 1;
-      audits.push({ adminId: req.adminId, action: 'restaurants.use_google_pin', target: doc.id, before: { lat: before.lat ?? null, lng: before.lng ?? null }, after: { lat: update.lat, lng: update.lng, bulk: true, basis: 'sheet_and_google_agree' } });
+      audits.push({ adminId: req.adminId, action: 'restaurants.apply_audit_location', target: doc.id,
+        before: { lat: before.lat ?? null, lng: before.lng ?? null, source: before.locationSource || null },
+        after: { lat: update.lat, lng: update.lng, bulk: true, status: before.locationAudit.status, confidence: before.locationAudit.confidence } });
     }
     if (audits.length) {
       await batch.commit();
@@ -1411,6 +1364,47 @@ router.post('/restaurants/use-google-pins', requireRole('admin'), writeLimiter, 
   }
   if (moved) repo.invalidatePlaceCache();
   res.json({ success: true, data: { moved, skipped } });
+});
+
+// GET /admin/restaurants/location-audit.csv — the location audit report: one
+// row per restaurant, checked or not, with the columns the office asked for.
+router.get('/restaurants/location-audit.csv', requireRole('viewer'), async (req, res) => {
+  const snap = await repo.C.restaurants().get();
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+    .filter((p) => p.active !== false && p.mobile !== true && p.locationStatus !== 'mobile')
+    .map((p) => {
+      const a = p.locationAudit || {};
+      const stale = locationAudit.isStale(p);
+      const f = a.found || {};
+      return {
+        customerId: p.customerId || '', id: p.id, name: p.name, address: p.address || '', area: p.area || '',
+        ourLat: Number.isFinite(p.lat) ? p.lat : '', ourLng: Number.isFinite(p.lng) ? p.lng : '', ourSource: p.locationSource || (Number.isFinite(p.lat) ? 'spreadsheet' : ''),
+        googleName: stale ? '' : (f.name || ''), googleAddress: stale ? '' : (f.address || ''),
+        googleLat: stale || !Number.isFinite(f.lat) ? '' : f.lat, googleLng: stale || !Number.isFinite(f.lng) ? '' : f.lng,
+        googleLink: stale || !f.placeId ? '' : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(f.name || p.name)}&query_place_id=${encodeURIComponent(f.placeId)}`,
+        distanceM: stale || a.distanceM == null ? '' : a.distanceM,
+        status: stale ? 'NOT_CHECKED' : a.status, confidence: stale ? '' : (a.confidence || ''),
+        reason: stale ? (a.at ? 'Changed since the last check.' : 'Not checked yet.') : a.reason, action: stale ? 'Run the location audit.' : a.action,
+        foundVia: stale ? '' : (f.via || ''), suburbOnly: a.storedIsSuburb ? 'yes' : '', placedByHand: a.placedByHand ? 'yes' : '',
+        checkedAt: a.at ? new Date(a.at).toISOString() : '',
+        original: p.originalLocation ? `${p.originalLocation.lat},${p.originalLocation.lng} (${p.originalLocation.source})` : '',
+        moves: Array.isArray(p.locationHistory) ? p.locationHistory.length : 0,
+      };
+    });
+  const columns = [
+    { key: 'customerId', label: 'Customer ID' }, { key: 'name', label: 'Our name' },
+    { key: 'ourLat', label: 'Our latitude' }, { key: 'ourLng', label: 'Our longitude' }, { key: 'ourSource', label: 'Our source' },
+    { key: 'googleName', label: 'Google name' }, { key: 'googleLat', label: 'Google latitude' }, { key: 'googleLng', label: 'Google longitude' },
+    { key: 'distanceM', label: 'Distance (m)' }, { key: 'status', label: 'Status' }, { key: 'confidence', label: 'Confidence' },
+    { key: 'reason', label: 'Reason' }, { key: 'action', label: 'Recommended action' },
+    { key: 'googleAddress', label: 'Google address' }, { key: 'googleLink', label: 'Google Maps link' }, { key: 'foundVia', label: 'Found by' },
+    { key: 'address', label: 'Sheet address' }, { key: 'area', label: 'Sheet area' }, { key: 'suburbOnly', label: 'Our pin is a suburb centre' },
+    { key: 'placedByHand', label: 'Placed by hand' }, { key: 'original', label: 'Original location' }, { key: 'moves', label: 'Pin moves' },
+    { key: 'checkedAt', label: 'Checked at' }, { key: 'id', label: 'Record ID' },
+  ];
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="location-audit.csv"');
+  res.send('﻿' + reports.toCsv(columns, rows));
 });
 
 router.get('/restaurants/export.csv', requireRole('viewer'), async (req, res) => {
