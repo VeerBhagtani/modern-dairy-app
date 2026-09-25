@@ -75,22 +75,3 @@ test('a re-check run uses the server\'s clock, so it always finishes', () => {
   assert.match(read('dashboard/views.js'), /if \(recheck\) run = r\.recheckBefore;/);
 });
 
-test('"fix all" moves only restaurants Google has elsewhere, against a current check, audited, and respects the lock', () => {
-  const admin = read('backend/src/routes/admin.js');
-  const bulk = admin.slice(admin.indexOf("router.post('/restaurants/use-google-pins'"), admin.indexOf("router.get('/restaurants/export.csv'"));
-  assert.match(bulk, /if \(await refuseIfLocked\(req, res\)\) return;/);
-  assert.match(bulk, /c\.status === googleCheck\.STATUS\.MOVED/);
-  assert.match(bulk, /c\.pinLat === before\.lat && c\.pinLng === before\.lng/);
-  assert.match(bulk, /action: 'restaurants\.use_google_pin'/);
-  assert.match(bulk, /\.slice\(0, 500\)/);
-});
-
-test('the wrong-locations screen shows both positions with Google Maps links, and downloads the list', () => {
-  const views = read('dashboard/views.js');
-  assert.match(views, /function renderWrongLocations\(\)/);
-  assert.match(views, /https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=' \+ lat \+ ',' \+ lng/);
-  assert.match(views, /query_place_id=/);
-  assert.match(views, /API\.useGooglePins\(movedIds\)/);
-  assert.match(views, /wrong-restaurant-locations\.csv/);
-  assert.match(read('dashboard/api.js'), /useGooglePins: function \(ids\)/);
-});

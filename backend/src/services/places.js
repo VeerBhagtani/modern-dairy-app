@@ -121,10 +121,9 @@ function assessResponse(body, wantedName) {
   return { match, point: toPoint(chosen), alternatives: Math.max(0, list.length - 1) };
 }
 
-/* One search. The caller supplies the key, as with the geocoder, so a missing
- * or unauthorised key is a configuration problem reported once. */
-async function searchOne(row, apiKey, { fetchImpl = fetch } = {}) {
-  const query = buildQuery(row);
+/* One Places text search, raw. Throws with notEnabled / overQuota set so the
+ * callers can stop a batch with a plain reason. */
+async function textSearch(textQuery, apiKey, { fetchImpl = fetch, max = 5 } = {}) {
   const res = await fetchImpl('https://places.googleapis.com/v1/places:searchText', {
     method: 'POST',
     headers: {
@@ -134,14 +133,13 @@ async function searchOne(row, apiKey, { fetchImpl = fetch } = {}) {
       'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location',
     },
     body: JSON.stringify({
-      textQuery: query,
+      textQuery,
       regionCode: 'IN',
       languageCode: 'en',
-      maxResultCount: 5,
+      maxResultCount: max,
       locationBias: { circle: { center: PUNE, radius: BIAS_RADIUS_M } },
     }),
   });
-
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const message = (body && body.error && body.error.message) || `Places returned ${res.status}`;
@@ -152,7 +150,14 @@ async function searchOne(row, apiKey, { fetchImpl = fetch } = {}) {
     err.overQuota = res.status === 429;
     throw err;
   }
+  return body;
+}
 
+/* One search. The caller supplies the key, as with the geocoder, so a missing
+ * or unauthorised key is a configuration problem reported once. */
+async function searchOne(row, apiKey, { fetchImpl = fetch } = {}) {
+  const query = buildQuery(row);
+  const body = await textSearch(query, apiKey, { fetchImpl, max: 5 });
   const { match, point, alternatives } = assessResponse(body, row.name);
   return {
     source: 'places',
@@ -165,6 +170,26 @@ async function searchOne(row, apiKey, { fetchImpl = fetch } = {}) {
     // the office's instruction — see acceptNameMismatch below for what that
     // trades away.
     autoPlace: !!point && acceptNameMismatch(match),
+  };
+}
+
+/* Every business Google Maps has under this name in Pune, by NAME ONLY.
+ *
+ * searchOne puts the spreadsheet address into the query, which is right for
+ * placing a pin and wrong for checking one: Google then answers with whatever
+ * is near that address, and the check agrees with the sheet because the sheet
+ * asked the question. This leaves the address out, so the answer is Google's
+ * own idea of where the business is. */
+async function searchByName(name, apiKey, { fetchImpl = fetch } = {}) {
+  const query = [String(name || '').replace(/\s+/g, ' ').trim(), 'Pune', 'Maharashtra'].filter(Boolean).join(', ');
+  const body = await textSearch(query, apiKey, { fetchImpl, max: 20 });
+  const list = (body && Array.isArray(body.places)) ? body.places : [];
+  return {
+    query,
+    candidates: list.map((pl) => ({
+      point: toPoint(pl),
+      match: compareNames(name, (pl.displayName && pl.displayName.text) || ''),
+    })).filter((c) => c.point),
   };
 }
 
@@ -191,5 +216,5 @@ function acceptNameMismatch(match) {
 
 module.exports = {
   MATCH, GENERIC, distinctive, compareNames, buildQuery, assessResponse, toPoint,
-  acceptNameMismatch, searchOne,
+  acceptNameMismatch, searchOne, searchByName, textSearch,
 };
