@@ -1269,6 +1269,43 @@ window.DRIVERS_VIEWS = (function () {
 
   // Mirrors backend/src/drivers/mobileVendor.js — either flag means the same
   // thing: a customer with no fixed address.
+  function truckConfirm(name) {
+    return 'Mark ' + name + ' as a food truck?\n\n'
+      + 'It leaves the map and the list of places needing a location, cannot be planned as a stop, '
+      + 'and never gets a geofence. You can move it back from the Restaurants tab.';
+  }
+
+  /* "Food truck" for a restaurant with no pin; "Not a food truck" for one
+   * already marked. A pinned restaurant is marked from its own page, where the
+   * pin it would lose is shown. */
+  function truckButton(p) {
+    if (isMobilePlace(p)) {
+      return '<button class="btn-outline btn-sm" data-truck="' + esc(p.id) + '" data-on="0" data-name="' + esc(p.name) + '">Not a food truck</button> ';
+    }
+    if (hasPin(p)) return '';
+    return '<button class="btn-outline btn-sm" data-truck="' + esc(p.id) + '" data-on="1" data-name="' + esc(p.name) + '">Food truck</button> ';
+  }
+
+  // Delegated once, like the hold buttons: the rows are redrawn on every page
+  // and search, and #view outlives every render.
+  var truckBound = false;
+  function bindTruckButtons() {
+    if (truckBound) return;
+    truckBound = true;
+    view().addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('[data-truck]') : null;
+      if (!btn) return;
+      var name = btn.getAttribute('data-name');
+      var turningOn = btn.getAttribute('data-on') === '1';
+      if (turningOn && !confirm(truckConfirm(name))) return;
+      if (!turningOn && !confirm('Move ' + name + ' back to the restaurant list? It will need a location.')) return;
+      btn.disabled = true;
+      API.setMobile(btn.getAttribute('data-truck'), turningOn).then(render).catch(function (ex) {
+        btn.disabled = false; alert(ex.message);
+      });
+    });
+  }
+
   function isMobilePlace(p) {
     return !!p && (p.mobile === true || p.locationStatus === 'mobile');
   }
@@ -1387,6 +1424,7 @@ window.DRIVERS_VIEWS = (function () {
       });
       bindPlaceForms();
       bindHoldButtons();
+      bindTruckButtons();
       bindOneButton(counts, secrets);
       bindLock();
       bindAwaiting(awaiting);
@@ -1873,13 +1911,19 @@ window.DRIVERS_VIEWS = (function () {
       + '<p class="muted" style="margin-top:14px">A better fix, if you have the data: add street addresses for these in your '
       + 'spreadsheet and upload it again. An address usually finds the building on the first try.</p>'
 
+      // Some have no place to put a pin at all: a food truck moves. Marking it
+      // takes it out of this list and off the map for good (reversible).
+      + '<p style="margin:12px 0 0"><button class="btn-outline btn-sm" id="btnTruckTicked" disabled>Mark ticked as food trucks</button>'
+      + ' <span id="truckMsg" class="tiny"></span></p>'
       + '<div style="overflow-x:auto;max-height:420px;overflow-y:auto;margin-top:10px"><table><thead><tr>'
+      + '<th><input type="checkbox" id="truckAll" title="Tick all shown" style="width:16px;height:16px"></th>'
       + '<th>Your name for it</th><th>Area</th><th>What was found</th><th>Precision</th><th>Place it</th>'
       + '</tr></thead><tbody>'
       + awaiting.filter(function (p) { return p.locationStatus !== 'pending'; }).map(function (p) {
         var g = p.geocode || {};
         var c = p.candidate || null;
         return '<tr>'
+          + '<td><input type="checkbox" class="truck-tick" data-id="' + esc(p.id) + '" style="width:16px;height:16px"></td>'
           + '<td><b>' + esc(p.name) + '</b>' + (p.address ? '<br><span class="tiny">' + esc(p.address) + '</span>' : '') + '</td>'
           + '<td>' + esc(p.area || '—') + '</td>'
           // The business name is the whole decision for a person scanning this
@@ -1893,7 +1937,8 @@ window.DRIVERS_VIEWS = (function () {
           // Clicking a map is the only sane way to place a pin by hand. Typing
           // latitude and longitude is not a fallback anybody actually uses.
           + '<button class="btn-outline btn-sm pick-map" data-id="' + esc(p.id) + '" data-name="' + esc(p.name) + '"'
-          + (c ? ' data-lat="' + c.lat + '" data-lng="' + c.lng + '"' : '') + '>Pick on map</button>'
+          + (c ? ' data-lat="' + c.lat + '" data-lng="' + c.lng + '"' : '') + '>Pick on map</button> '
+          + truckButton(p)
           + '</td></tr>';
       }).join('')
       + '</tbody></table></div>'
@@ -1957,6 +2002,7 @@ window.DRIVERS_VIEWS = (function () {
       + '<button class="btn-primary" id="pickSave" style="width:auto" disabled>'
       + (many && i < queue.length - 1 ? 'Save and next' : 'Save') + '</button>'
       + (many ? '<button class="btn-outline" id="pickSkip" style="width:auto">Skip</button>' : '')
+      + '<button class="btn-outline" id="pickTruck" style="width:auto">It\'s a food truck</button>'
       + '<button class="btn-outline" id="pickCancel" style="width:auto">' + (many ? 'Stop' : 'Cancel') + '</button>'
       + '</div>');
 
@@ -2019,6 +2065,16 @@ window.DRIVERS_VIEWS = (function () {
 
     on('#pickCancel', 'click', function () { closeModal(); render(); }, root);
     if (many) on('#pickSkip', 'click', next, root);
+    on('#pickTruck', 'click', function () {
+      if (!confirm(truckConfirm(p.name))) return;
+      API.setMobile(p.id, true)
+        .then(function () {
+          if (i < queue.length - 1) return next();
+          closeModal();
+          return render();
+        })
+        .catch(function (e) { msg.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
+    }, root);
     on('#pickSave', 'click', function () {
       if (!chosen) return;
       saveBtn.disabled = true;
@@ -2089,6 +2145,43 @@ window.DRIVERS_VIEWS = (function () {
       round();
     });
 
+    var ticks = function () { return Array.prototype.slice.call(document.querySelectorAll('.truck-tick')); };
+    function syncTicked() {
+      var n = ticks().filter(function (t) { return t.checked; }).length;
+      var b = document.getElementById('btnTruckTicked');
+      if (b) { b.disabled = !n; b.textContent = n ? 'Mark ' + n + ' ticked as food trucks' : 'Mark ticked as food trucks'; }
+    }
+    ticks().forEach(function (t) { t.addEventListener('change', syncTicked); });
+    on('#truckAll', 'change', function (e) {
+      ticks().forEach(function (t) { t.checked = e.target.checked; });
+      syncTicked();
+    });
+    on('#btnTruckTicked', 'click', function () {
+      var ids = ticks().filter(function (t) { return t.checked; }).map(function (t) { return t.getAttribute('data-id'); });
+      if (!ids.length) return;
+      if (!confirm('Mark ' + ids.length + ' restaurant(s) as food trucks?\n\n'
+        + 'They leave this list and the map, cannot be planned as stops, and never get a geofence. '
+        + 'Each can be moved back from the Restaurants tab.')) return;
+      var btn = document.getElementById('btnTruckTicked');
+      var msg = document.getElementById('truckMsg');
+      btn.disabled = true;
+      var done = 0; var failed = [];
+      // One at a time: each is its own audited change, and the write limiter
+      // is happier with a queue than a burst.
+      ids.reduce(function (chain, id) {
+        return chain.then(function () {
+          return API.setMobile(id, true)
+            .then(function () { done += 1; msg.textContent = done + ' of ' + ids.length + ' marked…'; })
+            .catch(function (e) { failed.push(e.message); });
+        });
+      }, Promise.resolve()).then(function () {
+        msg.innerHTML = failed.length
+          ? '<span class="err">' + done + ' marked, ' + failed.length + ' failed: ' + esc(failed[0]) + '</span>'
+          : '<span class="ok-msg">' + done + ' marked as food trucks.</span>';
+        setTimeout(render, 1200);
+      });
+    });
+
     document.querySelectorAll('.confirm-cand').forEach(function (b) {
       b.addEventListener('click', function () {
         API.confirmLocation(b.getAttribute('data-id'), null, null)
@@ -2152,7 +2245,7 @@ window.DRIVERS_VIEWS = (function () {
         + '<td>' + esc(p.area || '—') + '</td>'
         + '<td class="tiny">' + (hasPin(p)
           ? p.lat.toFixed(5) + ', ' + p.lng.toFixed(5)
-          : '<span class="pill warn">no location yet</span>') + '</td>'
+          : isMobilePlace(p) ? '<span class="pill idle">food truck</span>' : '<span class="pill warn">no location yet</span>') + '</td>'
         + '<td>' + (p.radiusM ? p.radiusM + ' m' : 'default') + '</td>'
         + '<td>' + (p.supplyHold === true
           ? '<span class="pill bad">supply on hold</span>'
@@ -2165,6 +2258,7 @@ window.DRIVERS_VIEWS = (function () {
             + (p.supplyHold === true ? '0' : '1') + '" data-name="' + esc(p.name) + '">'
             + (p.supplyHold === true ? 'Resume supply' : 'Hold supply') + '</button> '
           : '')
+        + (kind === 'restaurants' ? truckButton(p) : '')
         + '<button class="btn-outline btn-sm" data-editplace="' + esc(p.id) + '" data-kind="' + kind + '">Edit</button></td>'
         + '</tr>';
     }).join('');
