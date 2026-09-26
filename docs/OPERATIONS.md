@@ -82,6 +82,14 @@ first; repeat until "not checked yet" is 0. Then review SIGNIFICANT_DIFFERENCE
 and NOT_FOUND rows one by one; apply only what you have looked at. Download
 the CSV for the record. Needs the Places API enabled on the geocoding key.
 
+## 7a. Customers delivered by the Modern Dairy truck
+
+Locations → any row with no location → **Truck delivery** (or tick several →
+**Mark ticked as truck delivery**, or **Truck delivery** in the place-by-hand
+map). They leave "needs a location", never get a pin or geofence, and drivers
+cannot plan them. Find them again under Restaurants → filter **Truck
+delivery**; **Back to drivers** undoes it. Every change is in the audit log.
+
 ## 8. First install of the permanently signed APK
 
 APKs before build 197cbcb were signed with a throwaway key each time. The first

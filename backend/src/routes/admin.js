@@ -20,6 +20,7 @@ const { verifyLogin, issueAdminToken, forgetAdmin } = require('../middleware/adm
 const { placeIdFor } = require('../services/placeKey');
 const geocode = require('../services/geocode');
 const mobileVendor = require('../drivers/mobileVendor');
+const { TRUCK_ROUTE_STATUS } = require('../drivers/truckRoute');
 const placesApi = require('../services/places');
 const locationAudit = require('../services/locationAudit');
 const { pinChange, pinRemoval } = require('../services/pinHistory');
@@ -1151,6 +1152,7 @@ router.post('/restaurants/:id/mobile', requireRole('manager'), writeLimiter, asy
 
   const patch = { mobile: on };
   if (on) {
+    patch.truckRoute = false;   // one or the other
     // Off to the mobile list, and any pin it picked up is dropped. A pin on a
     // truck is worse than no pin: it geofences somewhere the truck may never
     // park, so passers-by register visits and real deliveries register none.
@@ -1180,6 +1182,48 @@ router.post('/restaurants/:id/mobile', requireRole('manager'), writeLimiter, asy
     after: { mobile: on, locationStatus: patch.locationStatus },
   });
   res.json({ success: true, data: { id, mobile: on } });
+});
+
+// POST /admin/restaurants/:id/truck-route { on }
+//
+// Delivered by Modern Dairy's own truck, not by the drivers: out of every
+// location queue, off the map, never a stop. Any pin it had is kept in its
+// history and in removedPin, and comes back if the flag is taken off.
+router.post('/restaurants/:id/truck-route', requireRole('manager'), writeLimiter, async (req, res) => {
+  const { id } = req.params;
+  if (!isValidId(id)) return bad(res, 'Invalid id');
+  const on = req.body?.on !== false;
+
+  const ref = repo.C.restaurants().doc(id);
+  const doc = await ref.get();
+  if (!doc.exists) return res.status(404).json({ success: false, message: 'Not found' });
+  const before = doc.data();
+
+  const patch = { truckRoute: on };
+  if (on) {
+    patch.locationStatus = TRUCK_ROUTE_STATUS;
+    patch.mobile = false;   // one or the other
+    const { fields, entry } = pinRemoval(before, { by: `admin:${req.adminId}`, reason: 'Delivered by the Modern Dairy truck, not by drivers.' });
+    Object.assign(patch, fields);
+    if (entry) patch.locationHistory = FieldValue.arrayUnion(entry);
+  } else if (!(Number.isFinite(before.lat) && Number.isFinite(before.lng)) && before.removedPin && Number.isFinite(before.removedPin.lat)) {
+    const { fields, entry } = pinChange(before, { lat: before.removedPin.lat, lng: before.removedPin.lng, source: before.removedPin.source || 'restored',
+      by: `admin:${req.adminId}`, reason: 'Truck-delivery flag removed; the earlier pin is put back.' });
+    Object.assign(patch, fields, { removedPin: null, locationHistory: FieldValue.arrayUnion(entry) });
+  } else {
+    patch.locationStatus = Number.isFinite(before.lat) && Number.isFinite(before.lng) ? 'confirmed' : 'pending';
+  }
+
+  await ref.set(patch, { merge: true });
+  repo.invalidatePlaceCache();
+  await repo.writeAudit({
+    adminId: req.adminId,
+    action: on ? 'restaurants.mark_truck_route' : 'restaurants.unmark_truck_route',
+    target: id,
+    before: { truckRoute: before.truckRoute === true, locationStatus: before.locationStatus },
+    after: { truckRoute: on, locationStatus: patch.locationStatus },
+  });
+  res.json({ success: true, data: { id, truckRoute: on } });
 });
 
 // POST /admin/restaurants/:id/hold { on, reason }
@@ -1386,7 +1430,8 @@ router.post('/restaurants/apply-audit-locations', requireRole('admin'), writeLim
 router.get('/restaurants/location-audit.csv', requireRole('viewer'), async (req, res) => {
   const snap = await repo.C.restaurants().get();
   const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-    .filter((p) => p.active !== false && p.mobile !== true && p.locationStatus !== 'mobile')
+    .filter((p) => p.active !== false && p.mobile !== true && p.locationStatus !== 'mobile'
+      && p.truckRoute !== true && p.locationStatus !== 'truck_route')
     .map((p) => {
       const a = p.locationAudit || {};
       const stale = locationAudit.isStale(p);

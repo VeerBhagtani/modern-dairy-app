@@ -17,11 +17,13 @@
 'use strict';
 
 const { isMobile } = require('./mobileVendor');
+const { isTruckRoute } = require('./truckRoute');
 
 const INELIGIBLE = {
   INACTIVE: 'inactive',       // the customer is gone; the row is history
   ON_HOLD: 'on_hold',         // stop supplying today, expect to resume
   MOBILE: 'mobile',           // a food truck — a customer, but not at a place
+  TRUCK_ROUTE: 'truck_route', // served by the company's truck, not by drivers
   NO_LOCATION: 'no_location', // nobody has placed it on the map yet
 };
 
@@ -47,6 +49,15 @@ function stopEligibility(place) {
       message: place.holdReason
         ? `Supply is on hold — ${place.holdReason}`
         : 'Supply to this restaurant is on hold.',
+    };
+  }
+
+  // Delivered by the company's own truck: never a Modern Drivers stop.
+  if (isTruckRoute(place)) {
+    return {
+      ok: false,
+      reason: INELIGIBLE.TRUCK_ROUTE,
+      message: 'This customer is delivered by the Modern Dairy truck, not by drivers.',
     };
   }
 

@@ -940,7 +940,7 @@ window.DRIVERS_VIEWS = (function () {
   };
   var SUBURB = 'accepted_in_bulk_AREA_ONLY';
   function auditStatus(p) {
-    if (!p || !p.name || p.active === false || isMobilePlace(p)) return null;
+    if (!p || !p.name || p.active === false || noPinNeeded(p)) return null;
     // auditCurrent comes from the server's own staleness rule.
     if (!p.locationAudit || !p.auditCurrent) return 'NOT_CHECKED';
     return p.locationAudit.status;
@@ -1203,7 +1203,8 @@ window.DRIVERS_VIEWS = (function () {
       // yet" they would be permanent outstanding work: there is no address to
       // find, so that number could never reach zero.
       var trucks = all.filter(isMobilePlace).length;
-      var needPin = all.filter(function (p) { return !hasPin(p) && !isMobilePlace(p); }).length;
+      var needPin = all.filter(function (p) { return !hasPin(p) && !noPinNeeded(p); }).length;
+      var byTruck = all.filter(isTruckRoute).length;
 
       set('<div class="card">'
         + '<div class="grid metrics" style="margin-bottom:16px">'
@@ -1212,6 +1213,7 @@ window.DRIVERS_VIEWS = (function () {
         + metric(held, 'Supply on hold', held ? 'bad' : 'ok')
         + metric(needPin, 'No location yet', needPin ? 'warn' : 'ok')
         + (trucks ? metric(trucks, 'Food trucks · no fixed address') : '')
+        + (byTruck ? metric(byTruck, 'Truck delivery · not drivers') : '')
         + '</div>'
         + auditPanel(all)
         + '<div class="bar">'
@@ -1220,7 +1222,7 @@ window.DRIVERS_VIEWS = (function () {
         + [['all', 'All'], ['hold', 'Supply on hold'], ['supplying', 'Supplying'],
           ['nopin', 'No location yet'], ['check', 'Placed under a different name'],
           ['audit_attention', 'Location audit: needs attention'], ['audit_unchecked', 'Location audit: not checked'],
-          ['mobile', 'Food trucks / mobile']]
+          ['mobile', 'Food trucks / mobile'], ['truck', 'Truck delivery']]
           .map(function (o) {
             return '<option value="' + o[0] + '"' + (restFilter.show === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
           }).join('')
@@ -1234,6 +1236,7 @@ window.DRIVERS_VIEWS = (function () {
 
       fillRestaurants();
       bindHoldButtons();
+      bindTruckButtons();
       bindAudit();
       on('#rSearch', 'input', function (e) {
         restFilter.q = e.target.value; restFilter.shown = 200; fillRestaurants();
@@ -1249,6 +1252,7 @@ window.DRIVERS_VIEWS = (function () {
     if (q && ((p.name || '') + ' ' + (p.area || '') + ' ' + (p.address || '') + ' ' + (p.customerId || ''))
       .toLowerCase().indexOf(q) === -1) return false;
     if (restFilter.show === 'mobile') return isMobilePlace(p);
+    if (restFilter.show === 'truck') return isTruckRoute(p);
     if (restFilter.show === 'hold') return p.supplyHold === true;
     if (restFilter.show === 'check') return p.locationSource === 'places_name_differs';
     if (restFilter.show === 'audit_attention') {
@@ -1260,30 +1264,35 @@ window.DRIVERS_VIEWS = (function () {
     // are missing one — it would sit there forever looking like outstanding
     // work nobody can finish. It stays reachable from its own filter, and
     // from All.
-    if (restFilter.show === 'nopin') return !hasPin(p) && !isMobilePlace(p);
+    if (restFilter.show === 'nopin') return !hasPin(p) && !noPinNeeded(p);
     if (restFilter.show === 'supplying') {
-      return p.supplyHold !== true && p.active !== false && !isMobilePlace(p);
+      return p.supplyHold !== true && p.active !== false && !noPinNeeded(p);
     }
     return true;
   }
 
-  // Mirrors backend/src/drivers/mobileVendor.js — either flag means the same
-  // thing: a customer with no fixed address.
+  // Mirrors backend/src/drivers/truckRoute.js: delivered by the Modern Dairy
+  // truck, so never a Modern Drivers stop and never in "needs a location".
+  function isTruckRoute(p) {
+    return !!p && (p.truckRoute === true || p.locationStatus === 'truck_route');
+  }
+  // Rows with no place to find: a food truck, or a truck-delivery customer.
+  function noPinNeeded(p) { return isMobilePlace(p) || isTruckRoute(p); }
+
   function truckConfirm(name) {
-    return 'Mark ' + name + ' as a food truck?\n\n'
+    return name + ' is delivered by the Modern Dairy truck, not by drivers?\n\n'
       + 'It leaves the map and the list of places needing a location, cannot be planned as a stop, '
-      + 'and never gets a geofence. You can move it back from the Restaurants tab.';
+      + 'and never gets a geofence. You can move it back any time.';
   }
 
-  /* "Food truck" for a restaurant with no pin; "Not a food truck" for one
-   * already marked. A pinned restaurant is marked from its own page, where the
-   * pin it would lose is shown. */
+  /* "Truck delivery" for a customer with no location; "Back to drivers" for
+   * one already marked. */
   function truckButton(p) {
-    if (isMobilePlace(p)) {
-      return '<button class="btn-outline btn-sm" data-truck="' + esc(p.id) + '" data-on="0" data-name="' + esc(p.name) + '">Not a food truck</button> ';
+    if (isTruckRoute(p)) {
+      return '<button class="btn-outline btn-sm" data-truck="' + esc(p.id) + '" data-on="0" data-name="' + esc(p.name) + '">Back to drivers</button> ';
     }
-    if (hasPin(p)) return '';
-    return '<button class="btn-outline btn-sm" data-truck="' + esc(p.id) + '" data-on="1" data-name="' + esc(p.name) + '">Food truck</button> ';
+    if (hasPin(p) || isMobilePlace(p)) return '';
+    return '<button class="btn-outline btn-sm" data-truck="' + esc(p.id) + '" data-on="1" data-name="' + esc(p.name) + '">Truck delivery</button> ';
   }
 
   // Delegated once, like the hold buttons: the rows are redrawn on every page
@@ -1298,14 +1307,16 @@ window.DRIVERS_VIEWS = (function () {
       var name = btn.getAttribute('data-name');
       var turningOn = btn.getAttribute('data-on') === '1';
       if (turningOn && !confirm(truckConfirm(name))) return;
-      if (!turningOn && !confirm('Move ' + name + ' back to the restaurant list? It will need a location.')) return;
+      if (!turningOn && !confirm('Move ' + name + ' back to Modern Drivers? It will need a location.')) return;
       btn.disabled = true;
-      API.setMobile(btn.getAttribute('data-truck'), turningOn).then(render).catch(function (ex) {
+      API.setTruckRoute(btn.getAttribute('data-truck'), turningOn).then(render).catch(function (ex) {
         btn.disabled = false; alert(ex.message);
       });
     });
   }
 
+  // Mirrors backend/src/drivers/mobileVendor.js — either flag means the same
+  // thing: a customer with no fixed address.
   function isMobilePlace(p) {
     return !!p && (p.mobile === true || p.locationStatus === 'mobile');
   }
@@ -1329,7 +1340,9 @@ window.DRIVERS_VIEWS = (function () {
           ? '<span class="pill bad">on hold</span>'
             + (p.holdReason ? '<br><span class="tiny">' + esc(p.holdReason) + '</span>' : '')
           : (p.active === false ? '<span class="pill idle">inactive</span>' : '<span class="pill ok">supplying</span>')) + '</td>'
-        + '<td class="tiny">' + (isMobilePlace(p)
+        + '<td class="tiny">' + (isTruckRoute(p)
+          ? '<span class="pill idle">truck delivery</span>'
+          : isMobilePlace(p)
           ? '<span class="pill idle">food truck</span>'
           : hasPin(p)
             ? p.lat.toFixed(5) + ', ' + p.lng.toFixed(5) + auditPill(p)
@@ -1340,6 +1353,7 @@ window.DRIVERS_VIEWS = (function () {
         + '<button class="' + (held ? 'btn-outline' : 'btn-danger') + ' btn-sm" data-hold="' + esc(p.id) + '"'
         + ' data-on="' + (held ? '0' : '1') + '" data-name="' + esc(p.name) + '">'
         + (held ? 'Resume' : 'Stop') + '</button>'
+        + (isTruckRoute(p) || !hasPin(p) ? ' ' + truckButton(p) : '')
         + '</td></tr>';
     }).join('') : '<tr><td colspan="7" class="muted">Nothing matches.</td></tr>';
 
@@ -1911,9 +1925,9 @@ window.DRIVERS_VIEWS = (function () {
       + '<p class="muted" style="margin-top:14px">A better fix, if you have the data: add street addresses for these in your '
       + 'spreadsheet and upload it again. An address usually finds the building on the first try.</p>'
 
-      // Some have no place to put a pin at all: a food truck moves. Marking it
-      // takes it out of this list and off the map for good (reversible).
-      + '<p style="margin:12px 0 0"><button class="btn-outline btn-sm" id="btnTruckTicked" disabled>Mark ticked as food trucks</button>'
+      // Some are not Modern Drivers customers at all: the company's truck
+      // delivers to them. Marking takes them out of this list (reversible).
+      + '<p style="margin:12px 0 0"><button class="btn-outline btn-sm" id="btnTruckTicked" disabled>Mark ticked as truck delivery</button>'
       + ' <span id="truckMsg" class="tiny"></span></p>'
       + '<div style="overflow-x:auto;max-height:420px;overflow-y:auto;margin-top:10px"><table><thead><tr>'
       + '<th><input type="checkbox" id="truckAll" title="Tick all shown" style="width:16px;height:16px"></th>'
@@ -2002,7 +2016,7 @@ window.DRIVERS_VIEWS = (function () {
       + '<button class="btn-primary" id="pickSave" style="width:auto" disabled>'
       + (many && i < queue.length - 1 ? 'Save and next' : 'Save') + '</button>'
       + (many ? '<button class="btn-outline" id="pickSkip" style="width:auto">Skip</button>' : '')
-      + '<button class="btn-outline" id="pickTruck" style="width:auto">It\'s a food truck</button>'
+      + '<button class="btn-outline" id="pickTruck" style="width:auto">Truck delivery</button>'
       + '<button class="btn-outline" id="pickCancel" style="width:auto">' + (many ? 'Stop' : 'Cancel') + '</button>'
       + '</div>');
 
@@ -2067,7 +2081,7 @@ window.DRIVERS_VIEWS = (function () {
     if (many) on('#pickSkip', 'click', next, root);
     on('#pickTruck', 'click', function () {
       if (!confirm(truckConfirm(p.name))) return;
-      API.setMobile(p.id, true)
+      API.setTruckRoute(p.id, true)
         .then(function () {
           if (i < queue.length - 1) return next();
           closeModal();
@@ -2149,7 +2163,7 @@ window.DRIVERS_VIEWS = (function () {
     function syncTicked() {
       var n = ticks().filter(function (t) { return t.checked; }).length;
       var b = document.getElementById('btnTruckTicked');
-      if (b) { b.disabled = !n; b.textContent = n ? 'Mark ' + n + ' ticked as food trucks' : 'Mark ticked as food trucks'; }
+      if (b) { b.disabled = !n; b.textContent = n ? 'Mark ' + n + ' ticked as truck delivery' : 'Mark ticked as truck delivery'; }
     }
     ticks().forEach(function (t) { t.addEventListener('change', syncTicked); });
     on('#truckAll', 'change', function (e) {
@@ -2159,9 +2173,9 @@ window.DRIVERS_VIEWS = (function () {
     on('#btnTruckTicked', 'click', function () {
       var ids = ticks().filter(function (t) { return t.checked; }).map(function (t) { return t.getAttribute('data-id'); });
       if (!ids.length) return;
-      if (!confirm('Mark ' + ids.length + ' restaurant(s) as food trucks?\n\n'
+      if (!confirm('Mark ' + ids.length + ' restaurant(s) as delivered by the Modern Dairy truck?\n\n'
         + 'They leave this list and the map, cannot be planned as stops, and never get a geofence. '
-        + 'Each can be moved back from the Restaurants tab.')) return;
+        + 'Each can be moved back from Restaurants → filter "Truck delivery".')) return;
       var btn = document.getElementById('btnTruckTicked');
       var msg = document.getElementById('truckMsg');
       btn.disabled = true;
@@ -2170,14 +2184,14 @@ window.DRIVERS_VIEWS = (function () {
       // is happier with a queue than a burst.
       ids.reduce(function (chain, id) {
         return chain.then(function () {
-          return API.setMobile(id, true)
+          return API.setTruckRoute(id, true)
             .then(function () { done += 1; msg.textContent = done + ' of ' + ids.length + ' marked…'; })
             .catch(function (e) { failed.push(e.message); });
         });
       }, Promise.resolve()).then(function () {
         msg.innerHTML = failed.length
           ? '<span class="err">' + done + ' marked, ' + failed.length + ' failed: ' + esc(failed[0]) + '</span>'
-          : '<span class="ok-msg">' + done + ' marked as food trucks.</span>';
+          : '<span class="ok-msg">' + done + ' marked as truck delivery.</span>';
         setTimeout(render, 1200);
       });
     });
@@ -2245,7 +2259,8 @@ window.DRIVERS_VIEWS = (function () {
         + '<td>' + esc(p.area || '—') + '</td>'
         + '<td class="tiny">' + (hasPin(p)
           ? p.lat.toFixed(5) + ', ' + p.lng.toFixed(5)
-          : isMobilePlace(p) ? '<span class="pill idle">food truck</span>' : '<span class="pill warn">no location yet</span>') + '</td>'
+          : isTruckRoute(p) ? '<span class="pill idle">truck delivery</span>'
+            : isMobilePlace(p) ? '<span class="pill idle">food truck</span>' : '<span class="pill warn">no location yet</span>') + '</td>'
         + '<td>' + (p.radiusM ? p.radiusM + ' m' : 'default') + '</td>'
         + '<td>' + (p.supplyHold === true
           ? '<span class="pill bad">supply on hold</span>'

@@ -577,7 +577,9 @@ async function loadPlaces({ fresh = false } = {}) {
   const restaurants = rSnap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
     .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng)
-      && p.locationStatus !== 'pending' && p.locationStatus !== 'unconfirmed');
+      && p.locationStatus !== 'pending' && p.locationStatus !== 'unconfirmed'
+      // Truck-delivered customers are never Modern Drivers geofences.
+      && p.truckRoute !== true && p.locationStatus !== 'truck_route');
   placeCache = { at: Date.now(), facilities, restaurants };
   return { facilities, restaurants };
 }

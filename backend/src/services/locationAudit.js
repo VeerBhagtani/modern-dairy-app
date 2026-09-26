@@ -84,7 +84,8 @@ function isStale(p) {
   return false;
 }
 function needsAudit(p, { before = null } = {}) {
-  if (!p || !p.name || p.active === false || p.mobile === true || p.locationStatus === 'mobile') return false;
+  if (!p || !p.name || p.active === false || p.mobile === true || p.locationStatus === 'mobile'
+    || p.truckRoute === true || p.locationStatus === 'truck_route') return false;
   if (isStale(p)) return true;
   return before != null && p.locationAudit.at < before;
 }

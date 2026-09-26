@@ -60,6 +60,7 @@ async function gather({ now = Date.now() } = {}) {
     onMap: restaurants.filter(hasPin).length,
     noLocation: restaurants.filter((p) => !hasPin(p)).length,
     supplyOnHold: restaurants.filter((p) => p.supplyHold === true).length,
+    deliveredByTruck: restaurants.filter((p) => p.truckRoute === true || p.locationStatus === 'truck_route').length,
     // Rows placed by a route that traded precision for coverage. Worth
     // surfacing: they are correct often enough to be useful and wrong often
     // enough that nobody should forget they exist.
