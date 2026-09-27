@@ -12,6 +12,7 @@
 
 const { haversineM } = require('./geo');
 const { SEGMENT_TYPE, CONFIDENCE } = require('./classification');
+const { customerKey, orderWindow } = require('./orderWindow');
 
 const OUTCOME = {
   MATCHED: 'MATCHED',
@@ -32,7 +33,7 @@ function expectedLocation(order, placesById, placesByCustomer) {
   // carry only a customer id, and without this such an order could never be
   // more than a POSSIBLE match however exactly the visit fitted it.
   const place = (order.placeId ? placesById.get(order.placeId) : null)
-    || (order.customerId && placesByCustomer ? placesByCustomer.get(order.customerId) : null);
+    || (order.customerId && placesByCustomer ? placesByCustomer.get(customerKey(order.customerId)) : null);
   if (place && Number.isFinite(place.lat) && Number.isFinite(place.lng)) return { lat: place.lat, lng: place.lng, source: 'restaurant_record' };
   return null;
 }
@@ -50,8 +51,9 @@ function matchDeliveries(segments, orders, places, ctx, cfg) {
   const placesByCustomer = new Map();
   const dupCustomer = new Set();
   for (const p of places || []) {
-    if (!p.customerId) continue;
-    if (placesByCustomer.has(p.customerId)) dupCustomer.add(p.customerId); else placesByCustomer.set(p.customerId, p);
+    const k = customerKey(p.customerId);
+    if (!k) continue;
+    if (placesByCustomer.has(k)) dupCustomer.add(k); else placesByCustomer.set(k, p);
   }
   for (const c of dupCustomer) placesByCustomer.delete(c);
   const visits = segments.filter((s) => s.type === SEGMENT_TYPE.LIKELY_RESTAURANT_VISIT);
@@ -61,7 +63,7 @@ function matchDeliveries(segments, orders, places, ctx, cfg) {
   const candidates = [];
   for (const visit of visits) {
     for (const order of orders || []) {
-      if (!order.customerId || !visit.place || order.customerId !== visit.place.customerId) continue;
+      if (!visit.place || !customerKey(order.customerId) || customerKey(order.customerId) !== customerKey(visit.place.customerId)) continue;
 
       const loc = expectedLocation(order, placesById, placesByCustomer);
       const distanceM = loc ? haversineM(visit.stop.center, loc) : null;
@@ -69,8 +71,9 @@ function matchDeliveries(segments, orders, places, ctx, cfg) {
       // radius does rule one out.
       if (distanceM != null && distanceM > cfg.matchRadiusM) continue;
 
-      const winStart = order.windowStart ?? order.orderedAt;
-      const winEnd = order.windowEnd ?? order.deliveredAt ?? order.orderedAt;
+      const win = orderWindow(order);
+      const winStart = win ? win.start : null;
+      const winEnd = win ? win.end : null;
       const inWindow = winStart != null && visit.endTs >= winStart && visit.startTs <= winEnd;
       const nearWindow = winStart != null && visit.endTs >= winStart - tolMs && visit.startTs <= winEnd + tolMs;
       if (winStart != null && !nearWindow) continue;
@@ -168,8 +171,12 @@ function matchDeliveries(segments, orders, places, ctx, cfg) {
         : 'no order data was available for this day',
     }));
 
+  // Only this driver's own orders. The day's orders are loaded fleet-wide (so
+  // a visit to a customer assigned to someone else is still caught), but
+  // listing every other driver's orders as "unmatched" on each ride buried
+  // the ones that mattered under hundreds that did not.
   const unmatchedOrders = (orders || [])
-    .filter((o) => !orderTaken.has(o.id))
+    .filter((o) => !orderTaken.has(o.id) && o.assignedDriverId && ctx.driverId && o.assignedDriverId === ctx.driverId)
     .map((o) => ({
       orderId: o.id,
       customerId: o.customerId,
@@ -177,9 +184,7 @@ function matchDeliveries(segments, orders, places, ctx, cfg) {
       orderedAt: o.orderedAt || null,
       status: o.status || null,
       outcome: OUTCOME.UNMATCHED_DELIVERY,
-      reason: o.assignedDriverId && ctx.driverId && o.assignedDriverId !== ctx.driverId
-        ? 'assigned to a different driver'
-        : 'no GPS visit to this customer lines up with this order',
+      reason: 'no GPS visit to this customer lines up with this order',
     }));
 
   return {

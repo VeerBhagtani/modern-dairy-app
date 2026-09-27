@@ -21,6 +21,7 @@ const { placeIdFor } = require('../services/placeKey');
 const geocode = require('../services/geocode');
 const mobileVendor = require('../drivers/mobileVendor');
 const { TRUCK_ROUTE_STATUS } = require('../drivers/truckRoute');
+const { customerKey } = require('../drivers/orderWindow');
 const placesApi = require('../services/places');
 const locationAudit = require('../services/locationAudit');
 const { pinChange, pinRemoval } = require('../services/pinHistory');
@@ -1556,10 +1557,28 @@ router.post('/orders/import', requireRole('admin'), writeLimiter, async (req, re
   if (!isBoundedString(csv, { min: 1, max: 5_000_000 })) return bad(res, 'csv is required');
   const drivers = await repo.listDrivers({ includeInactive: true });
   const codeToId = new Map(drivers.map((d) => [d.driverCode, d.id]));
-  const { orders, problems } = manual.parseOrdersCsv(csv, codeToId);
+  // By name too, where the name is unique: back offices write names, not codes.
+  const nameCount = new Map();
+  for (const d of drivers) { const k = String(d.name || '').trim().toLowerCase(); if (k) nameCount.set(k, (nameCount.get(k) || 0) + 1); }
+  const nameToId = new Map(drivers.filter((d) => nameCount.get(String(d.name || '').trim().toLowerCase()) === 1).map((d) => [d.name, d.id]));
+  const { orders, problems } = manual.parseOrdersCsv(csv, codeToId, nameToId);
   if (!orders.length) return bad(res, `No usable rows. ${problems.join('; ')}`);
   const out = await orderSource.syncOrders('manual', { orders }, req.adminId);
-  res.json({ success: true, data: { ...out, parseProblems: problems } });
+  // How many of these customers exist in the restaurant list. An order whose
+  // customer id matches no restaurant can never match a visit — the single
+  // most common reason "delivery matching finds nothing".
+  const known = new Set((await repo.C.restaurants().select('customerId').get()).docs.map((d) => customerKey(d.get('customerId'))).filter(Boolean));
+  const unknownCustomers = [...new Set(orders.map((o) => customerKey(o.customerId)).filter((k) => k && !known.has(k)))];
+  // Recalculate the affected rides now, within a budget, so the office sees
+  // the matches on the next screen; any left over are done the next time the
+  // ride, its day or a report is opened.
+  let recalculated = 0;
+  if (out.days && out.days.length) {
+    const snap = await repo.C.rides().where('dayKey', 'in', out.days.slice(-10)).get();
+    const fresh = await bringUpToDate(snap.docs.map((d) => ({ id: d.id, ...d.data() })), { maxRides: 40, budgetMs: 20000 });
+    recalculated = fresh.calculated.length;
+  }
+  res.json({ success: true, data: { ...out, recalculated, parseProblems: problems, unknownCustomers: unknownCustomers.slice(0, 50), unknownCustomerCount: unknownCustomers.length } });
 });
 
 router.post('/orders/sync/:source', requireRole('admin'), writeLimiter, async (req, res) => {
@@ -1581,9 +1600,18 @@ router.post('/orders/sync/:source', requireRole('admin'), writeLimiter, async (r
 
 router.get('/orders', requireRole('viewer'), async (req, res) => {
   const from = Number(req.query.from) || Date.now() - 7 * 24 * 3600 * 1000;
-  const to = Number(req.query.to) || Date.now();
-  const snap = await repo.C.orders().where('orderedAt', '>=', from).where('orderedAt', '<=', to).limit(1000).get();
-  res.json({ success: true, data: snap.docs.map((d) => ({ id: d.id, ...d.data() })) });
+  const to = Number(req.query.to) || Date.now() + 864e5;
+  // Every time field, merged: an order with only a delivery time or a window
+  // was invisible here when this read orderedAt alone.
+  const snaps = await Promise.all(['orderedAt', 'windowStart', 'deliveredAt'].map((f) => repo.C.orders()
+    .where(f, '>=', from).where(f, '<=', to).limit(1000).get()));
+  const byId = new Map();
+  for (const s of snaps) for (const d of s.docs) byId.set(d.id, { id: d.id, ...d.data() });
+  const known = new Set((await repo.C.restaurants().select('customerId').get()).docs.map((d) => customerKey(d.get('customerId'))).filter(Boolean));
+  const t = (o) => o.orderedAt || o.windowStart || o.deliveredAt || 0;
+  const rows = [...byId.values()].sort((a, b) => t(b) - t(a)).slice(0, 1000)
+    .map((o) => ({ ...o, raw: undefined, customerKnown: known.has(customerKey(o.customerId)) }));
+  res.json({ success: true, data: rows });
 });
 
 // ---------------------------------------------------------------------------

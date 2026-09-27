@@ -819,6 +819,22 @@ async function revertReview(reviewId, reviewerId) {
  * office review, a revert, a driver's personal declaration. Recorded on the
  * ride so the next look recalculates it even if the immediate recalculation
  * could not run (another one held the ride) or failed. */
+/* Every ride on these IST days needs recalculating (new orders arrived). */
+async function markDaysChanged(dayKeys) {
+  const now = Date.now();
+  let n = 0;
+  for (let i = 0; i < dayKeys.length; i += 10) {
+    /* eslint-disable-next-line no-await-in-loop */
+    const snap = await C.rides().where('dayKey', 'in', dayKeys.slice(i, i + 10)).select().get();
+    const writer = db.bulkWriter();
+    snap.docs.forEach((d) => writer.update(d.ref, { inputsChangedAt: now }));
+    /* eslint-disable-next-line no-await-in-loop */
+    await writer.close();
+    n += snap.size;
+  }
+  return n;
+}
+
 async function markInputsChanged(rideId) {
   if (!rideId) return;
   await C.rides().doc(rideId).update({ inputsChangedAt: Date.now() }).catch(() => {});
@@ -932,7 +948,7 @@ module.exports = {
   routeCache,
   getRounds, saveRound, deleteRound,
   getStopNames, addStopName, removeStopName,
-  C, dayKeyFor, endOfDayMs, closeIfDayOver, acquireCalcLease, releaseCalcLease, markCalcFailed, markInputsChanged,
+  C, dayKeyFor, endOfDayMs, closeIfDayOver, acquireCalcLease, releaseCalcLease, markCalcFailed, markInputsChanged, markDaysChanged,
   getConfig, setConfigOverrides,
   writeAudit, writeEvent, openAlerts, applyAlertDiff, raiseAlertOnce,
   registerDriver, getDriver, listDrivers, updateDriver, nextDriverCode,

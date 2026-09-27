@@ -26,6 +26,7 @@
 // place, and that would otherwise quietly move a real delivery run out of
 // business.
 
+const { customerKey, orderWindow } = require('./orderWindow');
 const { placesContaining, nearestPlaces, haversineM } = require('./geo');
 const { SEGMENT_KIND } = require('./segmentation');
 
@@ -88,12 +89,13 @@ function ordersSupporting(orders, customerId, driverId, startTs, endTs, cfg) {
   const tolMs = cfg.matchTimeToleranceMin * 60000;
   const support = [];
   const otherDriver = [];
+  const key = customerKey(customerId);
+  if (!key) return { support, otherDriver };
   for (const o of orders || []) {
-    if (o.customerId !== customerId) continue;
-    const winStart = o.windowStart ?? o.orderedAt;
-    const winEnd = o.windowEnd ?? o.deliveredAt ?? o.orderedAt;
-    if (winStart == null) continue;
-    const overlaps = endTs >= winStart - tolMs && startTs <= winEnd + tolMs;
+    if (customerKey(o.customerId) !== key) continue;
+    const win = orderWindow(o);
+    if (!win) continue;
+    const overlaps = endTs >= win.start - tolMs && startTs <= win.end + tolMs;
     if (!overlaps) continue;
     if (o.assignedDriverId && driverId && o.assignedDriverId !== driverId) { otherDriver.push(o); continue; }
     support.push(o);

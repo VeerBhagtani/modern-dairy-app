@@ -43,7 +43,7 @@ function validateOrder(o) {
   if (!o || typeof o !== 'object') return ['order is not an object'];
   if (!o.externalId || typeof o.externalId !== 'string') problems.push('externalId missing');
   if (!o.customerId || typeof o.customerId !== 'string') problems.push('customerId missing — order cannot be matched to a location');
-  if (!Number.isFinite(o.orderedAt) && !Number.isFinite(o.windowStart)) problems.push('no orderedAt or windowStart — order cannot be matched in time');
+  if (![o.orderedAt, o.windowStart, o.windowEnd, o.deliveredAt].some(Number.isFinite)) problems.push('no orderedAt, windowStart, windowEnd or deliveredAt — order cannot be matched in time');
   if (o.lat != null && (!Number.isFinite(o.lat) || Math.abs(o.lat) > 90)) problems.push('lat invalid');
   if (o.lng != null && (!Number.isFinite(o.lng) || Math.abs(o.lng) > 180)) problems.push('lng invalid');
   return problems;
@@ -101,6 +101,12 @@ async function syncOrders(sourceName, params, adminId) {
   }
   await writer.close();
 
+  // Rides already calculated for these days have to see the new orders, or a
+  // file uploaded after the day (the normal way) changes nothing: the visits
+  // stay "likely" and the matching report stays empty.
+  const days = affectedDays(accepted);
+  const ridesToRecalculate = days.length ? await repo().markDaysChanged(days) : 0;
+
   await logIntegration({
     source: sourceName, op: 'sync', ok: true, count: accepted.length,
     detail: { rejected: rejected.length, params: params || null },
@@ -109,11 +115,23 @@ async function syncOrders(sourceName, params, adminId) {
 
   // Rejected rows are returned, not swallowed: an import that silently drops a
   // third of the orders looks identical to one that worked.
-  return { imported: accepted.length, rejected };
+  return { imported: accepted.length, rejected, days, ridesToRecalculate };
+}
+
+// The IST days whose rides an order can affect: the day of each of its times,
+// and the day after an order time (an evening order is delivered next day).
+function affectedDays(orders) {
+  const dayKeyFor = (ms) => new Date(ms + 5.5 * 3600000).toISOString().slice(0, 10);
+  const days = new Set();
+  for (const o of orders) {
+    for (const t of [o.windowStart, o.windowEnd, o.deliveredAt]) if (Number.isFinite(t)) days.add(dayKeyFor(t));
+    if (Number.isFinite(o.orderedAt)) { days.add(dayKeyFor(o.orderedAt)); days.add(dayKeyFor(o.orderedAt + 864e5)); }
+  }
+  return [...days].sort();
 }
 
 // Wire up the shipped adapters.
 register('manual', require('./manual'));
 register('gofrugal', require('./gofrugal'));
 
-module.exports = { register, get, list, syncOrders, validateOrder, logIntegration };
+module.exports = { register, get, list, syncOrders, validateOrder, logIntegration, affectedDays };
