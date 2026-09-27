@@ -6,6 +6,7 @@
 // always produce byte-identical output, on a server or in a test, today or in
 // two years when someone disputes a figure.
 
+const { planOrders } = require('./orderWindow');
 const { resolveConfig, CALC_VERSION } = require('./config');
 const { cleanTrack, trackQuality, absorbStopJitter } = require('./track');
 const { detectStops } = require('./stops');
@@ -45,7 +46,8 @@ function processRideData(input) {
     driverId: input.ride?.driverId || null,
     facilities: input.facilities || [],
     restaurants: input.restaurants || [],
-    orders: input.orders || [],
+    // Office orders plus the driver's own planned stops (orderWindow.planOrders).
+    orders: (input.orders || []).concat(planOrders(input.ride, input.restaurants)),
     declarations: input.declarations || [],
     reviews: input.reviews || [],
   };

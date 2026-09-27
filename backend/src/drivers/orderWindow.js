@@ -51,4 +51,35 @@ function orderWindow(o) {
   return { start, end };
 }
 
-module.exports = { customerKey, orderWindow, endOfDeliveryDay };
+/* The stops a driver picked for a round, as the day's expected deliveries.
+ *
+ * Needs no order file: a planned stop the GPS saw a visit to is a delivery
+ * done, one it did not is a delivery missed. It is the driver's own list, not
+ * the office's, so it never raises a visit to "verified" on its own (see
+ * classification.ordersSupporting) — an order file still does that.
+ */
+const PLAN_SOURCE = 'driver_plan';
+function planOrders(ride, restaurants) {
+  const byId = new Map((restaurants || []).map((p) => [p.id, p]));
+  const seen = new Set();
+  const out = [];
+  for (const s of (ride && ride.plannedStops) || []) {
+    if (!s || !s.placeId || seen.has(s.placeId)) continue;
+    seen.add(s.placeId);
+    const place = byId.get(s.placeId);
+    out.push({
+      id: `plan_${ride.id}_${s.placeId}`,
+      source: PLAN_SOURCE,
+      externalId: `plan:${s.placeId}`,
+      placeId: s.placeId,
+      customerId: place ? place.customerId || null : null,
+      assignedDriverId: ride.driverId || null,
+      windowStart: s.plannedAt,
+      windowEnd: endOfDeliveryDay(s.plannedAt),
+      placeName: place ? place.name : null,
+    });
+  }
+  return out;
+}
+
+module.exports = { customerKey, orderWindow, endOfDeliveryDay, planOrders, PLAN_SOURCE };

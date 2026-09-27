@@ -22,6 +22,7 @@ const geocode = require('../services/geocode');
 const mobileVendor = require('../drivers/mobileVendor');
 const { TRUCK_ROUTE_STATUS } = require('../drivers/truckRoute');
 const { customerKey } = require('../drivers/orderWindow');
+const nameMatch = require('../services/nameMatch');
 const placesApi = require('../services/places');
 const locationAudit = require('../services/locationAudit');
 const { pinChange, pinRemoval } = require('../services/pinHistory');
@@ -1563,12 +1564,26 @@ router.post('/orders/import', requireRole('admin'), writeLimiter, async (req, re
   const nameToId = new Map(drivers.filter((d) => nameCount.get(String(d.name || '').trim().toLowerCase()) === 1).map((d) => [d.name, d.id]));
   const { orders, problems } = manual.parseOrdersCsv(csv, codeToId, nameToId);
   if (!orders.length) return bad(res, `No usable rows. ${problems.join('; ')}`);
+  // Which restaurant each order is for. By customer code first; where the code
+  // is missing or matches no restaurant, by the restaurant's name — only a
+  // strong name match, and only when exactly one restaurant has it, so nobody
+  // has to copy codes into the restaurant list by hand.
+  const restaurants = (await repo.C.restaurants().select('name', 'customerId', 'active').get()).docs
+    .map((d) => ({ id: d.id, name: d.get('name'), customerId: d.get('customerId'), active: d.get('active') }))
+    .filter((p) => p.active !== false);
+  const known = new Set(restaurants.map((p) => customerKey(p.customerId)).filter(Boolean));
+  let byName = 0;
+  for (const o of orders) {
+    if (customerKey(o.customerId) && known.has(customerKey(o.customerId))) continue;
+    if (!o.customerName) continue;
+    const hits = restaurants.filter((p) => p.name && nameMatch.compare(o.customerName, p.name).level === 'strong');
+    if (hits.length === 1) { o.placeId = hits[0].id; o.matchedByName = hits[0].name; byName += 1; }
+  }
   const out = await orderSource.syncOrders('manual', { orders }, req.adminId);
-  // How many of these customers exist in the restaurant list. An order whose
-  // customer id matches no restaurant can never match a visit — the single
-  // most common reason "delivery matching finds nothing".
-  const known = new Set((await repo.C.restaurants().select('customerId').get()).docs.map((d) => customerKey(d.get('customerId'))).filter(Boolean));
-  const unknownCustomers = [...new Set(orders.map((o) => customerKey(o.customerId)).filter((k) => k && !known.has(k)))];
+  // Orders that name no restaurant we know can never match a visit — the
+  // single most common reason "delivery matching finds nothing".
+  const unknownCustomers = [...new Set(orders.filter((o) => !o.placeId && !(customerKey(o.customerId) && known.has(customerKey(o.customerId))))
+    .map((o) => o.customerName || o.customerId).filter(Boolean))];
   // Recalculate the affected rides now, within a budget, so the office sees
   // the matches on the next screen; any left over are done the next time the
   // ride, its day or a report is opened.
@@ -1578,7 +1593,7 @@ router.post('/orders/import', requireRole('admin'), writeLimiter, async (req, re
     const fresh = await bringUpToDate(snap.docs.map((d) => ({ id: d.id, ...d.data() })), { maxRides: 40, budgetMs: 20000 });
     recalculated = fresh.calculated.length;
   }
-  res.json({ success: true, data: { ...out, recalculated, parseProblems: problems, unknownCustomers: unknownCustomers.slice(0, 50), unknownCustomerCount: unknownCustomers.length } });
+  res.json({ success: true, data: { ...out, recalculated, matchedByName: byName, parseProblems: problems, unknownCustomers: unknownCustomers.slice(0, 50), unknownCustomerCount: unknownCustomers.length } });
 });
 
 router.post('/orders/sync/:source', requireRole('admin'), writeLimiter, async (req, res) => {
@@ -1610,7 +1625,7 @@ router.get('/orders', requireRole('viewer'), async (req, res) => {
   const known = new Set((await repo.C.restaurants().select('customerId').get()).docs.map((d) => customerKey(d.get('customerId'))).filter(Boolean));
   const t = (o) => o.orderedAt || o.windowStart || o.deliveredAt || 0;
   const rows = [...byId.values()].sort((a, b) => t(b) - t(a)).slice(0, 1000)
-    .map((o) => ({ ...o, raw: undefined, customerKnown: known.has(customerKey(o.customerId)) }));
+    .map((o) => ({ ...o, raw: undefined, customerKnown: !!o.placeId || known.has(customerKey(o.customerId)) }));
   res.json({ success: true, data: rows });
 });
 

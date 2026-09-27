@@ -231,7 +231,7 @@ function deliveryMatchingRows(rows) {
     for (const m of result.matching.matches) {
       out.push({
         date: ride.dayKey, driverName: name, outcome: m.outcome, orderId: m.orderId,
-        customerId: m.customerId, placeName: m.placeId || '', visitAtIst: IST(m.visitAt),
+        customerId: m.customerId || '', placeName: m.placeName || m.placeId || '', visitAtIst: IST(m.visitAt),
         confidence: m.confidence, reason: m.evidence.map((e) => e.detail).join('; '),
       });
     }
@@ -245,7 +245,7 @@ function deliveryMatchingRows(rows) {
     for (const o of result.matching.unmatchedOrders) {
       out.push({
         date: ride.dayKey, driverName: name, outcome: o.outcome, orderId: o.orderId,
-        customerId: o.customerId || '', placeName: '', visitAtIst: '',
+        customerId: o.customerId || '', placeName: o.placeName || '', visitAtIst: '',
         confidence: '', reason: o.reason,
       });
     }

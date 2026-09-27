@@ -26,7 +26,7 @@
 // place, and that would otherwise quietly move a real delivery run out of
 // business.
 
-const { customerKey, orderWindow } = require('./orderWindow');
+const { customerKey, orderWindow, PLAN_SOURCE } = require('./orderWindow');
 const { placesContaining, nearestPlaces, haversineM } = require('./geo');
 const { SEGMENT_KIND } = require('./segmentation');
 
@@ -85,14 +85,17 @@ function declarationFor(declarations, startTs, endTs) {
 // inside the delivery window (or within the configured tolerance of it).
 // An order assigned to a DIFFERENT driver is not supporting evidence — it is
 // a flag, and it is returned as one.
-function ordersSupporting(orders, customerId, driverId, startTs, endTs, cfg) {
+function ordersSupporting(orders, customerId, driverId, startTs, endTs, cfg, placeId = null) {
   const tolMs = cfg.matchTimeToleranceMin * 60000;
   const support = [];
   const otherDriver = [];
   const key = customerKey(customerId);
-  if (!key) return { support, otherDriver };
+  if (!key && !placeId) return { support, otherDriver };
   for (const o of orders || []) {
-    if (customerKey(o.customerId) !== key) continue;
+    // The driver's own plan is not independent evidence of a delivery.
+    if (o.source === PLAN_SOURCE) continue;
+    const samePlace = placeId && o.placeId === placeId;
+    if (!samePlace && (!key || customerKey(o.customerId) !== key)) continue;
     const win = orderWindow(o);
     if (!win) continue;
     const overlaps = endTs >= win.start - tolMs && startTs <= win.end + tolMs;
@@ -151,7 +154,7 @@ function classifySegments(segments, points, ctx, cfg) {
       seg.place = { id: place.id, name: place.name, customerId: place.customerId || null, kind: 'restaurant' };
       evidence.push(ev('geofence_match', `${place.name}: ${Math.round(hit.distanceM)} m inside a ${Math.round(hit.radiusM)} m geofence`, { placeId: place.id }));
 
-      const { support, otherDriver } = ordersSupporting(ctx.orders, place.customerId, ctx.driverId, seg.startTs, seg.endTs, cfg);
+      const { support, otherDriver } = ordersSupporting(ctx.orders, place.customerId, ctx.driverId, seg.startTs, seg.endTs, cfg, place.id);
 
       // Fixes typically less accurate than the geofence is wide cannot say
       // the driver was inside it: a visit on that evidence is a guess.

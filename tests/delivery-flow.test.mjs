@@ -98,3 +98,47 @@ test('an upload recalculates the rides it affects', async () => {
   assert.ok(views.includes('id="ordFile" accept=".csv,.xlsx,text/csv"'), 'Excel accepted for orders');
   assert.match(views, /window\.DRIVERS_XLSX\.readWorkbook\)\.then\(window\.DRIVERS_XLSX\.toCsv\)[\s\S]{0,200}API\.importOrders/);
 });
+
+test('with no order file at all, the driver\'s planned round is the delivery list', () => {
+  const R2 = { id: 'R2', name: 'Hotel Missed', customerId: null, lat: 18.60, lng: 73.90, radiusM: 80 };
+  const plannedAt = T0 - 600000;
+  const r = processRideData({ points: morningVisit(),
+    ride: { id: 'x', driverId: 'drv', startedAt: T0, plannedStops: [{ placeId: 'R', plannedAt }, { placeId: 'R2', plannedAt }, { placeId: 'R', plannedAt }] },
+    facilities: [], restaurants: [R, R2], orders: [], declarations: [], reviews: [], nowMs: T0 + 864e5 });
+  const done = r.matching.matches.find((m) => m.placeId === 'R');
+  assert.ok(done, 'the visited planned stop is delivered');
+  assert.equal(done.outcome, 'MATCHED');
+  assert.equal(done.source, 'driver_plan');
+  assert.equal(done.confidence, 'MEDIUM', 'the driver\'s own list is not proof');
+  assert.equal(done.placeName, 'Hotel Shreyas');
+  assert.deepEqual(r.matching.unmatchedOrders.map((o) => o.placeName), ['Hotel Missed'], 'the unvisited one is missed, listed once');
+  assert.match(r.matching.unmatchedOrders[0].reason, /planned by the driver/);
+  // A plan never makes the visit "verified" business on its own.
+  const visit = r.segments.find((s) => s.type === 'LIKELY_RESTAURANT_VISIT');
+  assert.notEqual(visit.confidence, 'HIGH');
+});
+
+test('an order file with names but no codes still matches, by a unique strong name', async () => {
+  const csv = 'Invoice No,Party Name,Date\nI-1,Shreyas Hotel,25/09/2026\n';
+  const { orders, problems } = manual.parseOrdersCsv(csv);
+  assert.deepEqual(problems, []);
+  assert.equal(orders[0].customerName, 'Shreyas Hotel');
+  const fs = await import('fs');
+  const admin = fs.readFileSync(path.join(ROOT, 'backend/src/routes/admin.js'), 'utf8');
+  assert.match(admin, /nameMatch\.compare\(o\.customerName, p\.name\)\.level === 'strong'/);
+  assert.match(admin, /if \(hits\.length === 1\) \{ o\.placeId = hits\[0\]\.id;/);
+  // Matched by place, the order supports the visit like a coded one.
+  const r = processRideData({ points: morningVisit(), ride: { id: 'x', driverId: 'drv', startedAt: T0 }, facilities: [], restaurants: [{ ...R, customerId: null }],
+    orders: [{ ...orders[0], id: 'manual_I-1', placeId: 'R', customerId: null, assignedDriverId: null }], declarations: [], reviews: [], nowMs: T0 + 864e5 });
+  assert.equal(r.matching.matches[0].outcome, 'MATCHED');
+  assert.equal(r.segments.find((s) => s.type === 'LIKELY_RESTAURANT_VISIT').confidence, 'HIGH');
+});
+
+test('a round planned before Start Ride is carried onto the ride', async () => {
+  const fs = await import('fs');
+  const repo = fs.readFileSync(path.join(ROOT, 'backend/src/services/repo.js'), 'utf8');
+  assert.match(repo, /plannedStops: driver\.pendingPlan && driver\.pendingPlan\.dayKey === dayKeyFor\(now\)/);
+  const drv = fs.readFileSync(path.join(ROOT, 'backend/src/routes/driver.js'), 'utf8');
+  assert.match(drv, /pendingPlan: \{ dayKey: repo\.dayKeyFor\(at\)/);
+  assert.match(drv, /await repo\.markInputsChanged\(activeId\);/);
+});

@@ -68,7 +68,7 @@ async function calculate(rideId) {
   ]);
   const result = processRideData({
     points,
-    ride: { id: rideId, driverId: ride.driverId, startedAt: ride.startedAt, stoppedAt: ride.stoppedAt },
+    ride: { id: rideId, driverId: ride.driverId, startedAt: ride.startedAt, stoppedAt: ride.stoppedAt, plannedStops: ride.plannedStops || [] },
     facilities: places.facilities,
     restaurants: places.restaurants,
     orders,

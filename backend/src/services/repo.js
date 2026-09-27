@@ -405,6 +405,9 @@ async function startRide(driverId, meta = {}) {
       deviceId: meta.deviceId || null,
       appVersion: meta.appVersion || null,
       processedAt: null,
+      // A round planned earlier today, before Start Ride, still counts.
+      plannedStops: driver.pendingPlan && driver.pendingPlan.dayKey === dayKeyFor(now)
+        ? driver.pendingPlan.stops || [] : [],
     };
     tx.set(C.rides().doc(rideId), ride);
     tx.update(driverRef, { activeRideId: rideId });

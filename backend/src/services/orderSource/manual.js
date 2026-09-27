@@ -110,6 +110,7 @@ function parseTime(v) {
 const ALIASES = {
   order_id: ['order_id', 'order_no', 'order_number', 'bill_no', 'bill_number', 'invoice_no', 'invoice_number', 'voucher_no', 'challan_no', 'doc_no'],
   customer_id: ['customer_id', 'customer_code', 'cust_id', 'cust_code', 'party_code', 'party_id', 'customer_no', 'account_code', 'client_code'],
+  customer_name: ['customer_name', 'party_name', 'party', 'customer', 'restaurant', 'restaurant_name', 'hotel', 'hotel_name', 'outlet', 'name'],
   driver_code: ['driver_code', 'driver_id', 'driver', 'driver_name', 'delivery_boy', 'salesman', 'delivered_by'],
   ordered_at: ['ordered_at', 'order_date', 'order_time', 'bill_date', 'invoice_date', 'date', 'voucher_date', 'order_datetime', 'bill_datetime'],
   time: ['time', 'bill_time', 'invoice_time'],
@@ -139,7 +140,7 @@ function parseOrdersCsv(csvText, driverCodeToId = new Map(), driverNameToId = ne
   }
   const problems = [];
   if (col.order_id === -1) problems.push(`missing an order number column (any of: ${ALIASES.order_id.join(', ')})`);
-  if (col.customer_id === -1) problems.push(`missing a customer column (any of: ${ALIASES.customer_id.join(', ')})`);
+  if (col.customer_id === -1 && col.customer_name === -1) problems.push(`missing a customer column — a code (any of: ${ALIASES.customer_id.join(', ')}) or a name (any of: ${ALIASES.customer_name.join(', ')})`);
   if (problems.length) return { orders: [], problems };
 
   const byName = new Map([...driverNameToId].map(([k, v]) => [String(k).trim().toLowerCase(), v]));
@@ -167,6 +168,7 @@ function parseOrdersCsv(csvText, driverCodeToId = new Map(), driverNameToId = ne
     orders.push({
       externalId: at('order_id') ? at('order_id').replace(/\.0+$/, '') : at('order_id'),
       customerId: at('customer_id') ? at('customer_id').replace(/\.0+$/, '') : null,
+      customerName: at('customer_name') || null,
       placeId: at('place_id') || null,
       assignedDriverId,
       orderedAt: ordered ? ordered.ms : null,

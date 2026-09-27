@@ -12,7 +12,7 @@
 
 const { haversineM } = require('./geo');
 const { SEGMENT_TYPE, CONFIDENCE } = require('./classification');
-const { customerKey, orderWindow } = require('./orderWindow');
+const { customerKey, orderWindow, PLAN_SOURCE } = require('./orderWindow');
 
 const OUTCOME = {
   MATCHED: 'MATCHED',
@@ -63,7 +63,12 @@ function matchDeliveries(segments, orders, places, ctx, cfg) {
   const candidates = [];
   for (const visit of visits) {
     for (const order of orders || []) {
-      if (!visit.place || !customerKey(order.customerId) || customerKey(order.customerId) !== customerKey(visit.place.customerId)) continue;
+      if (!visit.place) continue;
+      // The same restaurant: by our own id (a planned stop, or an order file
+      // row matched to a restaurant by name), or by customer code.
+      const samePlace = order.placeId && order.placeId === visit.place.id;
+      const sameCustomer = customerKey(order.customerId) && customerKey(order.customerId) === customerKey(visit.place.customerId);
+      if (!samePlace && !sameCustomer) continue;
 
       const loc = expectedLocation(order, placesById, placesByCustomer);
       const distanceM = loc ? haversineM(visit.stop.center, loc) : null;
@@ -111,9 +116,10 @@ function matchDeliveries(segments, orders, places, ctx, cfg) {
     if (orderTaken.has(c.order.id)) continue;
     orderTaken.add(c.order.id);
 
-    const evidence = [
-      ev('customer_match', `order customer ${c.order.customerId} matches the geofenced location`),
-    ];
+    const fromPlan = c.order.source === PLAN_SOURCE;
+    const evidence = [fromPlan
+      ? ev('planned_stop', 'the driver planned this stop and the GPS shows a visit to it')
+      : ev('customer_match', `order customer ${c.order.customerId || c.order.placeId} matches the geofenced location`)];
     if (c.distanceM != null) {
       evidence.push(ev('spatial_match', `stop centroid ${Math.round(c.distanceM)} m from the expected delivery location (${c.locSource})`, { distanceM: Math.round(c.distanceM) }));
     } else {
@@ -133,6 +139,9 @@ function matchDeliveries(segments, orders, places, ctx, cfg) {
       outcome = OUTCOME.NEEDS_REVIEW; confidence = CONFIDENCE.LOW;
       evidence.push(ev('driver_mismatch', `order is assigned to driver ${c.order.assignedDriverId}, this ride belongs to ${ctx.driverId}`));
     }
+    // A planned stop visited is a delivery done, but on the driver's own word
+    // about where they were going: never more than MEDIUM.
+    if (fromPlan && outcome === OUTCOME.MATCHED) confidence = CONFIDENCE.MEDIUM;
     if (c.order.status && ['cancelled', 'returned'].includes(String(c.order.status).toLowerCase())) {
       outcome = OUTCOME.NEEDS_REVIEW;
       evidence.push(ev('order_status', `order status is "${c.order.status}"`));
@@ -141,8 +150,10 @@ function matchDeliveries(segments, orders, places, ctx, cfg) {
     matches.push({
       segmentId: c.visit.id,
       placeId: c.visit.place?.id || null,
+      placeName: c.visit.place?.name || null,
       orderId: c.order.id,
       customerId: c.order.customerId,
+      source: c.order.source || null,
       outcome,
       confidence,
       evidence,
@@ -183,8 +194,13 @@ function matchDeliveries(segments, orders, places, ctx, cfg) {
       assignedDriverId: o.assignedDriverId || null,
       orderedAt: o.orderedAt || null,
       status: o.status || null,
+      source: o.source || null,
+      placeId: o.placeId || null,
+      placeName: o.placeName || null,
       outcome: OUTCOME.UNMATCHED_DELIVERY,
-      reason: 'no GPS visit to this customer lines up with this order',
+      reason: o.source === PLAN_SOURCE
+        ? 'planned by the driver, but no visit to it was recorded'
+        : 'no GPS visit to this customer lines up with this order',
     }));
 
   return {

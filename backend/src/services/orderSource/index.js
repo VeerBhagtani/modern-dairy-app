@@ -42,7 +42,7 @@ function validateOrder(o) {
   const problems = [];
   if (!o || typeof o !== 'object') return ['order is not an object'];
   if (!o.externalId || typeof o.externalId !== 'string') problems.push('externalId missing');
-  if (!o.customerId || typeof o.customerId !== 'string') problems.push('customerId missing — order cannot be matched to a location');
+  if ((!o.customerId || typeof o.customerId !== 'string') && !o.placeId) problems.push('customerId missing — order cannot be matched to a location');
   if (![o.orderedAt, o.windowStart, o.windowEnd, o.deliveredAt].some(Number.isFinite)) problems.push('no orderedAt, windowStart, windowEnd or deliveredAt — order cannot be matched in time');
   if (o.lat != null && (!Number.isFinite(o.lat) || Math.abs(o.lat) > 90)) problems.push('lat invalid');
   if (o.lng != null && (!Number.isFinite(o.lng) || Math.abs(o.lng) > 180)) problems.push('lng invalid');

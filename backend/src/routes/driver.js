@@ -502,6 +502,30 @@ router.post('/plan', writeLimiter, async (req, res) => {
       returnTo: body.returnToStart ? '__start__' : null,
     });
     if (plan.error) return res.status(400).json({ success: false, message: plan.error, data: plan });
+    // The planned stops are the day's expected deliveries (orderWindow.
+    // planOrders): visited = delivered, not visited = missed. Kept on the
+    // driver's own running ride only, and only the stops that could be planned.
+    const activeId = req.driver.activeRideId;
+    const planned = (plan.legs || []).map((l) => l.to).filter((id) => id && id !== '__start__');
+    if (activeId && planned.length) {
+      const ride = await repo.getRide(activeId);
+      if (ride && ride.driverId === req.driverId && ride.status === 'active') {
+        const at = Date.now();
+        const known = new Set((ride.plannedStops || []).map((s) => s.placeId));
+        const add = planned.filter((id) => !known.has(id)).map((placeId) => ({ placeId, plannedAt: at }));
+        if (add.length) {
+          await repo.C.rides().doc(activeId).set({ plannedStops: [...(ride.plannedStops || []), ...add].slice(0, 100) }, { merge: true });
+          await repo.markInputsChanged(activeId);
+        }
+      }
+    } else if (planned.length) {
+      // Planned before Start Ride: kept on the driver for today, and picked up
+      // by the ride when it starts (repo.startRide).
+      const at = Date.now();
+      await repo.C.drivers().doc(req.driverId).set({
+        pendingPlan: { dayKey: repo.dayKeyFor(at), stops: planned.map((placeId) => ({ placeId, plannedAt: at })) },
+      }, { merge: true });
+    }
     if (named.name) {
       plan.name = named.name;
       // The office sees which round a driver is on. Only on the driver's own
