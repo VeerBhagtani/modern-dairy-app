@@ -58,6 +58,8 @@
     lastAccuracyM: null,
     lastHeading: null,
     distanceM: LS.get('distanceM', 0),
+    // Today's planned round: { name, day, stops: [{ id, name, lat, lng, done }] }.
+    plan: LS.get('plan', null),
     pointCount: LS.get('pointCount', 0),
     queued: 0,
     lastSyncAt: LS.get('lastSyncAt', null),
@@ -400,6 +402,7 @@
   function drawRoute() {
     if (gmap) { drawRouteGoogle(); return; }
     if (!map || !mapReady) return;
+    if (state.plan && !planMarkers.length && planStops().length) drawPlan();
     // Before a ride there is no route, but there is a position — the marker
     // follows the latest fix either way, so the driver sees themself on the map
     // the moment the app opens.
@@ -444,11 +447,108 @@
     if (followMap) map.easeTo({ center: last, duration: 700 });
   }
 
+  // ── the planned round on the map ──────────────────────────────────────
+  // Numbered red pins in the order to visit, green once reached, and a dashed
+  // line from where the plan started through every stop. Straight lines show
+  // the order; the roads come from Google Maps (the Navigate buttons).
+  function planStops() {
+    var p = state.plan;
+    if (!p || !p.stops) return [];
+    return p.stops.filter(function (s) { return s.id !== '__start__' && isFinite(s.lat) && isFinite(s.lng); });
+  }
+  var planMarkers = [];
+  function stopEl(n, done) {
+    var el = document.createElement('div');
+    el.className = 'stopnum' + (done ? ' done' : '');
+    el.textContent = done ? '✓' : String(n);
+    return el;
+  }
+  function drawPlan() {
+    var stops = planStops();
+    var start = state.plan && state.plan.stops && state.plan.stops[0] && state.plan.stops[0].id === '__start__'
+      ? state.plan.stops[0] : null;
+    var line = (start && isFinite(start.lat) ? [[start.lng, start.lat]] : [])
+      .concat(stops.map(function (s) { return [s.lng, s.lat]; }));
+    if (gmap) {
+      planMarkers.forEach(function (m) { m.setMap(null); });
+      planMarkers = [];
+      if (!gmap.planLine) {
+        gmap.planLine = new google.maps.Polyline({ map: gmap.map, strokeOpacity: 0, zIndex: 3, clickable: false,
+          icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, strokeColor: '#D7262F', scale: 3 }, offset: '0', repeat: '14px' }] });
+      }
+      gmap.planLine.setPath(line.map(function (c) { return { lat: c[1], lng: c[0] }; }));
+      stops.forEach(function (s, i) {
+        planMarkers.push(new google.maps.Marker({ map: gmap.map, position: { lat: s.lat, lng: s.lng }, zIndex: 8, title: s.name,
+          label: { text: s.done ? '✓' : String(i + 1), color: '#fff', fontWeight: '700' },
+          icon: { path: google.maps.SymbolPath.CIRCLE, scale: 14, fillColor: s.done ? '#1a7a4c' : '#D7262F', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 3 } }));
+      });
+      return;
+    }
+    if (!map || !mapReady) return;
+    if (!map.getSource('plan')) {
+      map.addSource('plan', { type: 'geojson', data: lineFC([]) });
+      map.addLayer({ id: 'plan-line', type: 'line', source: 'plan',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#D7262F', 'line-width': 3.5, 'line-dasharray': [1.5, 1.6] } }, 'route-casing');
+    }
+    map.getSource('plan').setData(lineFC(line.length > 1 ? line : []));
+    planMarkers.forEach(function (m) { m.remove(); });
+    planMarkers = stops.map(function (s, i) {
+      return new maplibregl.Marker({ element: stopEl(i + 1, s.done) }).setLngLat([s.lng, s.lat]).addTo(map);
+    });
+  }
+  // The whole round in view: where you are and every stop.
+  function fitPlan() {
+    var pts = planStops().map(function (s) { return [s.lng, s.lat]; });
+    if (state.lastFix) pts.push([state.lastFix.lng, state.lastFix.lat]);
+    if (pts.length < 2) return;
+    followMap = false;
+    var w = Math.min.apply(null, pts.map(function (p) { return p[0]; }));
+    var e = Math.max.apply(null, pts.map(function (p) { return p[0]; }));
+    var so = Math.min.apply(null, pts.map(function (p) { return p[1]; }));
+    var n = Math.max.apply(null, pts.map(function (p) { return p[1]; }));
+    if (gmap) {
+      gmap.map.fitBounds({ west: w, east: e, south: so, north: n }, 50);
+    } else if (map && mapReady) {
+      map.fitBounds([[w, so], [e, n]], { padding: 50, duration: 600, maxZoom: 16 });
+    }
+  }
+  // Reached = a recorded position within 120 m of the stop.
+  function markReached(loc) {
+    var changed = false;
+    planStops().forEach(function (s) {
+      if (!s.done && haversine({ lat: loc.latitude, lng: loc.longitude }, s) <= 120) { s.done = true; changed = true; }
+    });
+    if (changed) { LS.set('plan', state.plan); drawPlan(); if (state.plan) renderPlanList(); }
+  }
+
+  // Google Maps does the turn-by-turn. A plain link: the app hands any
+  // address outside itself to Android, which opens the Maps app.
+  function navUrl(stops) {
+    if (!stops.length) return null;
+    var c = function (s) { return s.lat.toFixed(6) + ',' + s.lng.toFixed(6); };
+    var dest = stops[stops.length - 1];
+    var via = stops.slice(0, -1).map(c).join('|');
+    return 'https://www.google.com/maps/dir/?api=1&travelmode=driving&dir_action=navigate&destination=' + c(dest)
+      + (via ? '&waypoints=' + encodeURIComponent(via) : '');
+  }
+  function nextStop() {
+    return planStops().filter(function (s) { return !s.done; })[0] || null;
+  }
+  function updateNavNext() {
+    var a = $('bigNav');
+    if (!a) return;
+    var nx = nextStop();
+    show(a, !!nx);
+    if (nx) { a.href = navUrl([nx]); a.textContent = 'Navigate to ' + nx.name; }
+  }
+
   // The same picture on Google Maps: route with a white casing, start dot,
   // accuracy circle, the driver's disc and, when the phone knows it, an arrow
   // for the direction of travel.
   function drawRouteGoogle() {
     var g = gmap;
+    if (state.plan && !planMarkers.length && planStops().length) drawPlan();
     var ll = function (c) { return { lat: c[1], lng: c[0] }; };
     var path = state.route.map(ll);
     g.casing.setPath(path);
@@ -719,6 +819,7 @@
 
     state.route.push([location.longitude, location.latitude]);
     if (state.route.length > 5000) state.route = state.route.slice(-5000);
+    markReached(location);
     drawRoute();
 
     state.pointCount += 1;
@@ -1190,7 +1291,7 @@
 
     // The map is up as soon as there is anything true to draw on it.
     var wantMap = riding() || !!state.lastFix;
-    show($('map'), wantMap);
+    show($('mapWrap'), wantMap);
     show($('mapEmpty'), !wantMap);
     if (wantMap && !mapShown) {
       mapShown = true;
@@ -1201,7 +1302,9 @@
 
     text('stKm', (state.distanceM / 1000).toFixed(1));
     text('stTime', state.rideStartedAt ? fmtDur(Date.now() - state.rideStartedAt) : '0m');
-    text('stPts', String(state.pointCount));
+    var ps = planStops();
+    text('stStops', ps.length ? ps.filter(function (s) { return s.done; }).length + '/' + ps.length : '—');
+    updateNavNext();
 
     var err = $('startErr');
     err.hidden = !state.startError;
@@ -1515,7 +1618,7 @@
             + '<button type="button" class="x" data-rounddel="' + esc(r.id) + '" aria-label="Delete ' + esc(r.name) + '">×</button></span>';
         }).join('') + '</div>'
       : '')
-      + '<label style="display:block;font-size:.8rem;font-weight:700;margin:8px 0 4px">NAME THIS ROUND <span style="font-weight:400">(optional)</span></label>'
+      + '<label style="display:block;font-size:.8rem;font-weight:700;margin:8px 0 4px">NAME THIS ROUND</label>'
       + '<input id="roundName" maxlength="40" placeholder="e.g. Camp round" value="' + esc(roundNameDraft) + '">'
       + '<label style="display:flex;gap:8px;align-items:center;margin:6px 0 12px;font-size:.85rem"><input type="checkbox" id="roundSave"'
       + (saveRoundDraft ? ' checked' : '') + ' style="width:auto"> Save it, to pick the same round again</label>'
@@ -1552,7 +1655,7 @@
       });
     });
     $('pickGo').addEventListener('click', requestPlan);
-    $('roundName').addEventListener('input', function (e) { roundNameDraft = e.target.value; });
+    $('roundName').addEventListener('input', function (e) { roundNameDraft = e.target.value; countPicked(); });
     $('roundSave').addEventListener('change', function (e) { saveRoundDraft = e.target.checked; });
     // A saved round ticks its restaurants and fills in its name.
     document.querySelectorAll('[data-round]').forEach(function (b) {
@@ -1579,10 +1682,13 @@
 
   function countPicked() {
     var n = Object.keys(picked).length;
+    // Every round has a name: the driver's history and the office both
+    // tell rounds apart by it.
+    var named = String(roundNameDraft || '').replace(/\s+/g, ' ').trim().length >= 2;
     var el = $('pickCount');
-    if (el) el.textContent = n < 2 ? 'Tick at least two.' : n + ' picked.';
+    if (el) el.textContent = n < 2 ? 'Tick at least two.' : (!named ? n + ' picked. Now give this round a name.' : n + ' picked.');
     var go = $('pickGo');
-    if (go) go.disabled = n < 2;
+    if (go) go.disabled = n < 2 || !named;
   }
 
   function requestPlan() {
@@ -1598,14 +1704,14 @@
       state.lastFix = fix;
       return apiFetch('/driver/plan', {
         method: 'POST',
-        body: { stopIds: ids, from: { lat: fix.lat, lng: fix.lng }, name: name || undefined },
+        body: { stopIds: ids, from: { lat: fix.lat, lng: fix.lng }, name: name },
       });
     }).then(function (plan) {
       $('sheetBg').classList.remove('on');
       showPlan(plan);
       // Saved after the plan worked, so a round is never saved with a name the
       // server refused. A failure to save does not undo the plan.
-      if (name && saveRoundDraft) {
+      if (saveRoundDraft) {
         apiFetch('/driver/rounds', { method: 'POST', body: { name: name, stopIds: ids } })
           .then(function (out) { roundsCache = out.rounds || roundsCache; })
           .catch(function () { /* the plan stands; the round can be saved next time */ });
@@ -1621,8 +1727,27 @@
     });
   }
 
+  function todayKey() { return new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10); }
+
+  // A new plan: kept for the day (it survives closing the app), drawn on the
+  // map, and the map zoomed out to show the whole round.
   function showPlan(plan) {
+    plan.day = todayKey();
+    state.plan = plan;
+    LS.set('plan', plan);
+    planMarkers.forEach(function (m) { if (m.remove) m.remove(); else m.setMap(null); });
+    planMarkers = [];
+    renderPlanList();
+    drawPlan();
+    setTimeout(fitPlan, 350);
+  }
+
+  function renderPlanList() {
+    var plan = state.plan;
     var box = $('planBox');
+    if (!plan) { show(box, false); box.innerHTML = ''; return; }
+    var targets = planStops();
+    var todo = targets.filter(function (x) { return !x.done; });
 
     // Say plainly where the answer came from. A driver being told to change
     // their route deserves to know whether the app is repeating their own
@@ -1645,16 +1770,25 @@
       + '<div class="planhead">' + headline
       + '<span style="display:block;margin-top:6px;font-size:.76rem;color:var(--ink-2)">'
       + esc(learned) + '</span></div>'
+      + (todo.length && navUrl(todo)
+        ? '<a class="navall" href="' + esc(navUrl(todo)) + '">Navigate the round in Google Maps</a>'
+          + '<p style="font-size:.74rem;color:var(--ink-2);margin:6px 0 10px;text-align:center">Turn-by-turn directions through every stop left, in this order.</p>'
+        : '')
+      + '<button id="planShowMap" class="plan" style="margin:0 0 10px">Show the round on the map</button>'
       + '<ol class="route">'
       + plan.stops.map(function (s, i) {
         var leg = plan.legs[i - 1];
-        return '<li><span class="n">' + (i === 0 ? '•' : i) + '</span><span>'
-          + '<span class="nm">' + esc(s.name) + '</span>'
+        var t = targets.find(function (x) { return x.id === s.id; });
+        var done = t && t.done;
+        return '<li' + (done ? ' class="done"' : '') + '><span class="n"' + (i ? ' style="background:' + (done ? '#1a7a4c' : '#D7262F') + '"' : '') + '>'
+          + (i === 0 ? '•' : (done ? '✓' : i)) + '</span><span>'
+          + '<span class="nm">' + esc(s.name) + (done ? ' — reached' : '') + '</span>'
           + (leg
             ? '<span class="sub">' + km(leg.distanceM) + ' · ' + mins(leg.durationS)
               + (leg.runs ? ' · from your ' + leg.runs + ' past trip' + (leg.runs === 1 ? '' : 's') : '')
               + '</span>'
             : '')
+          + (t && !done ? '<a class="navlink" href="' + esc(navUrl([t])) + '">Navigate here</a>' : '')
           + '</span></li>';
       }).join('')
       + '</ol>'
@@ -1679,13 +1813,36 @@
       + '<button id="planClear" class="plan" style="margin-top:12px">Clear</button>';
 
     show(box, true);
+    $('planShowMap').addEventListener('click', function () {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      fitPlan();
+    });
     $('planClear').addEventListener('click', function () {
       picked = {};
       roundNameDraft = '';
+      state.plan = null;
+      LS.del('plan');
+      drawPlan();
       show(box, false);
       box.innerHTML = '';
+      render();
     });
   }
+
+  // Full-screen map, and back.
+  function setBigMap(on) {
+    $('screenMain').classList.toggle('bigmap', on);
+    show($('btnBigMap'), !on);
+    show($('bigBar'), on);
+    updateNavNext();
+    setTimeout(function () { mapResize(); if (on && planStops().length) fitPlan(); }, 60);
+  }
+  $('btnBigMap').addEventListener('click', function () { setBigMap(true); });
+  $('btnSmallMap').addEventListener('click', function () { setBigMap(false); });
+
+  // Today's plan comes back after the app is closed; yesterday's does not.
+  if (state.plan && state.plan.day !== todayKey()) { state.plan = null; LS.del('plan'); }
+  if (state.plan) setTimeout(renderPlanList, 0);
 
   // ── boot ───────────────────────────────────────────────────────────────
   (function branding() {

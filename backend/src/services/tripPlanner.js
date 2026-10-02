@@ -114,7 +114,12 @@ async function planTrip(driverId, { start, stopIds, returnTo = null, useRoadApi 
 
   return {
     order: chosen.order,
-    stops: chosen.order.map((id) => ({ id, name: name(id) })),
+    // With coordinates, so the app can draw the round on its map and hand
+    // each stop to Google Maps for turn-by-turn directions.
+    stops: chosen.order.map((id) => {
+      const s = all.find((x) => x.id === id) || {};
+      return { id, name: name(id), lat: s.lat ?? null, lng: s.lng ?? null };
+    }),
     legs,
     totalDistanceM: Math.round(chosen.cost.distanceM),
     totalDurationS: Math.round(chosen.cost.durationS),

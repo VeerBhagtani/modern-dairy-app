@@ -475,6 +475,9 @@ router.post('/plan', writeLimiter, async (req, res) => {
   if (hasForbiddenKeys(body)) return res.status(400).json({ success: false, message: 'Bad request' });
   const named = roundName(body.name);
   if (named.error) return res.status(400).json({ success: false, message: named.error });
+  // Every round has a name, so the office and the driver's own history can
+  // tell one round from another.
+  if (!named.name) return res.status(400).json({ success: false, code: 'NAME_REQUIRED', message: 'Give this round a name, for example "Camp round".' });
 
   const stopIds = [...new Set(
     (Array.isArray(body.stopIds) ? body.stopIds : []).filter(isValidId),

@@ -50,7 +50,27 @@
   header .who b{display:block;font-size:.92rem;line-height:1.25;font-weight:600;}
   header .who span{font-size:.72rem;color:#b9c2e4;}
 
-  #map{flex:1;min-height:200px;background:#dfe3ee;}
+  /* Big enough to find your way on: about half the screen, and one tap to
+     fill all of it. */
+  #mapWrap{position:relative;flex:none;height:48vh;min-height:280px;}
+  #map{position:absolute;inset:0;background:#dfe3ee;}
+  .screen.bigmap #mapWrap{position:fixed;inset:0;height:auto;z-index:40;}
+  .mapbtn{position:absolute;top:10px;right:10px;z-index:5;border:none;border-radius:10px;padding:9px 12px;
+          background:#fff;color:var(--navy);font:600 .84rem/1 inherit;box-shadow:0 2px 8px rgba(0,0,0,.25);cursor:pointer;}
+  .bigbar{position:absolute;left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:5;
+          display:flex;flex-direction:column;gap:8px;}
+  .bigbar .plan{margin:0;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.25);}
+  .stopnum{width:30px;height:30px;border-radius:50%;background:#D7262F;color:#fff;border:3px solid #fff;
+           display:flex;align-items:center;justify-content:center;font:700 .9rem/1 -apple-system,Roboto,sans-serif;
+           box-shadow:0 1px 6px rgba(0,0,0,.4);}
+  .stopnum.done{background:#1a7a4c;}
+  .navlink{display:inline-block;margin-top:5px;padding:6px 10px;border-radius:8px;background:var(--navy);color:#fff;
+           font-size:.78rem;font-weight:600;text-decoration:none;}
+  .route li.done .nm{color:var(--ok);}
+  .route .nm,.route .sub{display:block;}
+  .navlink{width:max-content;}
+  .navall{display:block;text-align:center;width:100%;margin-top:10px;padding:13px;border-radius:12px;background:var(--navy);
+          color:#fff;font-weight:650;text-decoration:none;font-size:.95rem;}
   .map-empty{flex:1;display:flex;align-items:center;justify-content:center;padding:30px;
              text-align:center;color:var(--ink-2);font-size:.9rem;line-height:1.6;background:#e6e9f2;}
 
@@ -175,7 +195,14 @@
     <button class="link" id="btnWhy2" style="color:#b9c2e4">Info</button>
   </header>
 
-  <div id="map"></div>
+  <div id="mapWrap">
+    <div id="map"></div>
+    <button id="btnBigMap" class="mapbtn" type="button">⤢ Full map</button>
+    <div id="bigBar" class="bigbar" hidden>
+      <a id="bigNav" class="navall" hidden>Navigate to next stop</a>
+      <button id="btnSmallMap" class="plan" type="button">Close map</button>
+    </div>
+  </div>
   <div id="mapEmpty" class="map-empty">
     <span id="mapEmptyText">Finding your location…</span>
   </div>
@@ -192,7 +219,7 @@
       <div class="stats">
         <div class="stat"><b id="stKm">0.0</b><span>km</span></div>
         <div class="stat"><b id="stTime">0m</b><span>running</span></div>
-        <div class="stat"><b id="stPts">0</b><span>points</span></div>
+        <div class="stat"><b id="stStops">—</b><span>stops done</span></div>
       </div>
     </div>
 
