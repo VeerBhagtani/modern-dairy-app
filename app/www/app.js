@@ -700,6 +700,16 @@
   // answer it. BatteryOptimisation is this app's own small native plugin
   // (app/native/android); on a build without it every call here is a no-op.
   var BAT = null;
+  // Battery level (0-100) from the WebView's Battery Status API, kept current.
+  var batteryLevel = null;
+  try {
+    if (navigator.getBattery) {
+      navigator.getBattery().then(function (b) {
+        var upd = function () { batteryLevel = Math.round(b.level * 100); };
+        upd(); b.addEventListener('levelchange', upd);
+      }).catch(function () {});
+    }
+  } catch (e) { /* not available */ }
   function batteryPlugin() {
     if (!BAT && window.Capacitor && window.Capacitor.registerPlugin) {
       BAT = window.Capacitor.registerPlugin('BatteryOptimisation');
@@ -839,6 +849,9 @@
       speedMps: location.speed == null ? null : location.speed,
       headingDeg: location.bearing == null ? null : location.bearing,
       altitudeM: location.altitude == null ? null : location.altitude,
+      // The phone's battery at the time, when the WebView will say: a gap that
+      // starts at 3% explains itself.
+      batteryPct: batteryLevel == null ? null : batteryLevel,
       provider: 'fused',
       // Android's own mock-location flag, passed through honestly. The server
       // excludes such fixes from distance and flags them.
@@ -1522,7 +1535,7 @@
         + histTile(String(t.days), t.days === 1 ? 'Day' : 'Days')
         + '</div>'
         + '<p class="note" style="text-align:left;margin:0 0 12px">Business is driving to a restaurant, and between '
-        + 'restaurants and the dairy. Personal is driving that did not lead to a restaurant. '
+        + 'restaurants and the dairy. Driving that did not lead to a restaurant is undecided until the office checks it. '
         + 'If a day looks wrong, tell the office — they can see the route.</p>'
         + h.days.map(function (d) {
           var k = d.km;

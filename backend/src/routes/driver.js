@@ -340,6 +340,9 @@ router.post('/health', writeLimiter, async (req, res) => {
     appVersion: typeof b.appVersion === 'string' ? b.appVersion.slice(0, 32) : null,
   };
   await repo.writeEvent({ driverId: req.driverId, rideId: req.driver.activeRideId || null, kind: 'health', detail });
+  // The latest report, where the office's journey view reads it: in
+  // particular how many fixes are still waiting on the phone to be sent.
+  await repo.C.live().doc(req.driverId).set({ health: detail, healthAt: Date.now() }, { merge: true }).catch(() => {});
 
   const degraded = detail.locationPermission === 'denied' || detail.gpsEnabled === false;
   if (degraded && req.driver.activeRideId) {

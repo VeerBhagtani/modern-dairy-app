@@ -35,6 +35,7 @@ const C = {
   integrationLogs: () => db.collection('integration_logs'),
   audit: () => db.collection('drivers_audit_log'),
   routeCache: () => db.collection('route_cache'),
+  addressCache: () => db.collection('address_cache'),
   config: () => db.collection('drivers_config').doc('singleton'),
 };
 
@@ -786,7 +787,7 @@ async function reviewsForRide(rideId) {
 // Reviews are append-only. Superseding an earlier decision marks the earlier
 // row `superseded`; it is never edited away, so the chain of who decided what,
 // when and why survives intact.
-async function addReview({ rideId, segmentId, fromType, toType, distanceM, note, reviewerId, segStartTs, segEndTs }) {
+async function addReview({ rideId, segmentId, fromType, toType, distanceM, note, reviewerId, segStartTs, segEndTs, placeId = null, placeName = null, fromPlace = null }) {
   const prior = await C.reviews().where('rideId', '==', rideId).where('segmentId', '==', segmentId).where('reverted', '==', false).get();
   const batch = db.batch();
   for (const doc of prior.docs) batch.update(doc.ref, { superseded: true });
@@ -802,9 +803,12 @@ async function addReview({ rideId, segmentId, fromType, toType, distanceM, note,
     // whose window no longer matches.
     segStartTs: segStartTs ?? null, segEndTs: segEndTs ?? null,
     note: note || null, reviewerId, at: Date.now(), reverted: false, superseded: false,
+    // A corrected place: which restaurant (or depot) the stop really was.
+    placeId, placeName, fromPlace,
   });
   await batch.commit();
-  await writeAudit({ adminId: reviewerId, action: 'segment.reclassify', target: `${rideId}/${segmentId}`, before: { type: fromType }, after: { type: toType, note } });
+  await writeAudit({ adminId: reviewerId, action: 'segment.reclassify', target: `${rideId}/${segmentId}`,
+    before: { type: fromType, place: fromPlace }, after: { type: toType, place: placeId ? { id: placeId, name: placeName } : null, note } });
   return { id: ref.id };
 }
 
@@ -947,8 +951,24 @@ const routeCache = {
   },
 };
 
+// Reverse-geocoded stop addresses (services/addresses.js), kept for good.
+const addressCache = {
+  async getMany(keys) {
+    if (!keys.length) return {};
+    const snaps = await db.getAll(...keys.map((k) => C.addressCache().doc(k)));
+    const out = {};
+    for (const s of snaps) if (s.exists) out[s.id] = s.data();
+    return out;
+  },
+  async putMany(entries) {
+    const writer = db.bulkWriter();
+    for (const [k, v] of Object.entries(entries)) writer.set(C.addressCache().doc(k), v);
+    await writer.close();
+  },
+};
+
 module.exports = {
-  routeCache,
+  routeCache, addressCache,
   getRounds, saveRound, deleteRound,
   getStopNames, addStopName, removeStopName,
   C, dayKeyFor, endOfDayMs, closeIfDayOver, acquireCalcLease, releaseCalcLease, markCalcFailed, markInputsChanged, markDaysChanged,

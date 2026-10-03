@@ -110,8 +110,8 @@ test('the anomaly report reports the gap and any long leg that went to no restau
   const rows = reports.routeAnomalyRows(ROWS);
   assert.ok(rows.some((r) => r.kind === 'tracking_gap'));
   // The Porter detour in the fixture is several kilometres that lead to no
-  // customer: personal by rule, and shown so the office can check it.
-  assert.ok(rows.some((r) => r.kind === 'large_personal_leg'));
+  // customer: unknown until reviewed, and shown so the office can decide it.
+  assert.ok(rows.some((r) => r.kind === 'large_unknown_leg' || r.kind === 'large_personal_leg'));
 });
 
 test('the classification audit report renders the full chain', () => {

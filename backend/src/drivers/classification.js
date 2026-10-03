@@ -42,6 +42,7 @@ const SEGMENT_TYPE = {
   GPS_GAP_OR_INVALID_DATA: 'GPS_GAP_OR_INVALID_DATA',
 };
 
+const REVIEW_WINDOW_TOLERANCE_MS = 60000;
 const CONFIDENCE = { HIGH: 'HIGH', MEDIUM: 'MEDIUM', LOW: 'LOW', UNKNOWN: 'UNKNOWN' };
 const CONF_RANK = { HIGH: 3, MEDIUM: 2, LOW: 1, UNKNOWN: 0 };
 const weaker = (a, b) => (CONF_RANK[a] <= CONF_RANK[b] ? a : b);
@@ -216,13 +217,14 @@ function classifySegments(segments, points, ctx, cfg) {
       seg.anchor = 'personal';
       evidence.push(ev('driver_declared', `driver marked this period personal${declaration.note ? `: ${declaration.note}` : ''}`, { declaredAt: declaration.declaredAt }));
     } else {
-      // Not a restaurant and not the depot: by the restaurant rule, not
-      // business.
-      seg.type = SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS;
-      seg.confidence = CONFIDENCE.MEDIUM;
-      seg.needsReview = false;
-      seg.anchor = 'personal';
-      evidence.push(ev('no_known_location', 'this stop is not inside any restaurant or Modern Dairy geofence'));
+      // Not a restaurant and not the depot. That is not evidence of personal
+      // use — a Porter job and an unlisted customer look the same from here —
+      // so it stays UNKNOWN until the driver declares it or an admin decides.
+      seg.type = SEGMENT_TYPE.UNKNOWN;
+      seg.confidence = CONFIDENCE.LOW;
+      seg.needsReview = true;
+      seg.anchor = 'unknown';
+      evidence.push(ev('no_known_location', 'this stop is not inside any restaurant or Modern Dairy geofence — purpose unknown until reviewed'));
     }
     // What was nearby, for the reviewer only. Proximity is context, never proof.
     const near = nearestPlaces(at, [...facilities, ...restaurants], 3)
@@ -237,6 +239,30 @@ function classifySegments(segments, points, ctx, cfg) {
     seg.evidence = evidence;
   }
 
+  // ---- pass 1b: decisions about stops --------------------------------------
+  // Applied before the travel is judged, so a stop corrected from "unknown" to
+  // a restaurant (or to personal) decides the legs either side of it as well.
+  // A correction may also name the right place: "this was Restaurant B, not
+  // A". Same rules as every review (pass 3): never the raw GPS, the machine
+  // verdict kept as originalType, and only while the time window matches.
+  const placeById = new Map([...facilities.map((f) => [f.id, { p: f, kind: 'facility' }]), ...restaurants.map((r) => [r.id, { p: r, kind: 'restaurant' }])]);
+  for (const seg of out) {
+    if (seg.kind !== SEGMENT_KIND.STOP) continue;
+    if (applyReview(seg)) {
+      const r = seg._review;
+      if (r.placeId && placeById.has(r.placeId)) {
+        const { p, kind } = placeById.get(r.placeId);
+        seg.originalPlace = seg.place || null;
+        seg.place = { id: p.id, name: p.name, customerId: p.customerId || null, kind };
+      } else if (r.toType === SEGMENT_TYPE.UNKNOWN || r.toType === SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS) {
+        // Not this place after all.
+        if (seg.place) seg.originalPlace = seg.place;
+        seg.place = null;
+      }
+      seg.anchor = 'reviewed';      // a decided stop is never a pause on the way
+    }
+  }
+
   // ---- pass 2: travel --------------------------------------------------
   // A short stop at no known place is a pause on the way, not a destination:
   // the travel either side is judged by the stops it runs between once those
@@ -249,7 +275,7 @@ function classifySegments(segments, points, ctx, cfg) {
   // restaurant and the depot — is a detour, and stays a destination.
   const isTransit = (s) => s.kind === SEGMENT_KIND.STOP && s.transit === true;
   const candidate = out.map((seg) => seg.kind === SEGMENT_KIND.STOP
-    && seg.type === SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS
+    && seg.type === SEGMENT_TYPE.UNKNOWN && seg.anchor === 'unknown'
     && !(seg.evidence || []).some((e) => e.code === 'driver_declared')
     && seg.stop && seg.stop.dwellSec < cfg.transitStopMaxSec);
   const posOf = (seg, end) => {
@@ -349,6 +375,12 @@ function classifySegments(segments, points, ctx, cfg) {
       seg.type = SEGMENT_TYPE.TRAVEL_BETWEEN_BUSINESS_LOCATIONS;
       seg.confidence = weaker(confA, confB);
       evidence.push(ev('between_known_locations', `travel between ${placeName(before, 'a restaurant')} and ${placeName(after, 'a restaurant')}`));
+    } else if (b === 'personal') {
+      // Driving to a stop the driver declared, or an admin marked, personal.
+      seg.type = SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS;
+      seg.confidence = CONFIDENCE.MEDIUM;
+      seg.needsReview = false;
+      evidence.push(ev('to_personal_stop', `travel to ${placeName(after, 'a stop')} marked personal`));
     } else if (b === 'business') {
       // Driving to a restaurant is business, wherever it started from. Never
       // stronger than MEDIUM: where the trip began is not known to be work.
@@ -357,10 +389,12 @@ function classifySegments(segments, points, ctx, cfg) {
       evidence.push(ev('to_restaurant', `travel to ${placeName(after, 'a restaurant')}`));
     } else {
       // Not heading to a restaurant: after the last restaurant, between places
-      // that are not customers, or to the depot from elsewhere (a commute).
-      seg.type = SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS;
-      seg.confidence = CONFIDENCE.MEDIUM;
-      seg.needsReview = false;
+      // that are not customers, or to the depot from elsewhere. The purpose is
+      // not known — it is personal only once the driver or an admin says so —
+      // so it is UNKNOWN, kept apart from business, and listed for review.
+      seg.type = SEGMENT_TYPE.UNKNOWN;
+      seg.confidence = CONFIDENCE.LOW;
+      seg.needsReview = true;
       const from = a === 'business' ? `leaving ${placeName(before, 'a restaurant')}`
         : a === 'facility' ? 'leaving the depot' : 'from a place that is not a restaurant';
       const to = b === 'facility' ? 'to the depot' : 'not to a restaurant';
@@ -416,10 +450,19 @@ function classifySegments(segments, points, ctx, cfg) {
   // stretch of road. Each review therefore carries the time window it was made
   // against, and a review whose window no longer matches is NOT applied: the
   // segment goes back for review with the mismatch on the record.
-  const REVIEW_WINDOW_TOLERANCE_MS = 60000;
   for (const seg of out) {
+    if (seg._reviewDone) { delete seg._reviewDone; delete seg._review; continue; }
+    applyReview(seg);
+    delete seg._reviewDone; delete seg._review;
+  }
+
+  return out;
+
+  // A decision, if one applies to this segment. Returns true when applied.
+  function applyReview(seg) {
     const review = (ctx.reviews || []).find((r) => r.segmentId === seg.id && !r.reverted);
-    if (!review) { seg.needsReview = !!seg.needsReview; continue; }
+    seg._reviewDone = true;
+    if (!review) { seg.needsReview = !!seg.needsReview; return false; }
 
     const pinned = Number.isFinite(review.segStartTs);
     const moved = pinned && (
@@ -433,7 +476,7 @@ function classifySegments(segments, points, ctx, cfg) {
         ...(seg.evidence || []),
         ev('stale_review', `an earlier decision (${review.toType} by ${review.reviewerId}) was made against a different time window for this segment id and has NOT been applied — please review again`, { reviewId: review.id || null }),
       ];
-      continue;
+      return false;
     }
 
     seg.originalType = seg.type;
@@ -447,9 +490,9 @@ function classifySegments(segments, points, ctx, cfg) {
       ...(seg.evidence || []),
       ev('admin_review', `reclassified from ${seg.originalType} by ${review.reviewerId}${review.note ? `: ${review.note}` : ''}`, { reviewId: review.id }),
     ];
+    seg._review = review;
+    return true;
   }
-
-  return out;
 }
 
 module.exports = { SEGMENT_TYPE, CONFIDENCE, CONF_RANK, BUSINESS_TYPES, classifySegments, weaker };

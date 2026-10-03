@@ -12,11 +12,18 @@
  *   q      why not, when it did not
  *   b      what the stretch ending at this point counted as —
  *          business | personal | unknown | gap
+ *   d      metres measured from the start of the ride up to this point —
+ *          the same hop distances the kilometre totals are made of
+ *   g      metres estimated across GPS gaps up to this point (straight
+ *          lines, never measured; kept apart so they are never mistaken
+ *          for driven road)
+ *   a, s   the phone's accuracy (m) and speed (m/s), when it gave them
  * plus the GPS gaps, so the map can draw a silence as a silence.
  */
 'use strict';
 
-const { cleanTrack } = require('../drivers/track');
+const { cleanTrack, absorbStopJitter } = require('../drivers/track');
+const { detectStops } = require('../drivers/stops');
 const { bucketFor, BUCKET } = require('../drivers/distance');
 
 const KIND = {
@@ -60,16 +67,23 @@ function buildReplay(points, processing) {
       calculated: false,
       gaps: [],
       points: sorted.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
-        .map((p) => ({ lat: round6(p.lat), lng: round6(p.lng), ts: p.deviceTs, used: true, b: 'unknown' })),
+        .map((p) => ({ lat: round6(p.lat), lng: round6(p.lng), ts: p.deviceTs, used: true, b: 'unknown', ...extras(p) })),
     };
   }
+  // The same steps as the calculation (pipeline.js), so the running distance
+  // here ends at exactly the measured total the report shows.
   const track = cleanTrack(points || [], processing.configUsed, processing.processedAt || Date.now());
+  absorbStopJitter(track, detectStops(track.points, processing.configUsed));
+  const hopTo = new Map(track.hops.map((h) => [h.toIdx, h]));
   const segments = processing.segments || [];
   const out = [];
   let prev = null;
+  let d = 0; let g = 0;
   for (const p of track.points) {
     if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng)) continue;
-    const row = { lat: round6(p.lat), lng: round6(p.lng), ts: p.deviceTs, used: !!p.countDistance };
+    const hop = hopTo.get(p.idx);
+    if (hop) { if (hop.acrossGap) g += hop.distanceM; else d += hop.distanceM; }
+    const row = { lat: round6(p.lat), lng: round6(p.lng), ts: p.deviceTs, used: !!p.countDistance, d: Math.round(d), g: Math.round(g), ...extras(p) };
     if (!p.countDistance) {
       row.q = p.quality;
     } else {
@@ -84,6 +98,14 @@ function buildReplay(points, processing) {
     gaps: track.gaps.map((g) => ({ fromTs: g.fromTs, toTs: g.toTs, seconds: g.seconds, straightLineM: Math.round(g.straightLineM) })),
     points: out,
   };
+}
+
+function extras(p) {
+  const o = {};
+  if (Number.isFinite(p.accuracyM)) o.a = Math.round(p.accuracyM);
+  if (Number.isFinite(p.speedMps)) o.s = Math.round(p.speedMps * 10) / 10;
+  if (Number.isFinite(p.batteryPct)) o.bt = Math.round(p.batteryPct);
+  return o;
 }
 
 module.exports = { buildReplay, segmentFor };

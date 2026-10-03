@@ -60,10 +60,10 @@ test('each counted fix says what the stretch ending at it counted as', () => {
   const r = buildReplay(POINTS.map((x) => ({ ...x })), p);
   const kinds = new Set(r.points.filter((q) => q.used).map((q) => q.b));
   assert.ok(kinds.has('business'), 'driving to restaurants is business');
-  assert.ok(kinds.has('personal'), 'the Porter jobs are personal');
+  assert.ok(kinds.has('unknown'), 'the Porter jobs are unknown until reviewed');
   for (const k of kinds) assert.ok(['business', 'personal', 'unknown', 'gap'].includes(k), k);
 
-  // Near Personal 2 (no restaurant anywhere near) the route is personal.
+  // Near Personal 2 (no restaurant anywhere near) the route is never business.
   const near = r.points.filter((q) => q.used && Math.abs(q.lat - PLACES.PERSONAL_2.lat) < 0.002 && Math.abs(q.lng - PLACES.PERSONAL_2.lng) < 0.002);
   assert.ok(near.length, 'the track passes Personal 2');
   assert.ok(near.every((q) => q.b !== 'business'), 'never business at a Porter drop');

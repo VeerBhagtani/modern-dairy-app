@@ -75,26 +75,27 @@ test('the three Modern Dairy calls are recognised as facility stops', () => {
   for (const f of facility) assert.equal(f.confidence, CONFIDENCE.HIGH);
 });
 
-test('personal stops are NEVER classified as business', () => {
+test('Porter stops are NEVER classified as business, and are not assumed personal', () => {
   // The three Porter customers are at coordinates the system has never seen:
-  // not restaurants, not the depot — so, by the restaurant rule, personal.
+  // not restaurants, not the depot — so their purpose is unknown until the
+  // driver declares it or the office reviews it.
   for (const place of [PLACES.PERSONAL_1, PLACES.PERSONAL_2, PLACES.PERSONAL_3]) {
     const near = BASE.segments.filter((s) => s.kind === 'stop' && s.center
       && haversine(s.center, place) < 200);
     assert.equal(near.length, 1, `no stop found at ${place.name}`);
-    assert.equal(near[0].type, SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS,
+    assert.equal(near[0].type, SEGMENT_TYPE.UNKNOWN,
       `${place.name} was classified as ${near[0].type}`);
+    assert.equal(near[0].needsReview, true, 'listed for the office to decide');
   }
 });
 
-test('the Porter detour is personal, and the restaurant rounds are business', () => {
+test('the Porter detour is unknown (kept out of business), and the restaurant rounds are business', () => {
   // Restaurant B → Personal 1 → 2 → 3 → Modern Dairy leads to no restaurant:
-  // several kilometres of personal driving, kept out of business entirely.
-  assert.ok(BASE.distance.km.personal > 5, `expected the Porter detour in personal, got ${BASE.distance.km.personal} km`);
+  // several kilometres kept out of business entirely, and listed as unknown
+  // for the office to decide — not assumed personal.
+  assert.ok(BASE.distance.km.unknown > 5, `expected the Porter detour in unknown, got ${BASE.distance.km.unknown} km`);
   assert.ok(BASE.distance.km.likelyBusiness > 5, 'and the deliveries in business');
-  // Nothing in this day is left undecided: every leg either leads to a
-  // restaurant or it does not. Only the tunnel gap stays separate.
-  assert.ok(BASE.distance.km.unknown < 0.5, `unknown should be near zero, got ${BASE.distance.km.unknown} km`);
+  assert.ok(BASE.distance.km.personal < 0.5, `nothing is personal until somebody says so, got ${BASE.distance.km.personal} km`);
   assert.equal(BASE.review.unknownKm, BASE.distance.km.unknown);
 });
 
@@ -207,8 +208,8 @@ test('a driver declaration moves the Porter leg out of business, never into it',
 });
 
 test('an admin can correct a classification, with the original preserved', () => {
-  const target = BASE.segments.find((s) => s.kind === 'travel' && s.type === SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS && s.distanceM > 1000);
-  assert.ok(target, 'expected at least one substantial personal leg to review');
+  const target = BASE.segments.find((s) => s.kind === 'travel' && s.type === SEGMENT_TYPE.UNKNOWN && s.distanceM > 1000);
+  assert.ok(target, 'expected at least one substantial unknown leg to review');
   const reviewed = run({
     reviews: [{
       id: 'rev-1', segmentId: target.id, toType: SEGMENT_TYPE.BUSINESS_TRAVEL,
@@ -217,7 +218,7 @@ test('an admin can correct a classification, with the original preserved', () =>
   });
   const after = reviewed.segments.find((s) => s.id === target.id);
   assert.equal(after.type, SEGMENT_TYPE.BUSINESS_TRAVEL);
-  assert.equal(after.originalType, SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS);
+  assert.equal(after.originalType, SEGMENT_TYPE.UNKNOWN);
   assert.equal(after.originalConfidence, target.confidence);
   assert.equal(after.reviewedBy, 'admin:owner');
   assert.ok(after.evidence.some((e) => e.code === 'admin_review'));

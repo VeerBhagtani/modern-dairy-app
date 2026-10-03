@@ -183,12 +183,13 @@ test('a pause in traffic on the way to a restaurant does not turn the trip perso
   assert.match(pause.evidence.map((e) => e.code).join(), /transit_stop/);
 });
 
-test('a detour to a non-customer on the way back is personal, not business', () => {
+test('a detour to a non-customer on the way back is unknown, never business', () => {
   // A → a Porter drop 2 km off to the side → depot.
   const porter = at(3000, -2000);
   const pts = route(DEPOT, [{ dwellSec: 300 }, { to: A, waitAfter: 300 }, { to: porter, waitAfter: 300 }, { to: DEPOT, waitAfter: 300 }]);
   const r = run(pts);
-  assert.ok(r.distance.metres.personal > 3000, `personal ${r.distance.metres.personal}`);
+  assert.ok(r.distance.metres.unknown > 3000, `unknown ${r.distance.metres.unknown}`);
+  assert.equal(r.distance.metres.verifiedBusiness + r.distance.metres.likelyBusiness < 7000, true, 'the detour is not business');
   assert.ok(!r.segments.some((s) => s.transit), 'a detour is not a pause on the way');
 });
 

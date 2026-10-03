@@ -22,6 +22,8 @@ const geocode = require('../services/geocode');
 const mobileVendor = require('../drivers/mobileVendor');
 const { TRUCK_ROUTE_STATUS } = require('../drivers/truckRoute');
 const { customerKey } = require('../drivers/orderWindow');
+const { addAddresses } = require('../services/addresses');
+const { buildJourney } = require('../drivers/journey');
 const nameMatch = require('../services/nameMatch');
 const placesApi = require('../services/places');
 const locationAudit = require('../services/locationAudit');
@@ -408,6 +410,75 @@ router.get('/history', requireRole('viewer'), async (req, res) => {
   res.json({ success: true, data: { driver: { id: driverId, name: driver.name, driverCode: driver.driverCode }, from, to, ...history } });
 });
 
+// GET /admin/journey?driverId=&from=YYYY-MM-DD&to=YYYY-MM-DD
+//
+// A driver's complete journey for one day or a few: every ride, every fix
+// (none left out — excluded ones are marked, not removed), every stop in order
+// with its category, times, coordinates and address, the travel between stops
+// measured along the GPS, and the timeline. Reads only this driver's rides in
+// the range, and only their points.
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+router.get('/journey', requireRole('viewer'), async (req, res) => {
+  const { driverId } = req.query;
+  const fromDay = String(req.query.from || ''); const toDay = String(req.query.to || req.query.from || '');
+  if (!isValidId(driverId)) return bad(res, 'Choose a driver.');
+  if (!DAY_RE.test(fromDay) || !DAY_RE.test(toDay)) return bad(res, 'Choose a date.');
+  const from = Date.parse(`${fromDay}T00:00:00+05:30`); const to = Date.parse(`${toDay}T23:59:59.999+05:30`);
+  if (!(to >= from)) return bad(res, '"From" is after "to".');
+  if (to - from > 7 * 864e5) return bad(res, 'Show at most 7 days at a time.');
+  const driver = await repo.getDriver(driverId);
+  if (!driver) return res.status(404).json({ success: false, message: 'Driver not found' });
+
+  let rides = await repo.listRides({ driverId, from, to, limit: 50 });
+  // Up to date before it is shown: a running ride is recalculated if its
+  // figures are older than a few minutes; a finished one only if it changed.
+  const fresh = await bringUpToDate(rides, { maxRides: 8, budgetMs: 15000 });
+  if (fresh.calculated.length) rides = await repo.listRides({ driverId, from, to, limit: 50 });
+  rides.sort((a, b) => a.startedAt - b.startedAt);
+
+  const [places, liveDoc, apiKey] = await Promise.all([
+    repo.loadPlaces(),
+    repo.C.live().doc(driverId).get(),
+    getSecret('geocoding').catch(() => null),
+  ]);
+  const out = [];
+  for (const ride of rides) {
+    /* eslint-disable no-await-in-loop */
+    const [processing, points] = await Promise.all([repo.loadProcessing(ride.id), repo.loadPoints(ride.id)]);
+    const replay = buildReplay(points, processing);
+    const journey = buildJourney({ ride, processing, replay, places });
+    await addAddresses(journey.stops.filter((s) => s.category !== 'MODERN_DAIRY' && s.category !== 'RESTAURANT'),
+      { cache: repo.addressCache, apiKey }).catch(() => {});
+    out.push({
+      ride: {
+        id: ride.id, dayKey: ride.dayKey, startedAt: ride.startedAt, stoppedAt: ride.stoppedAt || null, status: ride.status,
+        roundName: ride.roundName || null, stoppedByName: ride.stoppedByName || null, stopKind: ride.stopKind || null,
+        pointCount: ride.pointCount || 0, lastUploadAt: ride.lastUploadAt || null,
+      },
+      calculated: !!processing,
+      calcVersion: processing ? processing.calcVersion : null,
+      journey,
+      replay,
+    });
+    /* eslint-enable no-await-in-loop */
+  }
+  const live = liveDoc.exists ? liveDoc.data() : null;
+  const { config } = await repo.getConfig();
+  res.json({ success: true, data: {
+    driver: { id: driverId, name: driver.name, driverCode: driver.driverCode, status: driver.status },
+    from: fromDay, to: toDay,
+    rides: out,
+    live: live ? {
+      lat: live.lat ?? null, lng: live.lng ?? null, deviceTs: live.deviceTs ?? null, accuracyM: live.accuracyM ?? null,
+      speedMps: live.speedMps ?? null, batteryPct: live.batteryPct ?? null, rideStatus: live.rideStatus || null,
+      queuedPoints: live.health ? live.health.queuedPoints : null, online: live.health ? live.health.online : null,
+      gpsEnabled: live.health ? live.health.gpsEnabled : null, healthAt: live.healthAt || null,
+    } : null,
+    staleAfterSec: config.staleLocationSec,
+    stopSettings: { stopRadiusM: config.stopRadiusM, stopMinDwellSec: config.stopMinDwellSec, transitStopMaxSec: config.transitStopMaxSec, geofenceDefaultRadiusM: config.geofenceDefaultRadiusM },
+  } });
+});
+
 router.post('/rides/:rideId/process', requireRole('manager'), writeLimiter, async (req, res) => {
   const { rideId } = req.params;
   if (!isValidId(rideId)) return bad(res, 'Invalid ride id');
@@ -474,6 +545,7 @@ const REVIEWABLE_TYPES = [
   SEGMENT_TYPE.RETURN_TO_MODERN_DAIRY,
   SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS,
   SEGMENT_TYPE.UNKNOWN,
+  SEGMENT_TYPE.MODERN_DAIRY_FACILITY_STOP,
 ];
 
 // A review NEVER edits the original classification and NEVER touches raw GPS.
@@ -481,10 +553,20 @@ const REVIEWABLE_TYPES = [
 // through the distance buckets with a full audit trail behind it.
 router.post('/rides/:rideId/segments/:segmentId/review', requireRole('manager'), writeLimiter, async (req, res) => {
   const { rideId, segmentId } = req.params;
-  const { toType, note } = req.body || {};
+  const { toType, note, placeId } = req.body || {};
   if (!isValidId(rideId) || !isValidId(segmentId)) return bad(res, 'Invalid ids');
   if (!REVIEWABLE_TYPES.includes(toType)) return bad(res, `toType must be one of: ${REVIEWABLE_TYPES.join(', ')}`);
   if (!isOptionalBoundedString(note, { max: 500 })) return bad(res, 'note is too long');
+  // "This stop was Restaurant B, not A": the place must be a real restaurant
+  // (for a visit) or a Modern Dairy site (for a depot stop).
+  let place = null;
+  if (placeId != null) {
+    if (!isValidId(placeId)) return bad(res, 'Invalid place');
+    const { facilities, restaurants } = await repo.loadPlaces({ fresh: true });
+    const pool = toType === SEGMENT_TYPE.MODERN_DAIRY_FACILITY_STOP ? facilities : restaurants;
+    place = pool.find((p) => p.id === placeId) || null;
+    if (!place) return bad(res, toType === SEGMENT_TYPE.MODERN_DAIRY_FACILITY_STOP ? 'That is not a Modern Dairy site.' : 'That restaurant has no location on the map, or does not exist.');
+  }
 
   const processing = await repo.loadProcessing(rideId);
   if (!processing) return res.status(404).json({ success: false, message: 'This ride has not been processed yet.' });
@@ -497,6 +579,8 @@ router.post('/rides/:rideId/segments/:segmentId/review', requireRole('manager'),
     distanceM: seg.distanceM,
     segStartTs: seg.startTs, segEndTs: seg.endTs,
     note, reviewerId: `admin:${req.adminId}`,
+    placeId: place ? place.id : null, placeName: place ? place.name : null,
+    fromPlace: seg.place ? { id: seg.place.id, name: seg.place.name } : null,
   });
   // The office is waiting to see its decision take effect: wait for any
   // calculation already running on this ride rather than failing.

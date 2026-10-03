@@ -92,18 +92,20 @@ test('a matching delivery order raises the same visit to HIGH', () => {
   assert.equal(visit.type, SEGMENT_TYPE.LIKELY_RESTAURANT_VISIT);
 });
 
-test('a stop that is not a restaurant or the depot is personal — never business', () => {
+test('a stop that is not a restaurant or the depot is UNKNOWN until reviewed — never business, never assumed personal', () => {
   const { segments } = classify(track([{ at: PLACES.DAIRY }, { at: PLACES.PERSONAL_1 }, { at: PLACES.PERSONAL_2 }]));
   const stops = segments.filter((s) => s.kind === 'stop');
   for (const s of stops.slice(1)) {
-    assert.equal(s.type, SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS, 'not a customer, so not business');
+    assert.equal(s.type, SEGMENT_TYPE.UNKNOWN, 'not a customer, so not business; not declared, so not personal');
+    assert.equal(s.needsReview, true, 'listed for a person to decide');
+    assert.notEqual(bucketFor(s), BUCKET.PERSONAL);
     assert.notEqual(bucketFor(s), BUCKET.VERIFIED_BUSINESS);
     assert.notEqual(bucketFor(s), BUCKET.LIKELY_BUSINESS);
     assert.ok(s.evidence.some((e) => e.code === 'no_known_location'));
   }
 });
 
-test('travel to a restaurant is business, and travel that leads to none is personal', () => {
+test('travel to a restaurant is business, and travel that leads to none is unknown', () => {
   // Personal place → restaurant → personal place: the first leg is a trip to
   // a customer, the second leaves the last customer for somewhere else.
   const { segments } = classify(track([{ at: PLACES.PERSONAL_1 }, { at: PLACES.RESTAURANT_A }, { at: PLACES.PERSONAL_2 }]));
@@ -111,17 +113,17 @@ test('travel to a restaurant is business, and travel that leads to none is perso
   assert.equal(legs.length, 2);
   assert.equal(legs[0].type, SEGMENT_TYPE.BUSINESS_TRAVEL);
   assert.equal(bucketFor(legs[0]), BUCKET.LIKELY_BUSINESS, 'business, but not verified: where it began is not known to be work');
-  assert.equal(legs[1].type, SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS);
-  assert.equal(bucketFor(legs[1]), BUCKET.PERSONAL);
+  assert.equal(legs[1].type, SEGMENT_TYPE.UNKNOWN);
+  assert.equal(bucketFor(legs[1]), BUCKET.UNKNOWN);
 });
 
-test('a commute to the depot is personal, the round from it is business', () => {
+test('a trip to the depot from an unknown place is unknown, the round from it is business', () => {
   const { segments } = classify(track([
     { at: PLACES.PERSONAL_1 }, { at: PLACES.DAIRY }, { at: PLACES.RESTAURANT_A }, { at: PLACES.DAIRY },
   ]));
   const legs = segments.filter((s) => s.kind === 'travel' && s.distanceM > 100).map((s) => s.type);
   assert.deepEqual(legs, [
-    SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS,
+    SEGMENT_TYPE.UNKNOWN,
     SEGMENT_TYPE.MODERN_DAIRY_DEPARTURE,
     SEGMENT_TYPE.RETURN_TO_MODERN_DAIRY,
   ]);
@@ -132,7 +134,7 @@ test('being NEAR a restaurant is not being AT one', () => {
   const nearby = { lat: PLACES.RESTAURANT_A.lat + 400 / 111320, lng: PLACES.RESTAURANT_A.lng };
   const { segments } = classify(track([{ at: PLACES.DAIRY }, { at: nearby }]));
   const stop = segments.filter((s) => s.kind === 'stop')[1];
-  assert.equal(stop.type, SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS, 'near is not at: not business');
+  assert.equal(stop.type, SEGMENT_TYPE.UNKNOWN, 'near is not at: not business');
   // The nearby restaurant is offered to the reviewer as context, clearly
   // labelled as proximity rather than as a match.
   assert.ok(stop.nearbyPlaces && stop.nearbyPlaces.length);
@@ -172,20 +174,20 @@ test('two overlapping geofences produce LOW confidence and a review flag, not a 
   assert.equal(visit.ambiguousPlaces.length, 2);
 });
 
-test('leaving the last restaurant for somewhere else is personal, never business', () => {
+test('leaving the last restaurant for somewhere else is unknown, never business', () => {
   const { segments } = classify(track([{ at: PLACES.RESTAURANT_A }, { at: PLACES.PERSONAL_1 }]));
   const leg = segments.find((s) => s.kind === 'travel' && s.distanceM > 100);
-  assert.equal(leg.type, SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS);
-  assert.equal(bucketFor(leg), BUCKET.PERSONAL);
+  assert.equal(leg.type, SEGMENT_TYPE.UNKNOWN);
+  assert.equal(bucketFor(leg), BUCKET.UNKNOWN);
 });
 
-test('a personal stop just outside a customer\'s geofence is flagged — the pin may be wrong', () => {
+test('an unknown stop just outside a customer\'s geofence is flagged — the pin may be wrong', () => {
   // 150 m from Restaurant A: outside its 80 m geofence, so not a visit, but
   // close enough that a misplaced pin is the likeliest explanation.
   const close = { lat: PLACES.RESTAURANT_A.lat + 150 / 111320, lng: PLACES.RESTAURANT_A.lng };
   const { segments } = classify(track([{ at: PLACES.DAIRY }, { at: close }]));
   const stop = segments.filter((s) => s.kind === 'stop')[1];
-  assert.equal(stop.type, SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS);
+  assert.equal(stop.type, SEGMENT_TYPE.UNKNOWN);
   assert.equal(stop.needsReview, true);
   assert.ok(stop.evidence.some((e) => e.code === 'near_known_place'));
   const leg = segments.find((s) => s.kind === 'travel' && s.distanceM > 100);
@@ -218,13 +220,13 @@ test('only HIGH-confidence business distance reaches the verified total', () => 
 test('an admin review overrides the machine and keeps the original on the record', () => {
   const points = track([{ at: PLACES.DAIRY }, { at: PLACES.PERSONAL_1 }]);
   const plain = classify(points);
-  const target = plain.segments.find((s) => s.kind === 'travel' && s.type === SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS);
+  const target = plain.segments.find((s) => s.kind === 'travel' && s.type === SEGMENT_TYPE.UNKNOWN);
   const reviewed = classify(points, {
     reviews: [{ id: 'rev1', segmentId: target.id, toType: SEGMENT_TYPE.BUSINESS_TRAVEL, reviewerId: 'admin:owner', at: T0, note: 'new customer, not on the map yet' }],
   });
   const after = reviewed.segments.find((s) => s.id === target.id);
   assert.equal(after.type, SEGMENT_TYPE.BUSINESS_TRAVEL);
-  assert.equal(after.originalType, SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS);
+  assert.equal(after.originalType, SEGMENT_TYPE.UNKNOWN);
   assert.equal(after.needsReview, false);
   assert.ok(after.evidence.some((e) => e.code === 'admin_review'));
 });
@@ -235,7 +237,7 @@ test('a review pinned to a different time window is NOT applied', () => {
   // re-attach itself to a different stretch of the day.
   const points = track([{ at: PLACES.DAIRY }, { at: PLACES.PERSONAL_1 }]);
   const plain = classify(points);
-  const target = plain.segments.find((s) => s.kind === 'travel' && s.type === SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS);
+  const target = plain.segments.find((s) => s.kind === 'travel' && s.type === SEGMENT_TYPE.UNKNOWN);
 
   const matching = classify(points, {
     reviews: [{ id: 'r1', segmentId: target.id, toType: SEGMENT_TYPE.BUSINESS_TRAVEL, reviewerId: 'admin:owner', at: T0, segStartTs: target.startTs, segEndTs: target.endTs }],
@@ -245,7 +247,7 @@ test('a review pinned to a different time window is NOT applied', () => {
   const stale = classify(points, {
     reviews: [{ id: 'r1', segmentId: target.id, toType: SEGMENT_TYPE.BUSINESS_TRAVEL, reviewerId: 'admin:owner', at: T0, segStartTs: target.startTs + 7200000, segEndTs: target.endTs + 7200000 }],
   }).segments.find((s) => s.id === target.id);
-  assert.equal(stale.type, SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS, 'a review from a different window must not be applied');
+  assert.equal(stale.type, SEGMENT_TYPE.UNKNOWN, 'a review from a different window must not be applied');
   assert.equal(stale.needsReview, true);
   assert.equal(stale.staleReviewId, 'r1');
   assert.ok(stale.evidence.some((e) => e.code === 'stale_review'));
@@ -253,7 +255,7 @@ test('a review pinned to a different time window is NOT applied', () => {
 
 test('an older review with no pinned window still applies, for backward compatibility', () => {
   const points = track([{ at: PLACES.DAIRY }, { at: PLACES.PERSONAL_1 }]);
-  const target = classify(points).segments.find((s) => s.kind === 'travel' && s.type === SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS);
+  const target = classify(points).segments.find((s) => s.kind === 'travel' && s.type === SEGMENT_TYPE.UNKNOWN);
   const after = classify(points, {
     reviews: [{ id: 'old', segmentId: target.id, toType: SEGMENT_TYPE.BUSINESS_TRAVEL, reviewerId: 'admin:owner', at: T0 }],
   }).segments.find((s) => s.id === target.id);
