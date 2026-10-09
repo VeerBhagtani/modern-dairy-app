@@ -42,8 +42,60 @@ function sortPoints(points) {
  *   totals: object,  measuredM, gapEstimateM, counts by reason
  * }}
  */
+/* Fixes that leave the path and come straight back.
+ *
+ * The speed check only catches a jump made in a few seconds. In slow traffic
+ * fixes arrive ~30 s apart, so a fix 500 m off passes it (17 m/s) and adds
+ * 1 km — there and back — that was never driven. A run of one or two fixes is
+ * a spike when it is at least spikeMinM from both neighbours, the
+ * neighbours are close to each other (under half that distance), and the
+ * jump is over three times the hops either side: the phone was never really
+ * there. Judged only between fixes that are themselves
+ * usable and not across a tracking gap. Returns the set of raw indexes
+ * (into `ordered`) to mark; nothing is deleted.
+ */
+function findSpikes(ordered, cfg, nowMs) {
+  if (cfg.legacyCleaning) return new Set();   // replaying a result made before 1.6.0
+  const minM = cfg.spikeMinM ?? 75;
+  const seen = new Set();
+  const ok = [];
+  ordered.forEach((p, i) => {
+    if (seen.has(p.clientPointId)) return;
+    seen.add(p.clientPointId);
+    if (classifyPointQuality(p, null, cfg, nowMs).countDistance) ok.push(i);
+  });
+  const spikes = new Set();
+  const live = ok;
+  let k = 1;
+  while (k < live.length - 1) {
+    let hit = 0;
+    for (const run of [1, 2]) {
+      if (k + run >= live.length) break;
+      const a = ordered[live[k - 1]]; const b = ordered[live[k + run]];
+      const first = ordered[live[k]]; const last = ordered[live[k + run - 1]];
+      if ((b.deviceTs - a.deviceTs) / 1000 > cfg.gapSeconds) continue;
+      const out = haversineM(a, first); const back = haversineM(last, b);
+      if (out < minM || back < minM) continue;
+      if (haversineM(a, b) >= 0.5 * Math.min(out, back)) continue;
+      if (run === 2 && haversineM(first, last) >= 0.5 * Math.min(out, back)) continue;
+      // Out of step with the driving either side: a U-turn on a sparse track
+      // has hops of the same size before and after it; a spike does not.
+      const before = k >= 2 ? haversineM(ordered[live[k - 2]], a) : 0;
+      const after = k + run + 1 < live.length ? haversineM(b, ordered[live[k + run + 1]]) : 0;
+      if (Math.min(out, back) < 3 * Math.max(before, after)) continue;
+      hit = run; break;
+    }
+    if (hit) {
+      for (let j = 0; j < hit; j += 1) spikes.add(live[k + j]);
+      live.splice(k, hit);
+    } else k += 1;
+  }
+  return spikes;
+}
+
 function cleanTrack(rawPoints, cfg, nowMs) {
   const ordered = sortPoints(rawPoints || []);
+  const spikes = findSpikes(ordered, cfg, nowMs);
 
   const points = [];
   const hops = [];
@@ -57,7 +109,7 @@ function cleanTrack(rawPoints, cfg, nowMs) {
   let prevAccepted = null;
   let prevAcceptedIdx = -1;
 
-  for (const raw of ordered) {
+  for (const [oi, raw] of ordered.entries()) {
     const idx = points.length;
 
     // Same clientPointId twice: an upload was replayed. The second copy is
@@ -70,7 +122,10 @@ function cleanTrack(rawPoints, cfg, nowMs) {
     }
     seenIds.add(raw.clientPointId);
 
-    const verdict = classifyPointQuality(raw, prevAccepted, cfg, nowMs);
+    let verdict = classifyPointQuality(raw, prevAccepted, cfg, nowMs);
+    if (verdict.countDistance && spikes.has(oi)) {
+      verdict = { quality: QUALITY.OUTLIER_SPIKE, countDistance: false, detail: 'off the path and straight back' };
+    }
     const p = {
       ...raw,
       idx,
@@ -164,6 +219,7 @@ function trackQuality(totals, cfg) {
   if (lowAcc > 0.3) reasons.push(`${Math.round(lowAcc * 100)}% of fixes were low accuracy`);
   if (totals.gapSecondsTotal > 3600) reasons.push(`${Math.round(totals.gapSecondsTotal / 60)} minutes of tracking gaps`);
   if (totals.byReason.implausible_jump) reasons.push(`${totals.byReason.implausible_jump} implausible position jumps`);
+  if (totals.byReason.outlier_spike) reasons.push(`${totals.byReason.outlier_spike} GPS spikes off the path`);
   if (totals.byReason.mock_location) reasons.push(`${totals.byReason.mock_location} mock-location fixes`);
 
   // Expected point count from the sampling interval; well under it means the
@@ -187,18 +243,45 @@ function trackQuality(totals, cfg) {
  * is moved to the jitter tally instead. Hops leaving or entering a stop are
  * untouched: that is the drive.
  *
+ * Indoors the wander can be wide enough to split one dwell into two stops.
+ * With `cfg`, the hops between two consecutive stops are parked jitter too
+ * when the stops are within twice stopRadiusM of each other, every fix
+ * between them stayed that close, and the phone was "away" no longer than
+ * transitStopMaxSec. Both stops stay (two nearby restaurants are still two
+ * visits); only the drive that never happened goes. A genuine short hop
+ * between neighbours is then not counted: an undercount of under ~250 m, the
+ * safe side for a figure that must be provable.
+ *
  * Mutates the hops (which the caller owns) and returns new totals, so the
  * reconciliation checks against the same figure the segments add up to.
  */
-function absorbStopJitter(track, stops) {
+function absorbStopJitter(track, stops, cfg) {
   if (!stops.length) return track.totals;
   const stopOf = new Map();
   stops.forEach((st, k) => { for (let i = st.startIdx; i <= st.endIdx; i += 1) stopOf.set(i, k); });
+  // Index ranges (end of one stop .. start of the next) that are parked wander.
+  const wander = [];
+  if (cfg) {
+    const near = 2 * cfg.stopRadiusM;
+    for (let k = 1; k < stops.length; k += 1) {
+      const a = stops[k - 1]; const b = stops[k];
+      if ((b.startTs - a.endTs) / 1000 > (cfg.transitStopMaxSec || 600)) continue;
+      if (haversineM(a.center, b.center) > near) continue;
+      let ok = true;
+      for (let i = a.endIdx + 1; i < b.startIdx && ok; i += 1) {
+        const p = track.points[i];
+        if (p && p.countDistance && haversineM(a.center, p) > near && haversineM(b.center, p) > near) ok = false;
+      }
+      if (ok) wander.push([a.endIdx, b.startIdx]);
+    }
+  }
+  const inWander = (h) => wander.some(([lo, hi]) => h.fromIdx >= lo && h.toIdx <= hi);
   let moved = 0;
   for (const hop of track.hops) {
     if (hop.acrossGap || hop.distanceM === 0) continue;
     const a = stopOf.get(hop.fromIdx);
-    if (a === undefined || a !== stopOf.get(hop.toIdx)) continue;
+    const same = a !== undefined && a === stopOf.get(hop.toIdx);
+    if (!same && !inWander(hop)) continue;
     moved += hop.distanceM;
     hop.jitterM = (hop.jitterM || 0) + hop.distanceM;
     hop.distanceM = 0;
@@ -209,4 +292,4 @@ function absorbStopJitter(track, stops) {
   return { ...t, measuredM: t.measuredM - moved, jitterM: t.jitterM + moved, parkedJitterM: moved, totalM: t.totalM - moved };
 }
 
-module.exports = { METHOD, cleanTrack, trackQuality, sortPoints, absorbStopJitter };
+module.exports = { METHOD, cleanTrack, findSpikes, trackQuality, sortPoints, absorbStopJitter };

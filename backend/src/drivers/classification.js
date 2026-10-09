@@ -66,6 +66,11 @@ const NEAR_KNOWN_PLACE_M = 250;
 // How much longer than going straight a trip may be through a pause for the
 // pause to count as on the way.
 const TRANSIT_DETOUR = 1.3;
+// A pause of up to three minutes is a signal or a jam, not an errand (a drop
+// takes longer): it may sit anywhere a city route can go, and a grid route
+// is up to √2 longer than the straight line.
+const SHORT_PAUSE_SEC = 180;
+const TRANSIT_DETOUR_SHORT = 1.45;
 
 // Does a driver declaration cover this time range? A declaration is a driver
 // saying "the next stretch is personal" in the app; it is timestamped on the
@@ -299,7 +304,8 @@ function classifySegments(segments, points, ctx, cfg) {
       const via = A && B ? haversineM(A, P) + haversineM(P, B) : Infinity;
       // Within 150 m of the straight line always counts (a pause right beside
       // where the trip starts or ends).
-      if (!(via <= direct * TRANSIT_DETOUR || via - direct <= 150)) candidate[i] = false;
+      const limit = out[i].stop.dwellSec <= SHORT_PAUSE_SEC ? TRANSIT_DETOUR_SHORT : TRANSIT_DETOUR;
+      if (!(via <= direct * limit || via - direct <= 150)) candidate[i] = false;
     }
   }
   out.forEach((seg, i) => { if (candidate[i]) seg.transit = true; });

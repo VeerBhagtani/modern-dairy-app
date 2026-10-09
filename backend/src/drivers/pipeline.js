@@ -40,7 +40,7 @@ function processRideData(input) {
   const track = cleanTrack(input.points || [], config, nowMs);
   const stops = detectStops(track.points, config);
   // Wandering while parked is not distance (see absorbStopJitter).
-  track.totals = absorbStopJitter(track, stops);
+  track.totals = absorbStopJitter(track, stops, config);
   const { segments: rawSegments } = buildSegments(track.points, track.hops, stops);
 
   const ctx = {

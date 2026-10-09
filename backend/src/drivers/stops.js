@@ -29,36 +29,17 @@ function detectStops(points, cfg) {
   // Only fixes good enough to be believed take part. A 300 m-accuracy fix
   // could place the driver anywhere in the block and would smear a stop.
   const usable = points.filter((p) => p.countDistance);
-  const stops = [];
-  if (usable.length < 2) return stops;
+  if (usable.length < 2) return [];
 
+  // 1. Runs of fixes within stopRadiusM of their running centroid.
+  const runs = [];
   let cluster = [usable[0]];
   let center = { lat: usable[0].lat, lng: usable[0].lng };
-
   const close = () => {
     if (cluster.length < 2) return;
     const dwellSec = (cluster[cluster.length - 1].deviceTs - cluster[0].deviceTs) / 1000;
-    if (dwellSec < cfg.stopMinDwellSec) return;
-    const c = centroid(cluster);
-    stops.push({
-      startIdx: cluster[0].idx,
-      endIdx: cluster[cluster.length - 1].idx,
-      startTs: cluster[0].deviceTs,
-      endTs: cluster[cluster.length - 1].deviceTs,
-      dwellSec: Math.round(dwellSec),
-      center: c,
-      pointCount: cluster.length,
-      // How tightly the fixes sat. A wide spread on a long dwell usually means
-      // poor urban GPS rather than movement, and the reviewer should see it.
-      spreadM: Math.round(Math.max(...cluster.map((p) => haversineM(c, p)))),
-      // Worst accuracy in the cluster — the honest bound on "where was this".
-      worstAccuracyM: cluster.reduce((m, p) => Math.max(m, p.accuracyM || 0), 0) || null,
-      // Typical accuracy: whether the fixes could place the stop inside a
-      // geofence at all.
-      medianAccuracyM: median(cluster.map((p) => p.accuracyM).filter((a) => Number.isFinite(a))),
-    });
+    if (dwellSec >= cfg.stopMinDwellSec) runs.push(cluster);
   };
-
   for (let i = 1; i < usable.length; i += 1) {
     const p = usable[i];
     if (haversineM(center, p) <= cfg.stopRadiusM) {
@@ -72,7 +53,48 @@ function detectStops(points, cfg) {
   }
   close();
 
-  return stops;
+  // 2. One parked phone, not two stops. Indoors a phone wanders: a fix or two
+  // drifts past the radius and the dwell splits in two with a short "drive"
+  // between that never happened. Two stops at the same spot (centres within
+  // stopRadiusM) are one stop when, between them, the phone never got further
+  // than twice the radius, for no longer than transitStopMaxSec. Anything that
+  // left that circle was a real drive and keeps the stops apart.
+  const merged = [];
+  for (const run of runs) {
+    const prev = merged[merged.length - 1];
+    if (prev && !cfg.legacyCleaning) {   // (not when replaying a result made before 1.6.0)
+      const a = centroid(prev); const b = centroid(run);
+      const awaySec = (run[0].deviceTs - prev[prev.length - 1].deviceTs) / 1000;
+      const between = usable.filter((p) => p.deviceTs > prev[prev.length - 1].deviceTs && p.deviceTs < run[0].deviceTs);
+      if (haversineM(a, b) <= cfg.stopRadiusM && awaySec <= (cfg.transitStopMaxSec || 600)
+          && between.every((p) => haversineM(a, p) <= 2 * cfg.stopRadiusM)) {
+        merged[merged.length - 1] = [...prev, ...between, ...run];
+        continue;
+      }
+    }
+    merged.push(run);
+  }
+
+  return merged.map((c) => {
+    const ctr = centroid(c);
+    return {
+      startIdx: c[0].idx,
+      endIdx: c[c.length - 1].idx,
+      startTs: c[0].deviceTs,
+      endTs: c[c.length - 1].deviceTs,
+      dwellSec: Math.round((c[c.length - 1].deviceTs - c[0].deviceTs) / 1000),
+      center: ctr,
+      pointCount: c.length,
+      // How tightly the fixes sat. A wide spread on a long dwell usually means
+      // poor urban GPS rather than movement, and the reviewer should see it.
+      spreadM: Math.round(Math.max(...c.map((p) => haversineM(ctr, p)))),
+      // Worst accuracy in the cluster — the honest bound on "where was this".
+      worstAccuracyM: c.reduce((m, p) => Math.max(m, p.accuracyM || 0), 0) || null,
+      // Typical accuracy: whether the fixes could place the stop inside a
+      // geofence at all.
+      medianAccuracyM: median(c.map((p) => p.accuracyM).filter((a) => Number.isFinite(a))),
+    };
+  });
 }
 
 module.exports = { detectStops };

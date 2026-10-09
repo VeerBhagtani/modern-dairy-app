@@ -23,6 +23,7 @@ const QUALITY = {
   BAD_ACCURACY: 'bad_accuracy',
   LOW_ACCURACY: 'low_accuracy',      // kept, counted, but flagged in the health report
   IMPLAUSIBLE_JUMP: 'implausible_jump',
+  OUTLIER_SPIKE: 'outlier_spike',    // one or two fixes far off the path that come straight back
   MOCK_LOCATION: 'mock_location',
   DUPLICATE: 'duplicate',
 };

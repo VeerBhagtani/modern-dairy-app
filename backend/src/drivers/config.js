@@ -36,6 +36,12 @@ const DEFAULTS = {
   // A silence longer than this is a tracking GAP, not travel. Distance across
   // it is reported separately as a straight-line ESTIMATE, never as measured.
   gapSeconds: 300,
+  // A fix (or two) that jumps at least this far off the path and comes
+  // straight back is a GPS spike, not a trip: in slow traffic it is slow
+  // enough to pass the speed check yet adds the distance there and back.
+  // Lower it and a genuine short U-turn on a sparse track is dropped (an
+  // undercount); raise it and spikes become kilometres.
+  spikeMinM: 75,
 
   // ---- stop detection -------------------------------------------------
   // A stop is points staying within this radius of their running centroid...
@@ -110,6 +116,7 @@ const RANGES = {
   clockSkewMin: [1, 720],
   minMoveM: [0, 100],
   gapSeconds: [60, 7200],
+  spikeMinM: [30, 1000],
   stopRadiusM: [10, 500],
   stopMinDwellSec: [30, 7200],
   transitStopMaxSec: [0, 7200],
@@ -131,7 +138,7 @@ const RANGES = {
 // Bumped whenever a change here or in the pipeline can change a reported
 // number. Stored on every ride_processing document so results are traceable
 // and so a recalculation can be triggered for everything below a version.
-const CALC_VERSION = '1.5.0';
+const CALC_VERSION = '1.6.0';
 
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
 

@@ -72,8 +72,11 @@ function buildReplay(points, processing) {
   }
   // The same steps as the calculation (pipeline.js), so the running distance
   // here ends at exactly the measured total the report shows.
-  const track = cleanTrack(points || [], processing.configUsed, processing.processedAt || Date.now());
-  absorbStopJitter(track, detectStops(track.points, processing.configUsed));
+  // A result made before calculation 1.6.0 had no spike filter and no
+  // parked-wander rules; the replay follows the rules that made the result.
+  const cfg = calcBefore(processing.calcVersion, '1.6.0') ? { ...processing.configUsed, legacyCleaning: true } : processing.configUsed;
+  const track = cleanTrack(points || [], cfg, processing.processedAt || Date.now());
+  absorbStopJitter(track, detectStops(track.points, cfg), cfg.legacyCleaning ? undefined : cfg);
   const hopTo = new Map(track.hops.map((h) => [h.toIdx, h]));
   const segments = processing.segments || [];
   const out = [];
@@ -100,6 +103,14 @@ function buildReplay(points, processing) {
   };
 }
 
+// '1.5.0' < '1.6.0'; a missing version is the oldest.
+function calcBefore(v, ref) {
+  if (!v) return true;
+  const a = String(v).split('.').map(Number); const b = ref.split('.').map(Number);
+  for (let i = 0; i < 3; i += 1) if ((a[i] || 0) !== b[i]) return (a[i] || 0) < b[i];
+  return false;
+}
+
 function extras(p) {
   const o = {};
   if (Number.isFinite(p.accuracyM)) o.a = Math.round(p.accuracyM);
@@ -108,4 +119,4 @@ function extras(p) {
   return o;
 }
 
-module.exports = { buildReplay, segmentFor };
+module.exports = { buildReplay, segmentFor, calcBefore };

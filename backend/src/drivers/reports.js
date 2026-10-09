@@ -262,7 +262,7 @@ function gpsReliabilityRows(rows) {
     coverage: `${Math.round((result.track.quality.coverage || 0) * 100)}%`,
     gapCount: result.track.totals.gapCount,
     gapMinutes: Math.round(result.track.totals.gapSecondsTotal / 60),
-    jumps: result.track.totals.byReason.implausible_jump || 0,
+    jumps: (result.track.totals.byReason.implausible_jump || 0) + (result.track.totals.byReason.outlier_spike || 0),
     lowAccuracy: result.track.totals.byReason.low_accuracy || 0,
     quality: result.track.quality.grade,
     reasons: result.track.quality.reasons.join('; '),
@@ -276,8 +276,8 @@ function routeAnomalyRows(rows) {
     for (const g of result.track.gaps) {
       out.push({ date: ride.dayKey, driverName: name, kind: 'tracking_gap', atIst: IST(g.fromTs), detail: `${Math.round(g.seconds / 60)} min silence, ${Math.round(g.straightLineM)} m straight-line` });
     }
-    const jumps = result.track.totals.byReason.implausible_jump || 0;
-    if (jumps) out.push({ date: ride.dayKey, driverName: name, kind: 'implausible_jump', atIst: '', detail: `${jumps} fix(es) rejected as physically impossible` });
+    const jumps = (result.track.totals.byReason.implausible_jump || 0) + (result.track.totals.byReason.outlier_spike || 0);
+    if (jumps) out.push({ date: ride.dayKey, driverName: name, kind: 'implausible_jump', atIst: '', detail: `${jumps} fix(es) rejected as impossible jumps or GPS spikes` });
     const mock = result.track.totals.byReason.mock_location || 0;
     if (mock) out.push({ date: ride.dayKey, driverName: name, kind: 'mock_location', atIst: '', detail: `${mock} fix(es) flagged by Android as mock locations` });
     for (const s of result.segments) {

@@ -202,8 +202,15 @@ router.get('/dashboard', requireRole('viewer'), async (req, res) => {
         personalKm: personal == null ? null : Math.round(personal / 100) / 10,
         unknownKm: unknown == null ? null : Math.round(unknown / 100) / 10,
       },
+      // Exact metres for the fleet totals below; removed before sending.
+      metres: { total, verified, business, personal, unknown },
     };
   });
+  // Fleet totals: summed in metres and rounded once. Adding forty figures
+  // already rounded to 0.1 km could be off by two kilometres.
+  const fleetKm = (k) => Math.round(rows.reduce((s, r) => s + (r.metres[k] || 0), 0) / 100) / 10;
+  const fleet = { total: fleetKm('total'), verified: fleetKm('verified'), business: fleetKm('business'), personal: fleetKm('personal'), unknown: fleetKm('unknown') };
+  for (const r of rows) delete r.metres;
 
   res.json({
     success: true,
@@ -216,11 +223,11 @@ router.get('/dashboard', requireRole('viewer'), async (req, res) => {
       metrics: {
         activeDrivers: rows.filter((r) => r.rideStatus === 'active').length,
         completedRides: rides.filter((r) => r.status !== 'active').length,
-        totalKm: Math.round(rows.reduce((s, r) => s + (r.today.totalKm || 0), 0) * 10) / 10,
-        verifiedBusinessKm: Math.round(rows.reduce((s, r) => s + (r.today.verifiedBusinessKm || 0), 0) * 10) / 10,
-        businessKm: Math.round(rows.reduce((s, r) => s + (r.today.businessKm || 0), 0) * 10) / 10,
-        personalKm: Math.round(rows.reduce((s, r) => s + (r.today.personalKm || 0), 0) * 10) / 10,
-        unknownKm: Math.round(rows.reduce((s, r) => s + (r.today.unknownKm || 0), 0) * 10) / 10,
+        totalKm: fleet.total,
+        verifiedBusinessKm: fleet.verified,
+        businessKm: fleet.business,
+        personalKm: fleet.personal,
+        unknownKm: fleet.unknown,
         trackingIssues: rows.filter((r) => ['no_signal', 'degraded'].includes(r.trackingHealth)).length,
         openAlerts: alerts.length,
         unprocessedRides: rides.filter((r) => r.status !== 'active' && !resultByRide.get(r.id)).length,
