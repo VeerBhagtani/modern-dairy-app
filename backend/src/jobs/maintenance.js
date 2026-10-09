@@ -109,6 +109,7 @@ async function enforceRetention(cfg, nowMs, { dryRun = false, maxRides = 50, max
       refs.forEach((ref) => writer.delete(ref));
       await writer.close();
       await repo.C.rides().doc(ride.id).update({ rawGpsDeletedAt: nowMs, rawGpsRetentionDays: cfg.retention.rawGpsDays });
+      if (repo.forgetPoints) repo.forgetPoints(ride.id);
       await repo.writeAudit({
         adminId: 'system:retention',
         action: 'gps.retention_delete',

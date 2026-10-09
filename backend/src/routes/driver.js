@@ -17,6 +17,8 @@ const { issueDriverTokens, verifyDriverToken, requireDriver } = require('../midd
 const { registerLimiter, refreshLimiter, driverLimiter, gpsIngestLimiter, writeLimiter } = require('../middleware/rateLimit');
 const { isValidId, isBoundedString, isOptionalBoundedString, hasForbiddenKeys } = require('../middleware/validate');
 const { normaliseIncomingPoint } = require('../drivers/validation');
+const { clockCorrection, sanitizeHealth } = require('../drivers/deviceHealth');
+const { log, errText } = require('../services/log');
 const { ALERT } = require('../drivers/alerts');
 const tripPlanner = require('../services/tripPlanner');
 const { canVisit } = require('../drivers/eligibility');
@@ -41,6 +43,18 @@ const PRIVACY_NOTICE = {
   ],
 };
 
+// What the app needs to know to record and upload: sent at registration, on
+// every ride check and with every upload reply, so a change in Settings
+// reaches every phone within a minute without a new APK.
+function trackingConfig(config) {
+  return {
+    sampleIntervalSec: config.sampleIntervalSec,
+    maxBatchPoints: config.maxBatchPoints,
+    uploadIntervalSec: config.uploadIntervalSec,
+    healthIntervalSec: config.healthIntervalSec,
+  };
+}
+
 // POST /driver/register { name, deviceId, appVersion }
 //
 // The entire sign-in. A name, and the id the app generated for this phone.
@@ -62,7 +76,7 @@ router.post('/register', registerLimiter, async (req, res) => {
         driver: { id: driver.id, name: driver.name, driverCode: driver.driverCode },
         ...tokens,
         created,
-        tracking: { sampleIntervalSec: config.sampleIntervalSec, maxBatchPoints: config.maxBatchPoints },
+        tracking: trackingConfig(config),
         privacyNotice: PRIVACY_NOTICE,
       },
     });
@@ -110,7 +124,7 @@ router.get('/me', async (req, res) => {
         id: ride.id, startedAt: ride.startedAt, lastPointAt: ride.lastPointAt || null,
         pointCount: ride.pointCount || 0, status: ride.status,
       } : null,
-      tracking: { sampleIntervalSec: config.sampleIntervalSec, maxBatchPoints: config.maxBatchPoints },
+      tracking: trackingConfig(config),
       privacyNotice: PRIVACY_NOTICE,
       // The app shows this verbatim so the rule is never in doubt on the phone.
       rideControl: 'Only the Modern Dairy office can stop a ride.',
@@ -167,7 +181,8 @@ router.get('/rides/active', async (req, res) => {
       },
     });
   }
-  res.json({ success: true, data: { active: true, rideId: ride.id, startedAt: ride.startedAt, lastPointAt: ride.lastPointAt || null } });
+  const { config } = await repo.getConfig();
+  res.json({ success: true, data: { active: true, rideId: ride.id, startedAt: ride.startedAt, lastPointAt: ride.lastPointAt || null, serverTime: Date.now(), tracking: trackingConfig(config) } });
 });
 
 // POST /driver/rides/:rideId/points { points: [...] }
@@ -183,13 +198,29 @@ router.post('/rides/:rideId/points', gpsIngestLimiter, async (req, res) => {
   }
 
   let ride = await repo.getRide(rideId);
-  if (!ride) return res.status(404).json({ success: false, message: 'Ride not found' });
+  // The codes matter: the app drops queued fixes for a ride only on these two
+  // answers, never on a bare 403/404 (a deactivated account, a wrong URL),
+  // which used to wipe a phone's whole queue.
+  if (!ride) {
+    log.warn('gps_upload_unknown_ride', { requestId: req.id, driverId: req.driverId, rideId, points: body.points.length });
+    return res.status(404).json({ success: false, code: 'RIDE_NOT_FOUND', message: 'Ride not found' });
+  }
   // The ride must belong to the token's driver. Without this check a driver
   // could post points into a colleague's ride.
   if (ride.driverId !== req.driverId) {
     await repo.writeEvent({ driverId: req.driverId, rideId, kind: 'cross_driver_upload_blocked', detail: { ownedBy: ride.driverId } });
-    return res.status(403).json({ success: false, message: 'That ride does not belong to this account.' });
+    log.warn('gps_upload_cross_driver', { requestId: req.id, driverId: req.driverId, rideId, ownedBy: ride.driverId });
+    return res.status(403).json({ success: false, code: 'NOT_YOUR_RIDE', message: 'That ride does not belong to this account.' });
   }
+
+  // The phone's clock, corrected onto the server's (deviceHealth.js). Done
+  // before anything compares a fix's time with the ride's start or stop.
+  const correction = clockCorrection(body.sentAt, Date.now());
+  if (correction) {
+    body.points = body.points.map((p) => (p && typeof p === 'object' && Number.isFinite(Number(p.deviceTs))
+      ? { ...p, deviceTs: Number(p.deviceTs) + correction, rawDeviceTs: Number(p.deviceTs) } : p));
+  }
+  const health = sanitizeHealth(body.health, { correction });
   // One ride per day: a ride whose day has ended is closed at the end of that
   // day before anything is stored, so points from after midnight are refused
   // from it by the rule just below and the phone moves to a new ride.
@@ -243,13 +274,24 @@ router.post('/rides/:rideId/points', gpsIngestLimiter, async (req, res) => {
   for (const raw of body.points) {
     const { point, error } = normaliseIncomingPoint(raw, { nowMs, clockSkewMin: config.clockSkewMin });
     if (error) { rejected.push({ clientPointId: raw?.clientPointId ?? null, error }); continue; }
+    if (correction) { point.rawDeviceTs = raw.rawDeviceTs; point.clockSkewMs = correction; }
     accepted.push(point);
   }
 
-  if (accepted.length) await repo.ingestPoints(rideId, req.driverId, accepted);
-  if (rejected.length) {
-    await repo.writeEvent({ driverId: req.driverId, rideId, kind: 'points_rejected', detail: { count: rejected.length, sample: rejected.slice(0, 5) } });
+  let stored;
+  try {
+    stored = await repo.ingestPoints(rideId, req.driverId, accepted, { health, clockSkewMs: correction });
+  } catch (e) {
+    // Nothing is confirmed, so the phone keeps every fix and retries.
+    log.error('gps_store_failed', { requestId: req.id, driverId: req.driverId, rideId, points: accepted.length, error: errText(e) });
+    return res.status(503).json({ success: false, code: 'STORE_FAILED', message: 'The server could not store the fixes; the app will retry.' });
   }
+  if (rejected.length) {
+    await repo.writeEvent({ driverId: req.driverId, rideId, kind: 'points_rejected', detail: { count: rejected.length, sample: rejected.slice(0, 5) } }).catch(() => {});
+    log.warn('gps_points_rejected', { requestId: req.id, driverId: req.driverId, rideId, count: rejected.length, reasons: [...new Set(rejected.map((r) => r.error))].slice(0, 5) });
+  }
+  if (stored.duplicates) log.info('gps_duplicates_ignored', { requestId: req.id, driverId: req.driverId, rideId, count: stored.duplicates });
+  if (correction) log.info('gps_clock_corrected', { requestId: req.id, driverId: req.driverId, rideId, clockSkewMs: correction });
 
   // The app deletes a queued point only when the server confirms it by id, so a
   // partial failure never loses data — it is simply retried.
@@ -258,8 +300,11 @@ router.post('/rides/:rideId/points', gpsIngestLimiter, async (req, res) => {
     data: {
       accepted: accepted.map((p) => p.clientPointId),
       rejected,
+      duplicates: stored.duplicates,
       serverTime: nowMs,
+      clockSkewMs: correction,
       rideActive: ride.status === 'active',
+      tracking: trackingConfig(config),
     },
   });
 });
@@ -328,21 +373,14 @@ router.post('/rides/:rideId/declare', writeLimiter, async (req, res) => {
 // POST /driver/health — permission/GPS/battery state from the phone.
 // This is what lets the dashboard say "this driver's GPS permission was revoked"
 // rather than just "no data".
-router.post('/health', writeLimiter, async (req, res) => {
+// The phone's heartbeat: sent every healthIntervalSec while a ride runs and
+// nothing else is being uploaded, and at once when something changes. Per
+// driver under the router's own limit (a minute apart is ~15 per quarter
+// hour, which writeLimiter's 30 left no room for).
+router.post('/health', async (req, res) => {
   const b = req.body || {};
-  const detail = {
-    locationPermission: typeof b.locationPermission === 'string' ? b.locationPermission.slice(0, 32) : null,
-    backgroundPermission: typeof b.backgroundPermission === 'string' ? b.backgroundPermission.slice(0, 32) : null,
-    gpsEnabled: typeof b.gpsEnabled === 'boolean' ? b.gpsEnabled : null,
-    batteryOptimised: typeof b.batteryOptimised === 'boolean' ? b.batteryOptimised : null,
-    online: typeof b.online === 'boolean' ? b.online : null,
-    queuedPoints: Number.isFinite(b.queuedPoints) ? b.queuedPoints : null,
-    appVersion: typeof b.appVersion === 'string' ? b.appVersion.slice(0, 32) : null,
-  };
-  await repo.writeEvent({ driverId: req.driverId, rideId: req.driver.activeRideId || null, kind: 'health', detail });
-  // The latest report, where the office's journey view reads it: in
-  // particular how many fixes are still waiting on the phone to be sent.
-  await repo.C.live().doc(req.driverId).set({ health: detail, healthAt: Date.now() }, { merge: true }).catch(() => {});
+  const detail = sanitizeHealth(b, { correction: clockCorrection(b.sentAt, Date.now()) });
+  await repo.recordHealth(req.driverId, req.driver.activeRideId || null, detail);
 
   const degraded = detail.locationPermission === 'denied' || detail.gpsEnabled === false;
   if (degraded && req.driver.activeRideId) {

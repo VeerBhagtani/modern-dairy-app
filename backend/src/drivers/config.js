@@ -74,6 +74,20 @@ const DEFAULTS = {
   // a POSSIBLE match. Inside the window it is a MATCH.
   matchTimeToleranceMin: 120,
 
+  // ---- live tracking --------------------------------------------------
+  // A driver is LIVE on the office map only while their latest fix is at most
+  // this old (by the server's clock, corrected for a wrong phone clock).
+  liveLocationSec: 60,
+  // How often the app uploads while a ride runs. Each upload is one request;
+  // 15 s keeps the office map current for about 4 requests a minute.
+  uploadIntervalSec: 15,
+  // How often the app reports its own state (permission, GPS, queue) when it
+  // has nothing to upload. A report older than twice this is not trusted.
+  healthIntervalSec: 60,
+  // How old a running ride's kilometres may get before the next look at the
+  // dashboard recalculates them.
+  calcRefreshSec: 120,
+
   // ---- ride lifecycle -------------------------------------------------
   // A ride nobody stopped is auto-closed after this many hours, recorded as
   // status 'auto_closed' with the threshold that closed it. Never silent.
@@ -127,6 +141,10 @@ const RANGES = {
   visitMinDwellSec: [120, 7200],
   matchRadiusM: [20, 5000],
   matchTimeToleranceMin: [0, 1440],
+  liveLocationSec: [15, 900],
+  uploadIntervalSec: [5, 300],
+  healthIntervalSec: [30, 600],
+  calcRefreshSec: [60, 3600],
   autoStopAfterHours: [1, 48],
   staleLocationSec: [30, 86400],
   gpsMissingAlertMin: [1, 1440],

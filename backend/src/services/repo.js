@@ -14,6 +14,7 @@ const crypto = require('crypto');
 const { db, admin, FieldValue } = require('./firestore');
 const { readAll } = require('./paging');
 const { resolveConfig } = require('../drivers/config');
+const { healthChanged } = require('../drivers/deviceHealth');
 
 const C = {
   drivers: () => db.collection('drivers'),
@@ -480,76 +481,113 @@ async function listRides({ driverId, from, to, status, limit = 200 }) {
 // ---------------------------------------------------------------------------
 
 // Points are written with the client's own point id as the document id, so a
-// replayed batch overwrites itself instead of double-counting the kilometres.
-// `create` would throw on a retry and turn a normal network retry into an
-// error; a plain set of identical content is idempotent. The only field that
-// changes on a replay is serverTs, which is exactly right: it records when the
-// server last received the point, and the device time — the one the
-// calculation uses — is unchanged.
-async function ingestPoints(rideId, driverId, points) {
-  if (!points.length) return { written: 0, duplicates: 0 };
-  const writer = db.bulkWriter();
+// replayed batch can never make a second copy or count a kilometre twice.
+/* Store a batch of fixes and move the driver's live position.
+ *
+ * @param opts.health        the phone's own report sent with the batch (sanitised), or null
+ * @param opts.clockSkewMs   correction applied to this batch's timestamps (0 = phone clock right)
+ * @returns { written, duplicates, serverTs }
+ */
+async function ingestPoints(rideId, driverId, points, { health = null, clockSkewMs = 0 } = {}) {
   const serverTs = Date.now();
-  // create(), not set(): a point that is already stored (the same batch sent
-  // again after a lost reply) is left exactly as it was, and not counted
-  // twice. The clientPointId is the document id, so a retry can never make a
-  // second copy.
-  let duplicates = 0;
-  writer.onWriteError((err) => {
-    if (err.code === 6 /* ALREADY_EXISTS */) { duplicates += 1; return false; }
-    return err.failedAttempts < 3;
-  });
-  const writes = points.map((p) => writer.create(C.gps(rideId).doc(p.clientPointId), { ...p, rideId, driverId, serverTs })
-    .then(() => true, (err) => { if (err.code === 6) return false; throw err; }));
-  await writer.close();
-  const results = await Promise.all(writes);
-  const written = results.filter(Boolean).length;
-  if (!written) return { written: 0, duplicates };
-
-  const latest = points.reduce((a, b) => (b.deviceTs > a.deviceTs ? b : a));
-  // Only move lastPointAt forward. An out-of-order replay of an old batch must
-  // not make a live driver look stale.
-  await db.runTransaction(async (tx) => {
-    const ref = C.rides().doc(rideId);
-    const doc = await tx.get(ref);
-    if (!doc.exists) return;
-    const cur = doc.data().lastPointAt || 0;
-    tx.update(ref, {
-      lastPointAt: Math.max(cur, latest.deviceTs),
-      pointCount: (doc.data().pointCount || 0) + written,
-      // Stamped now, after the points above are committed, not at the start of
-      // the upload: a calculation that read the points in between must still
-      // see this ride as having newer data than it used.
-      lastUploadAt: Date.now(),
+  let written = 0; let duplicates = 0;
+  if (points.length) {
+    const writer = db.bulkWriter();
+    // create(), not set(): a point that is already stored (the same batch sent
+    // again after a lost reply) is left exactly as it was, and not counted
+    // twice. The clientPointId is the document id, so a retry can never make a
+    // second copy.
+    writer.onWriteError((err) => {
+      if (err.code === 6 /* ALREADY_EXISTS */) return false;
+      return err.failedAttempts < 3;
     });
-  });
+    const writes = points.map((p) => writer.create(C.gps(rideId).doc(p.clientPointId), { ...p, rideId, driverId, serverTs })
+      .then(() => true, (err) => { if (err.code === 6) { duplicates += 1; return false; } throw err; }));
+    await writer.close();
+    const results = await Promise.all(writes);
+    written = results.filter(Boolean).length;
+  }
 
-  // The live map reads this one document per driver. Same rule: never go
-  // backwards in time.
+  const latest = points.length ? points.reduce((a, b) => (b.deviceTs > a.deviceTs ? b : a)) : null;
+  if (written) {
+    // Only move lastPointAt forward. An out-of-order replay of an old batch must
+    // not make a live driver look stale.
+    await db.runTransaction(async (tx) => {
+      const ref = C.rides().doc(rideId);
+      const doc = await tx.get(ref);
+      if (!doc.exists) return;
+      const cur = doc.data().lastPointAt || 0;
+      tx.update(ref, {
+        lastPointAt: Math.max(cur, latest.deviceTs),
+        pointCount: (doc.data().pointCount || 0) + written,
+        // Stamped now, after the points above are committed, not at the start of
+        // the upload: a calculation that read the points in between must still
+        // see this ride as having newer data than it used.
+        lastUploadAt: Date.now(),
+      });
+    });
+  }
+
+  // The live map reads this one document per driver. The position never goes
+  // backwards in time; the phone's report and the time of contact always
+  // move, even for a batch of duplicates — a retry still proves the phone
+  // can reach the server.
   const liveRef = C.live().doc(driverId);
+  let healthEvent = null;
   await db.runTransaction(async (tx) => {
     const doc = await tx.get(liveRef);
-    if (doc.exists && (doc.data().deviceTs || 0) > latest.deviceTs) return;
-    tx.set(liveRef, {
-      driverId, rideId,
-      lat: latest.lat, lng: latest.lng,
-      deviceTs: latest.deviceTs, serverTs,
-      accuracyM: latest.accuracyM ?? null,
-      speedMps: latest.speedMps ?? null,
-      headingDeg: latest.headingDeg ?? null,
-      batteryPct: latest.batteryPct ?? null,
-      rideStatus: 'active',
-    }, { merge: true });
+    const prev = doc.exists ? doc.data() : {};
+    const update = { driverId, lastContactAt: serverTs, clockSkewMs };
+    // A stored position "in the future" came from a phone clock that was
+    // wrong before corrections existed; it must not pin the marker forever.
+    const prevTs = (prev.deviceTs || 0) > serverTs + 60000 ? 0 : (prev.deviceTs || 0);
+    const newer = latest && written && prevTs <= latest.deviceTs;
+    if (newer) {
+      Object.assign(update, {
+        rideId,
+        lat: latest.lat, lng: latest.lng,
+        deviceTs: latest.deviceTs, serverTs,
+        accuracyM: latest.accuracyM ?? null,
+        speedMps: latest.speedMps ?? null,
+        headingDeg: latest.headingDeg ?? null,
+        batteryPct: latest.batteryPct ?? null,
+        rideStatus: 'active',
+      });
+    }
+    if (health) {
+      if (healthChanged(prev.health, health)) healthEvent = health;
+      update.health = health;
+      update.healthAt = serverTs;
+      update.healthRideId = rideId;
+    }
+    tx.set(liveRef, update, { merge: true });
   });
+  if (healthEvent) await writeEvent({ driverId, rideId, kind: 'health', detail: healthEvent }).catch(() => {});
 
   return { written, duplicates, serverTs };
+}
+
+/* The phone's own report, sent on its own (nothing to upload). One write to
+ * the live document; an event row only when something meaningful changed. */
+async function recordHealth(driverId, rideId, health) {
+  const liveRef = C.live().doc(driverId);
+  const now = Date.now();
+  let changed = false;
+  await db.runTransaction(async (tx) => {
+    const doc = await tx.get(liveRef);
+    const prev = doc.exists ? doc.data() : {};
+    changed = healthChanged(prev.health, health);
+    tx.set(liveRef, { driverId, health, healthAt: now, healthRideId: rideId || null, lastContactAt: now }, { merge: true });
+  });
+  if (changed) await writeEvent({ driverId, rideId: rideId || null, kind: 'health', detail: health }).catch(() => {});
+  return { changed };
 }
 
 // Every point of the ride, page by page. There is deliberately no cap: a
 // capped read silently dropped the end of a long ride (or of a phone that
 // sampled fast), and the kilometres after the cap simply disappeared.
 const POINT_PAGE = 5000;
-async function loadPoints(rideId) {
+async function readAllPoints(rideId) {
   // Paged after the last document itself (deviceTs, then document id), so two
   // fixes in the same millisecond can never be skipped at a page edge, and no
   // extra index is needed.
@@ -557,6 +595,42 @@ async function loadPoints(rideId) {
     const q = C.gps(rideId).orderBy('deviceTs').limit(POINT_PAGE);
     return after ? q.startAfter(after) : q;
   }, POINT_PAGE);
+}
+
+/* A running ride is recalculated every couple of minutes so the office sees
+ * its kilometres move. Reading every fix of the day each time would be a
+ * thousand-plus reads per driver per recalculation; instead this instance
+ * remembers a ride's fixes and reads only those stored since (by server
+ * receipt time). Fixes are never changed once stored, so the cache can only
+ * be behind, never wrong — and the overlap below covers a write committed
+ * late by another instance. A cold instance, or fresh:true, reads it all.
+ */
+const pointCache = new Map();   // rideId -> { byId: Map, maxServerTs, usedAt }
+const POINT_CACHE_OVERLAP_MS = 5 * 60 * 1000;
+const POINT_CACHE_RIDES = 80;
+function forgetPoints(rideId) { if (rideId) pointCache.delete(rideId); else pointCache.clear(); }
+const byTime = (a, b) => (a.deviceTs - b.deviceTs) || String(a.clientPointId).localeCompare(String(b.clientPointId));
+
+async function loadPoints(rideId, { fresh = false } = {}) {
+  let c = fresh ? null : pointCache.get(rideId);
+  if (c) {
+    const snap = await C.gps(rideId).where('serverTs', '>=', c.maxServerTs - POINT_CACHE_OVERLAP_MS).get();
+    for (const d of snap.docs) {
+      const p = d.data();
+      c.byId.set(p.clientPointId || d.id, p);
+      if (p.serverTs > c.maxServerTs) c.maxServerTs = p.serverTs;
+    }
+  } else {
+    const all = await readAllPoints(rideId);
+    c = { byId: new Map(all.map((p) => [p.clientPointId, p])), maxServerTs: all.reduce((m, p) => Math.max(m, p.serverTs || 0), 0) };
+    pointCache.set(rideId, c);
+    if (pointCache.size > POINT_CACHE_RIDES) {
+      const oldest = [...pointCache.entries()].sort((a, b) => (a[1].usedAt || 0) - (b[1].usedAt || 0))[0];
+      if (oldest) pointCache.delete(oldest[0]);
+    }
+  }
+  c.usedAt = Date.now();
+  return [...c.byId.values()].sort(byTime);
 }
 
 // ---------------------------------------------------------------------------
@@ -976,7 +1050,7 @@ module.exports = {
   writeAudit, writeEvent, openAlerts, applyAlertDiff, raiseAlertOnce,
   registerDriver, getDriver, listDrivers, updateDriver, nextDriverCode,
   startRide, stopRide, getRide, activeRides, listRides,
-  ingestPoints, loadPoints,
+  ingestPoints, recordHealth, loadPoints, forgetPoints,
   loadPlaces, invalidatePlaceCache,
   loadDriverLegs, recordDriverLegs, loadFleetLegs, invalidateFleetLegs,
   getLocationsLock, setLocationsLock,

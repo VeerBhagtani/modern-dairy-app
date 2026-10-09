@@ -24,7 +24,7 @@
   var BRAND = window.BRANDING || {};
   var API = String(CFG.API_BASE || '').replace(/\/+$/, '');
   var HAS_SERVER = !!API;
-  var APP_VERSION = '2.0.0';
+  var APP_VERSION = '2.1.0';
 
   var $ = function (id) { return document.getElementById(id); };
   var show = function (el, on) { if (el) el.hidden = !on; };
@@ -51,7 +51,8 @@
     rideStartedAt: LS.get('rideStartedAt', null),
     localRide: LS.get('localRide', null),      // a ride running with no server
     notice: LS.get('notice', null),
-    tracking: { sampleIntervalSec: CFG.SAMPLE_INTERVAL_SEC || 30, maxBatchPoints: CFG.MAX_BATCH_POINTS || 200 },
+    tracking: { sampleIntervalSec: CFG.SAMPLE_INTERVAL_SEC || 30, maxBatchPoints: CFG.MAX_BATCH_POINTS || 200,
+      uploadIntervalSec: CFG.UPLOAD_INTERVAL_SEC || 15, healthIntervalSec: CFG.HEALTH_INTERVAL_SEC || 60 },
     watcherId: null,
     lastFix: null,
     lastFixAt: null,
@@ -63,6 +64,15 @@
     pointCount: LS.get('pointCount', 0),
     queued: 0,
     lastSyncAt: LS.get('lastSyncAt', null),
+    // Upload health, kept for the diagnostics screen and reported to the
+    // office with every upload (the server cannot see this phone's queue).
+    lastUploadError: null,       // the last failure, in words; null after a success
+    uploadFailures: 0,           // failures in a row; drives the back-off
+    nextSyncAt: 0,               // back-off: no automatic upload before this
+    lastSyncAttemptAt: 0,
+    lastHealthAt: 0,
+    oldestQueuedAt: null,
+    authError: null,             // signed out: uploads cannot work until fixed
     permission: 'unknown',
     starting: false,
     startError: null,
@@ -152,6 +162,17 @@
         });
       });
     },
+    // The oldest waiting fix's time. Keys are deviceId:sequence, so the first
+    // key is the first fix recorded.
+    oldest: function () {
+      return db().then(function (d) {
+        return new Promise(function (res) {
+          var c = d.transaction(STORE, 'readonly').objectStore(STORE).openCursor();
+          c.onsuccess = function () { res(c.result ? c.result.value.deviceTs : null); };
+          c.onerror = function () { res(null); };
+        });
+      });
+    },
     count: function () {
       return db().then(function (d) {
         return new Promise(function (res) {
@@ -202,8 +223,17 @@
     return fetch(API + '/driver/refresh', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken: state.tokens.refreshToken }),
-    }).then(function (r) { return r.json(); }).then(function (j) {
-      if (!j || !j.success) return false;
+    }).then(function (r) {
+      return r.json().then(function (j) { return { status: r.status, j: j }; });
+    }).then(function (x) {
+      var j = x.j;
+      if (!j || !j.success) {
+        // A refused refresh (re-enrolled on another phone, account inactive)
+        // will not fix itself: say so, on the phone and to the office.
+        if (x.status === 401 || x.status === 403) state.authError = (j && j.message) || 'Signed out';
+        return false;
+      }
+      state.authError = null;
       state.tokens.accessToken = j.data.accessToken;
       LS.set('tokens', state.tokens);
       return true;
@@ -873,7 +903,21 @@
       // excludes such fixes from distance and flags them.
       mock: location.simulated === true,
     }).then(function () { return queue.count(); })
-      .then(function (n) { state.queued = n; render(); if (HAS_SERVER && n >= 10) sync(); });
+      .then(function (n) {
+        state.queued = n;
+        render();
+        // Upload on a clock, not a count. This callback runs for every fix
+        // even with the screen locked (the foreground service keeps it alive,
+        // when the app's own timers are throttled), so it is what keeps the
+        // office map current: every uploadIntervalSec while moving or parked.
+        // It used to wait for 10 fixes — four or five minutes when parked —
+        // and the office saw a frozen marker and "no signal".
+        if (HAS_SERVER && Date.now() - state.lastSyncAttemptAt >= state.tracking.uploadIntervalSec * 1000) sync();
+      }, function (e) {
+        // A fix the phone could not even save is a real loss: said, not hidden.
+        state.lastUploadError = 'could not save a fix on the phone: ' + ((e && e.message) || 'storage error');
+        render();
+      });
   }
 
   /* Starting the recorder.
@@ -968,9 +1012,16 @@
       backgroundMessage: 'Your route is being recorded.',
     };
 
-    return bg().addWatcher(opts, onLocation).then(function (id) {
+    // One recorder only. If the page was reloaded while the native service
+    // kept running (Android recreated the screen), the old watcher is still
+    // registered there with nobody listening: remove it first, or the phone
+    // runs two GPS requests for the rest of the day.
+    var stale = LS.get('watcherId', null);
+    var clear = stale ? bg().removeWatcher({ id: stale }).catch(function () {}) : Promise.resolve();
+    return clear.then(function () { return bg().addWatcher(opts, onLocation); }).then(function (id) {
       startingWatcher = false;
       state.watcherId = id;
+      LS.set('watcherId', id);
       state.backgroundTracking = true;
       state.startError = null;
       render();
@@ -1007,6 +1058,7 @@
     // try for the rest of the session.
     var dead = state.watcherId;
     state.watcherId = null;
+    LS.del('watcherId');
     state.backgroundTracking = false;
     if (dead) { try { bg().removeWatcher({ id: dead }).catch(function () {}); } catch (e) { /* already gone */ } }
 
@@ -1045,12 +1097,37 @@
     if (!p || !state.watcherId) return Promise.resolve();
     var id = state.watcherId;
     state.watcherId = null;
+    LS.del('watcherId');
     state.backgroundTracking = false;
     return p.removeWatcher({ id: id }).catch(function () {});
   }
 
   // ── sync ───────────────────────────────────────────────────────────────
   var syncing = false;
+  // Batches per sync run: after a long time offline the queue can hold
+  // thousands of fixes, and sending one batch per trigger took an hour to
+  // catch up. Bounded so one run never ties the phone up for long.
+  var MAX_BATCHES_PER_SYNC = 15;
+
+  /* Why an upload failed, in words, and whether retrying can help. */
+  function uploadErrorText(e) {
+    if (!e) return 'unknown error';
+    if (e.status == null || e.status === 0) return 'no connection to the server';
+    if (e.status === 401) return 'signed out: ' + (e.message || 'session expired');
+    if (e.status === 403) return 'refused: ' + (e.message || 'forbidden');
+    if (e.status === 429) return 'server busy (too many requests)';
+    if (e.status >= 500) return 'server error ' + e.status;
+    return (e.message || 'request failed') + ' (' + e.status + ')';
+  }
+  /* Exponential back-off with jitter: 5 s, 10 s, 20 s … capped at 5 min, each
+   * randomised ±50 % so forty phones coming out of the same dead zone do not
+   * all retry in the same second. Network back is a reason to try at once. */
+  function backOff() {
+    state.uploadFailures += 1;
+    var base = Math.min(300000, 5000 * Math.pow(2, state.uploadFailures - 1));
+    state.nextSyncAt = Date.now() + Math.round(base * (0.5 + Math.random()));
+  }
+
   /* Send queued fixes, each to the ride it was recorded in.
    *
    * A batch can hold fixes from two rides — the end of one the office stopped
@@ -1060,83 +1137,142 @@
    * a fix is deleted from the queue only once the server has accounted for it
    * by id, either way. Fixes from before this change carry no ride and go to
    * the current one; the server refuses any that predate it.
+   *
+   * Every batch carries the phone's own time of sending (so the server can
+   * correct a wrong phone clock) and the phone's state (healthPayload), which
+   * is how the office learns what is wrong without a separate request.
    */
-  function sync() {
+  function sync(force) {
     if (!HAS_SERVER || syncing || !state.tokens) return Promise.resolve();
+    if (!force && Date.now() < state.nextSyncAt) return Promise.resolve();
     syncing = true;
+    state.lastSyncAttemptAt = Date.now();
     var anyStopped = false;
-    return queue.take(state.tracking.maxBatchPoints).then(function (pts) {
-      var groups = {};
-      var order = [];
-      pts.forEach(function (p) {
-        var ride = p.rideId || state.rideId;
-        if (!ride) return;              // recorded with no ride and none now: wait
-        if (!groups[ride]) { groups[ride] = []; order.push(ride); }
-        var copy = {};
-        Object.keys(p).forEach(function (k) { if (k !== 'rideId') copy[k] = p[k]; });
-        groups[ride].push(copy);
-      });
-      // One ride after another, so the order of the day's fixes is kept.
-      return order.reduce(function (chain, ride) {
-        return chain.then(function () {
-          return apiFetch('/driver/rides/' + ride + '/points', { method: 'POST', body: { points: groups[ride] } })
-            .then(function (data) {
+    var batches = 0;
+
+    var oneBatch = function () {
+      return queue.take(state.tracking.maxBatchPoints).then(function (pts) {
+        var groups = {};
+        var order = [];
+        pts.forEach(function (p) {
+          var ride = p.rideId || state.rideId;
+          if (!ride) return;              // recorded with no ride and none now: wait
+          if (!groups[ride]) { groups[ride] = []; order.push(ride); }
+          var copy = {};
+          Object.keys(p).forEach(function (k) { if (k !== 'rideId') copy[k] = p[k]; });
+          groups[ride].push(copy);
+        });
+        if (!order.length) return false;
+        // One ride after another, so the order of the day's fixes is kept.
+        return order.reduce(function (chain, ride) {
+          return chain.then(function () {
+            return apiFetch('/driver/rides/' + ride + '/points', {
+              method: 'POST',
+              body: { points: groups[ride], sentAt: Date.now(), health: healthPayload() },
+            }).then(function (data) {
               // Delete only what the server confirmed, plus anything it
               // rejected — retrying those forever would wedge the queue.
               var done = (data.accepted || []).concat((data.rejected || [])
                 .map(function (r) { return r.clientPointId; }).filter(Boolean));
               if (data.rideActive === false && ride === state.rideId) anyStopped = true;
+              if (data.tracking) state.tracking = Object.assign({}, state.tracking, data.tracking);
               return queue.remove(done).then(function () {
                 state.lastSyncAt = Date.now();
                 LS.set('lastSyncAt', state.lastSyncAt);
+                state.lastHealthAt = state.lastSyncAt;
               });
             }, function (e) {
               if (e.code === 'RIDE_STOPPED') { anyStopped = true; return null; }
-              // A ride that no longer exists or is not this driver's: nothing
-              // can ever accept these fixes, and keeping them wedges the queue.
-              if (e.status === 404 || e.status === 403) {
+              // Only these two answers mean no server will ever take these
+              // fixes: the ride does not exist, or is another driver's. A bare
+              // 403/404 (a deactivated account, a wrong address) used to drop
+              // the whole queue too; those are kept and retried.
+              if (e.code === 'RIDE_NOT_FOUND' || e.code === 'NOT_YOUR_RIDE') {
                 return queue.remove(groups[ride].map(function (p) { return p.clientPointId; }));
               }
               throw e;
             });
-        });
-      }, Promise.resolve());
-    }).then(function () {
+          });
+        }, Promise.resolve()).then(function () { return pts.length >= state.tracking.maxBatchPoints; });
+      });
+    };
+    var loop = function () {
+      return oneBatch().then(function (more) {
+        batches += 1;
+        if (more && batches < MAX_BATCHES_PER_SYNC) return loop();
+        return null;
+      });
+    };
+
+    return loop().then(function () {
+      state.uploadFailures = 0;
+      state.nextSyncAt = 0;
+      state.lastUploadError = null;
       if (anyStopped) return checkRide();
       return null;
-    }).catch(function () {
-      return null;  // a dead zone is normal; keep the points and retry later
-    }).then(function () { return queue.count(); })
-      .then(function (n) { state.queued = n; syncing = false; render(); })
+    }).catch(function (e) {
+      // A dead zone is normal: keep the points, wait, and try again.
+      state.lastUploadError = uploadErrorText(e);
+      backOff();
+      return null;
+    }).then(function () { return Promise.all([queue.count(), queue.oldest()]); })
+      .then(function (r) { state.queued = r[0]; state.oldestQueuedAt = r[1]; syncing = false; render(); })
       .catch(function () { syncing = false; });
   }
 
+  /* The phone's state, as the office sees it in Tracking diagnostics. Only
+   * facts the app actually holds; unknown stays unknown (null). */
+  function healthPayload() {
+    return {
+      locationPermission: state.permission,
+      backgroundPermission: state.backgroundTracking ? 'granted' : 'unknown',
+      gpsEnabled: state.permission === 'device-off' ? false : (state.permission === 'granted' ? true : null),
+      watcherRunning: riding() ? !!state.watcherId : null,
+      // The server's field means "the phone restricts this app", the reverse
+      // of exempt; left out while unknown rather than guessed.
+      batteryOptimised: state.batteryExempt === null ? null : !state.batteryExempt,
+      online: navigator.onLine !== false,
+      queuedPoints: state.queued,
+      oldestQueuedAt: state.oldestQueuedAt,
+      lastFixAt: state.lastFixAt,
+      lastFixAccuracyM: state.lastAccuracyM == null ? null : Math.round(state.lastAccuracyM),
+      lastUploadOkAt: state.lastSyncAt,
+      lastUploadError: state.lastUploadError,
+      uploadFailures: state.uploadFailures,
+      pointsRecorded: state.pointCount,
+      authError: state.authError,
+      batteryPct: batteryLevel,
+      appVersion: APP_VERSION,
+    };
+  }
 
-  /* Tell the office what this phone's location is doing.
-   *
-   * The server has had an endpoint for this since the beginning and the app has
-   * never called it, which meant a driver whose permission was refused looked
-   * identical to one parked in a shed: no data either way. Now the office can
-   * tell those apart while the driver is still out, instead of the next morning.
-   *
-   * Fire and forget. A failed health report must never disturb a ride.
-   */
+  /* Tell the office what this phone's location is doing, when there is no
+   * upload to carry it: GPS stopped, permission withdrawn, the recorder
+   * dead. A driver whose permission was refused used to look identical to
+   * one parked in a shed. Fire and forget; never disturbs a ride. */
   function reportHealth() {
     if (!HAS_SERVER || !state.tokens) return Promise.resolve(null);
-    return apiFetch('/driver/health', {
-      method: 'POST',
-      body: {
-        locationPermission: state.permission,
-        backgroundPermission: state.backgroundTracking ? 'granted' : 'unknown',
-        gpsEnabled: state.permission !== 'device-off',
-        // The server's field means "the phone restricts this app", the reverse
-        // of exempt; left out while unknown rather than guessed.
-        batteryOptimised: state.batteryExempt === null ? undefined : !state.batteryExempt,
-        online: navigator.onLine !== false,
-        queuedPoints: state.queued,
-        appVersion: APP_VERSION,
-      },
-    }).catch(function () { return null; });
+    state.lastHealthAt = Date.now();
+    var body = healthPayload();
+    body.sentAt = Date.now();
+    return apiFetch('/driver/health', { method: 'POST', body: body }).catch(function () { return null; });
+  }
+
+  /* Every 15 s while a ride runs: upload what is waiting (respecting the
+   * back-off), and if nothing has reached the office for healthIntervalSec,
+   * report the phone's state instead — that is what tells the office "GPS
+   * has stopped" apart from "phone gone". A GPS fix silence of two minutes
+   * is reported at once. Timers are slowed by Android with the screen off;
+   * the fix callback (onLocation) carries uploads then. */
+  var gpsSilentReported = false;
+  function heartbeat() {
+    if (!riding() || !HAS_SERVER || !state.tokens) return;
+    var now = Date.now();
+    if (state.queued) sync();
+    var silent = !!state.watcherId && state.lastFixAt && now - state.lastFixAt > 120000;
+    if (silent && !gpsSilentReported) { gpsSilentReported = true; reportHealth(); return; }
+    if (!silent) gpsSilentReported = false;
+    if (now - Math.max(state.lastHealthAt || 0, state.lastSyncAt || 0) >= state.tracking.healthIntervalSec * 1000) reportHealth();
   }
 
   // ── name ───────────────────────────────────────────────────────────────
@@ -1229,6 +1365,7 @@
   function checkRide() {
     if (!HAS_SERVER || !state.tokens) return Promise.resolve();
     return apiFetch('/driver/rides/active').then(function (data) {
+      if (data.tracking) state.tracking = Object.assign({}, state.tracking, data.tracking);
       if (data.active) {
         state.rideId = data.rideId;
         state.rideStartedAt = data.startedAt;
@@ -1265,7 +1402,9 @@
     if (!state.watcherId) return { cls: 'warn', title: 'Starting…', sub: 'Waiting for the phone to allow location.' };
     if (!state.lastFixAt) return { cls: 'warn', title: 'Waiting for GPS', sub: 'This can take a minute indoors.' };
     var age = (Date.now() - state.lastFixAt) / 1000;
-    if (age > 300) return { cls: 'warn', title: 'Weak signal', sub: 'No new position for ' + Math.round(age / 60) + ' minutes.' };
+    if (age > 120) return { cls: 'warn', title: 'No GPS position for ' + Math.round(age / 60) + ' min', sub: 'Indoors or under cover. Recording resumes by itself in the open.' };
+    // Signed out: nothing recorded can reach the office until this is fixed.
+    if (state.authError) return { cls: 'bad', title: 'Not connected to the office', sub: state.authError + ' — positions are kept on this phone. Call the office.' };
     // Ahead of the sync states: those are about whether the office has the
     // points yet, this is about whether they will be recorded at all.
     // Recording right now, but the phone will close the app once the screen has
@@ -1286,6 +1425,10 @@
     }
     if (!HAS_SERVER) return { cls: 'on', title: 'Recording', sub: 'Saved on this phone. Not sent to the office yet.' };
     if (!navigator.onLine && state.queued) return { cls: 'on', title: 'Recording — offline', sub: state.queued + ' positions saved. They send when the network returns.' };
+    // Recording, but the office has not received anything for a while.
+    if (state.queued && state.lastUploadError && state.oldestQueuedAt && Date.now() - state.oldestQueuedAt > 120000) {
+      return { cls: 'warn', title: 'Recording — not sending', sub: state.queued + ' positions saved on the phone (' + state.lastUploadError + '). Retrying by itself.' };
+    }
     // Recording without background permission is real recording, and the
     // kilometres are real — but it stops when the screen locks, and a driver
     // who is not told that will pocket the phone and lose half a round.
@@ -1455,9 +1598,14 @@
       + row('Battery saver allows it', state.batteryExempt,
         state.batteryExempt === null ? 'not known' : state.batteryExempt ? 'yes' : 'NO — will stop recording')
       + row('Phone', null, state.phoneMaker || '—')
-      + row('Points waiting to send', state.queued === 0, String(state.queued))
+      + row('Points waiting to send', state.queued === 0, String(state.queued)
+        + (state.oldestQueuedAt ? ' · oldest ' + fmtDur(Date.now() - state.oldestQueuedAt) + ' ago' : ''))
       + row('Last sent to office', !!state.lastSyncAt,
         state.lastSyncAt ? fmtDur(Date.now() - state.lastSyncAt) + ' ago' : 'never')
+      + row('Last upload error', !state.lastUploadError, state.lastUploadError
+        ? state.lastUploadError + (state.uploadFailures ? ' (' + state.uploadFailures + ' in a row)' : '') : 'none')
+      + row('Next retry', null, state.nextSyncAt > Date.now() ? 'in ' + Math.ceil((state.nextSyncAt - Date.now()) / 1000) + ' s' : 'now')
+      + row('Signed in to the office', !state.authError, state.authError || 'yes')
       + row('Network', navigator.onLine !== false, navigator.onLine === false ? 'OFFLINE' : 'online')
       + row('Last server reply', la ? !la.error : null,
         la ? (la.error || ('OK ' + la.status)) + ' · ' + la.path + ' · ' + fmtDur(Date.now() - la.at) + ' ago' : 'none yet')
@@ -1942,7 +2090,9 @@
   $('btnHistory').addEventListener('click', openHistory);
   $('sheetClose').addEventListener('click', function () { $('sheetBg').classList.remove('on'); });
   $('sheetBg').addEventListener('click', function (e) { if (e.target === $('sheetBg')) $('sheetBg').classList.remove('on'); });
-  window.addEventListener('online', function () { sync(); render(); });
+  // The network coming back is the moment to send, back-off or not.
+  window.addEventListener('online', function () { state.nextSyncAt = 0; sync(true); render(); });
+  window.addEventListener('offline', function () { render(); });
   window.addEventListener('offline', render);
 
   /* Coming back to the app.
@@ -1962,7 +2112,7 @@
       primed = false;
       primeLocation();
     }
-    if (HAS_SERVER) { checkRide(); sync(); }
+    if (HAS_SERVER) { checkRide(); sync(true); }
     else if (state.localRide) { initMap(); startWatcher(); }
   }
   // Through registerPlugin like every other plugin. Capacitor.Plugins.App is
@@ -1980,11 +2130,10 @@
   if (state.name) { resume(); primeLocation(); }
 
   if (HAS_SERVER) {
-    setInterval(sync, (CFG.SYNC_INTERVAL_SEC || 45) * 1000);
+    // Uploads, back-off and the phone's own reports (heartbeat). Only while a
+    // ride is running: outside one there is nothing the office can act on.
+    setInterval(heartbeat, 15000);
     setInterval(checkRide, (CFG.RIDE_POLL_SEC || 60) * 1000);
-    // Only while a ride is running: outside one there is nothing the office can
-    // act on, and forty idle phones reporting all day is noise and bandwidth.
-    setInterval(function () { if (riding()) reportHealth(); }, 5 * 60 * 1000);
   }
   setInterval(render, 5000);
 

@@ -11,6 +11,8 @@
 const { asyncRouter } = require('../middleware/asyncRoutes');
 // Every handler's errors reach index.js's error handler; see asyncRoutes.js.
 const router = asyncRouter(require('express').Router());
+const { trackingStatus, locationState } = require('../drivers/trackingStatus');
+const { log } = require('../services/log');
 const { depotCheck } = require('../services/depotCheck');
 const repo = require('../services/repo');
 const { db, FieldValue } = require('../services/firestore');
@@ -160,15 +162,23 @@ router.get('/dashboard', requireRole('viewer'), async (req, res) => {
 
   const rows = drivers.map((d) => {
     const l = live.get(d.id) || null;
-    const ageSec = l ? Math.round((now - l.deviceTs) / 1000) : null;
     const driverRides = ridesByDriver.get(d.id) || [];
     const active = driverRides.find((r) => r.status === 'active') || null;
+    // The ride the status is about: the running one, else today's latest.
+    const current = active || [...driverRides].sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0))[0] || null;
+    const tracking = trackingStatus({ ride: current, live: l, nowMs: now, cfg: config });
+    const ageSec = tracking.lastLocation ? tracking.lastLocation.ageSec : null;
     let verified = null; let total = null; let unknown = null; let calculated = false;
     let business = null; let personal = null;
+    let calcAt = null; let calcFailedAt = null; let calcError = null; let awaiting = false; let points = 0;
     for (const r of driverRides) {
+      points += r.pointCount || 0;
       const res2 = resultByRide.get(r.id);
+      if (r.calcFailedAt && (!res2 || r.calcFailedAt > (res2.processedAt || 0))) { calcFailedAt = r.calcFailedAt; calcError = r.calcError || null; }
+      if (r.pointCount && (!res2 || (r.lastUploadAt || 0) > (r.processedInputsAt || res2.processedAt || 0))) awaiting = true;
       if (!res2) continue;
       calculated = true;
+      calcAt = Math.max(calcAt || 0, res2.processedAt || 0) || null;
       verified = (verified || 0) + res2.distance.metres.verifiedBusiness;
       business = (business || 0) + res2.distance.metres.verifiedBusiness + res2.distance.metres.likelyBusiness;
       personal = (personal || 0) + res2.distance.metres.personal;
@@ -186,14 +196,16 @@ router.get('/dashboard', requireRole('viewer'), async (req, res) => {
       rideStartedAt: active?.startedAt || null,
       // The round the driver named when planning ("Camp round"), if any.
       roundName: active?.roundName || null,
-      lastLocation: l ? { lat: l.lat, lng: l.lng, accuracyM: l.accuracyM ?? null } : null,
-      lastUpdateAt: l?.deviceTs || null,
+      lastLocation: tracking.lastLocation ? { lat: l.lat, lng: l.lng, accuracyM: l.accuracyM ?? null } : null,
+      // When the fix was taken (server clock) and when the server received it.
+      lastUpdateAt: tracking.lastLocation ? tracking.lastLocation.fixAt : null,
+      lastReceivedAt: tracking.lastLocation ? tracking.lastLocation.receivedAt : null,
       lastUpdateAgeSec: ageSec,
-      // Three distinct states, never collapsed into "online".
-      locationState: !l ? 'unavailable' : (ageSec <= config.staleLocationSec ? 'live' : 'stale'),
-      trackingHealth: !active ? 'idle'
-        : (!l || ageSec > config.gpsMissingAlertMin * 60) ? 'no_signal'
-          : (ageSec > config.staleLocationSec ? 'degraded' : 'ok'),
+      // Green only when LIVE; otherwise the last known position, said to be.
+      locationState: locationState(tracking),
+      // What is actually wrong, if anything (drivers/trackingStatus.js).
+      tracking: { state: tracking.state, label: tracking.label, detail: tracking.detail, since: tracking.since },
+      trackingHealth: tracking.state.toLowerCase(),
       today: {
         calculated,
         totalKm: total == null ? null : Math.round(total / 100) / 10,
@@ -201,6 +213,16 @@ router.get('/dashboard', requireRole('viewer'), async (req, res) => {
         businessKm: business == null ? null : Math.round(business / 100) / 10,
         personalKm: personal == null ? null : Math.round(personal / 100) / 10,
         unknownKm: unknown == null ? null : Math.round(unknown / 100) / 10,
+        // Why a figure is what it is: never a silent zero.
+        //   no_gps     the phone has sent no fix today
+        //   failed     the last calculation failed; the figure shown is older
+        //   awaiting   fixes have arrived since the figure was calculated
+        //   ok         up to date
+        calcState: !points ? 'no_gps' : calcFailedAt ? 'failed' : awaiting ? 'awaiting' : 'ok',
+        calculatedAt: calcAt,
+        calcFailedAt,
+        calcError,
+        points,
       },
       // Exact metres for the fleet totals below; removed before sending.
       metres: { total, verified, business, personal, unknown },
@@ -217,6 +239,7 @@ router.get('/dashboard', requireRole('viewer'), async (req, res) => {
     data: {
       serverTime: now,
       staleAfterSec: config.staleLocationSec,
+      liveAfterSec: config.liveLocationSec,
       // What this request calculated, and what it left for the next one.
       calculation: { calculated: calculation.calculated.length, deferred: calculation.deferred, failed: calculation.failed },
       drivers: rows,
@@ -228,7 +251,7 @@ router.get('/dashboard', requireRole('viewer'), async (req, res) => {
         businessKm: fleet.business,
         personalKm: fleet.personal,
         unknownKm: fleet.unknown,
-        trackingIssues: rows.filter((r) => ['no_signal', 'degraded'].includes(r.trackingHealth)).length,
+        trackingIssues: rows.filter((r) => r.rideStatus === 'active' && r.tracking.state !== 'LIVE').length,
         openAlerts: alerts.length,
         unprocessedRides: rides.filter((r) => r.status !== 'active' && !resultByRide.get(r.id)).length,
       },
@@ -355,6 +378,15 @@ router.post('/rides/:rideId/stop', requireRole('manager'), writeLimiter, async (
     byName = names.find((n) => n.toLowerCase() === String(stoppedByName).trim().toLowerCase()) || null;
     if (!byName) return bad(res, 'Choose who is stopping this ride from the list, or add their name first.');
   }
+  // The dashboard names the driver it means to stop. A ride id from a stale
+  // screen that now belongs to someone else is refused, not stopped.
+  if (req.body && req.body.driverId != null) {
+    const target = await repo.getRide(rideId);
+    if (target && target.driverId !== req.body.driverId) {
+      log.warn('ride_stop_driver_mismatch', { requestId: req.id, adminId: req.adminId, rideId, expected: req.body.driverId, actual: target.driverId });
+      return res.status(409).json({ success: false, code: 'WRONG_DRIVER', message: 'This ride belongs to a different driver. Reload the page and try again.' });
+    }
+  }
   try {
     const out = await repo.stopRide(rideId, {
       by: `admin:${req.adminId}`,
@@ -365,6 +397,7 @@ router.post('/rides/:rideId/stop', requireRole('manager'), writeLimiter, async (
     // Mark the live document so the map stops showing an active marker even
     // before the phone next checks in.
     await repo.C.live().doc(out.driverId).set({ rideStatus: 'stopped', rideStoppedAt: Date.now() }, { merge: true }).catch(() => {});
+    log.info('ride_stopped', { requestId: req.id, adminId: req.adminId, rideId, driverId: out.driverId, kind: emergency === true ? 'emergency' : 'admin' });
     // A stopped ride is complete: calculate it now, so its kilometres are
     // there the moment anybody looks. Never allowed to fail the stop itself.
     try { await processOne(rideId, { waitMs: 10000 }); } catch (err) {
@@ -481,8 +514,85 @@ router.get('/journey', requireRole('viewer'), async (req, res) => {
       queuedPoints: live.health ? live.health.queuedPoints : null, online: live.health ? live.health.online : null,
       gpsEnabled: live.health ? live.health.gpsEnabled : null, healthAt: live.healthAt || null,
     } : null,
+    // What is actually happening with tracking, for the latest ride shown.
+    tracking: rides.length ? trackingStatus({ ride: rides[rides.length - 1], live, nowMs: Date.now(), cfg: config }) : null,
     staleAfterSec: config.staleLocationSec,
     stopSettings: { stopRadiusM: config.stopRadiusM, stopMinDwellSec: config.stopMinDwellSec, transitStopMaxSec: config.transitStopMaxSec, geofenceDefaultRadiusM: config.geofenceDefaultRadiusM },
+  } });
+});
+
+/* GET /admin/drivers/:driverId/diagnostics — why a driver's tracking looks
+ * the way it does. What the server observed and what the phone reported are
+ * kept apart: the server cannot see a phone's queue unless the phone said so,
+ * and a report is only as current as its time. */
+router.get('/drivers/:driverId/diagnostics', requireRole('viewer'), async (req, res) => {
+  const { driverId } = req.params;
+  if (!isValidId(driverId)) return bad(res, 'Invalid driver id');
+  const driver = await repo.getDriver(driverId);
+  if (!driver) return res.status(404).json({ success: false, message: 'Driver not found' });
+  const now = Date.now();
+  const { config } = await repo.getConfig();
+  const today = repo.dayKeyFor(now);
+  const [todays, liveDoc] = await Promise.all([
+    repo.listRides({ driverId, from: Date.parse(`${today}T00:00:00+05:30`), limit: 20 }),
+    repo.C.live().doc(driverId).get(),
+  ]);
+  let ride = driver.activeRideId ? await repo.getRide(driver.activeRideId) : null;
+  if (ride && ride.status !== 'active') ride = null;
+  if (!ride && todays.length) ride = todays.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0))[0];
+  const live = liveDoc.exists ? liveDoc.data() : null;
+  const tracking = trackingStatus({ ride, live, nowMs: now, cfg: config });
+  const [processing, eventsSnap] = ride ? await Promise.all([
+    repo.loadProcessing(ride.id, { withSegments: false }),
+    repo.C.events().where('rideId', '==', ride.id).get(),
+  ]) : [null, null];
+  const events = eventsSnap ? eventsSnap.docs.map((d) => d.data()).sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 25) : [];
+
+  // The most likely cause, from the evidence, in one sentence.
+  let explanation = tracking.detail;
+  if (ride && ride.calcFailedAt && (!processing || ride.calcFailedAt > (processing.processedAt || 0))) {
+    explanation += ` Kilometre calculation failed at ${new Date(ride.calcFailedAt).toISOString()}: ${ride.calcError || 'unknown error'} — the figure shown is from the last good calculation.`;
+  }
+  const rejected = events.filter((e) => e.kind === 'points_rejected');
+  if (rejected.length) explanation += ` ${rejected.reduce((n, e) => n + ((e.detail && e.detail.count) || 0), 0)} fix(es) were refused by the server on this ride (see events).`;
+
+  res.json({ success: true, data: {
+    generatedAt: now,
+    driver: { id: driver.id, name: driver.name, driverCode: driver.driverCode, status: driver.status, deviceId: driver.deviceId || null, appVersion: driver.appVersion || null },
+    tracking,
+    explanation,
+    ride: ride ? {
+      id: ride.id, status: ride.status, startedAt: ride.startedAt, stoppedAt: ride.stoppedAt || null,
+      stoppedBy: ride.stoppedBy || null, stopReason: ride.stopReason || null, stopKind: ride.stopKind || null,
+      appVersion: ride.appVersion || null,
+    } : null,
+    // Seen by the server itself.
+    server: {
+      pointsStored: ride ? ride.pointCount || 0 : 0,
+      lastFixAt: tracking.lastLocation ? tracking.lastLocation.fixAt : null,
+      lastFixReceivedAt: tracking.lastLocation ? tracking.lastLocation.receivedAt : null,
+      lastFixAccuracyM: tracking.lastLocation ? tracking.lastLocation.accuracyM : null,
+      lastUploadAt: ride ? ride.lastUploadAt || null : null,
+      lastContactAt: live ? live.lastContactAt || null : null,
+      phoneClockErrorMs: live ? live.clockSkewMs || 0 : 0,
+      calculatedAt: processing ? processing.processedAt || null : null,
+      calcVersion: processing ? processing.calcVersion || null : null,
+      calcFailedAt: ride ? ride.calcFailedAt || null : null,
+      calcError: ride ? ride.calcError || null : null,
+      awaitingCalculation: !!(ride && ride.pointCount && (!processing || (ride.lastUploadAt || 0) > (ride.processedInputsAt || processing.processedAt || 0))),
+      km: processing && processing.distance ? {
+        total: processing.distance.km.dayTotal, measured: Math.round((processing.distance.metres.measured || 0) / 100) / 10,
+        business: Math.round(((processing.distance.metres.verifiedBusiness || 0) + (processing.distance.metres.likelyBusiness || 0)) / 100) / 10,
+        unknown: processing.distance.km.unknown, personal: processing.distance.km.personal, gapEstimate: processing.distance.km.gapEstimate,
+        reconciled: !!(processing.distance.reconciliation && processing.distance.reconciliation.ok),
+      } : null,
+      fixesExcluded: processing && processing.track && processing.track.totals ? processing.track.totals.rejectedCount : null,
+      excludedByReason: processing && processing.track && processing.track.totals ? processing.track.totals.byReason : null,
+    },
+    // Reported by the phone; as old as reportedAt says.
+    device: live && live.health ? { ...live.health, reportedAt: live.healthAt || null } : null,
+    events: events.map((e) => ({ at: e.at, kind: e.kind, detail: e.detail })),
+    thresholds: { liveLocationSec: config.liveLocationSec, uploadIntervalSec: config.uploadIntervalSec, healthIntervalSec: config.healthIntervalSec, calcRefreshSec: config.calcRefreshSec },
   } });
 });
 

@@ -16,6 +16,7 @@ const { router: driverRoutes } = require('./routes/driver');
 const { router: adminRoutes } = require('./routes/admin');
 const { requireAdmin, adminLoginHandler } = require('./middleware/adminAuth');
 const { generalLimiter, adminLoginLimiter } = require('./middleware/rateLimit');
+const { log, requestId, errText } = require('./services/log');
 
 const app = express();
 
@@ -89,6 +90,7 @@ app.use(cors({
 app.use('/admin/orders/import', express.json({ limit: '8mb' }));
 app.use('/admin/restaurants/import', express.json({ limit: '4mb' }));
 app.use(express.json({ limit: '1mb' }));
+app.use(requestId());
 // The general per-IP backstop, for everything except the drivers' phones.
 // Those have their own limits, counted per driver once the driver is known
 // (routes/driver.js). Counted here per IP, before anybody is identified, the
@@ -108,9 +110,24 @@ app.use((req, res, next) => (req.path.startsWith('/driver/') ? next() : generalL
 //
 // /healthz stays for anything already pointed at it; it works locally and
 // anywhere that is not behind Google's frontend.
-const health = (req, res) => res.json({ ok: true, service: 'modern-drivers-api' });
+const health = (req, res) => res.json({ ok: true, service: 'modern-drivers-api', time: Date.now() });
 app.get('/health', health);
 app.get('/healthz', health);
+// Readiness: can this instance actually reach the database? /health says the
+// process is up; this says it can store a GPS point.
+app.get('/health/ready', async (req, res) => {
+  const t0 = Date.now();
+  try {
+    await Promise.race([
+      require('./services/repo').C.config().get(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Firestore did not answer within 5 s')), 5000)),
+    ]);
+    res.json({ ok: true, firestore: 'ok', ms: Date.now() - t0 });
+  } catch (e) {
+    log.error('health_ready_failed', { error: errText(e) });
+    res.status(503).json({ ok: false, firestore: 'unreachable', error: errText(e) });
+  }
+});
 
 // The office signs in here and gets a short-lived admin token. This service has
 // no Firebase Auth dependency of its own — one fewer thing to set up, and one
@@ -126,7 +143,7 @@ app.use((req, res) => res.status(404).json({ success: false, message: 'Not found
 // gets a proper 400 rather than a misleading 500; nothing else ever leaks a
 // stack trace, an internal path or a database error string.
 app.use((err, req, res, next) => {
-  console.error(err);
+  log.error('request_failed', { requestId: req.id, method: req.method, path: req.path, error: errText(err), stack: String(err && err.stack || '').split('\n').slice(0, 4).join(' | ') });
   if (err.type === 'entity.parse.failed' || err instanceof SyntaxError) {
     return res.status(400).json({ success: false, message: 'Malformed request body' });
   }

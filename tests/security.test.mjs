@@ -47,7 +47,7 @@ test("the driver's stop endpoint refuses, records, and returns 403", () => {
 test('the admin stop endpoint is role-gated and demands a reason', () => {
   const i = ADMIN_ROUTES.indexOf("router.post('/rides/:rideId/stop'");
   assert.ok(i > 0, 'the admin stop endpoint is missing');
-  const route = ADMIN_ROUTES.slice(i, i + 1400);
+  const route = ADMIN_ROUTES.slice(i, i + 2600);
   assert.ok(/requireRole\('manager'\)/.test(route), 'stopping a ride must need at least the manager role');
   assert.ok(/isBoundedString\(reason/.test(route), 'a reason must be required');
   assert.ok(/by: `admin:\$\{req\.adminId\}`/.test(route), 'the stopping admin must be recorded');

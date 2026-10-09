@@ -7,6 +7,7 @@
 'use strict';
 
 const repo = require('./repo');
+const { log } = require('./log');
 const freshness = require('./freshness');
 const { processRideData } = require('../drivers/pipeline');
 const { evaluateResultAlerts } = require('../drivers/alerts');
@@ -154,8 +155,22 @@ const housekeeping = freshness.makeHousekeeper(async (nowMs) => {
 });
 
 /* Calculate what is out of date among these rides, within a budget. */
-function bringUpToDate(rides, opts) {
-  return freshness.keepCurrent(rides, { processOne, markFailed: repo.markCalcFailed }, opts);
+/* Running rides are recalculated once their result is calcRefreshSec old
+ * (Settings; 2 minutes by default) and new fixes have arrived, so the office
+ * sees kilometres move without asking. Cheap because the points are read
+ * incrementally (repo.loadPoints). A failure is recorded on the ride and
+ * logged; the last good result stays on screen, marked out of date. */
+async function bringUpToDate(rides, opts = {}) {
+  let freshMs = opts.freshMs;
+  if (freshMs == null) {
+    const { config } = await repo.getConfig().catch(() => ({ config: {} }));
+    freshMs = (config.calcRefreshSec || 120) * 1000;
+  }
+  const markFailed = async (rideId, message) => {
+    log.error('ride_calc_failed', { rideId, error: String(message || '').slice(0, 300) });
+    return repo.markCalcFailed(rideId, message);
+  };
+  return freshness.keepCurrent(rides, { processOne, markFailed }, { ...opts, freshMs });
 }
 
 module.exports = { processOne, bringUpToDate, housekeeping };

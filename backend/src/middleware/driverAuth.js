@@ -12,6 +12,7 @@
 const jwt = require('jsonwebtoken');
 const { getSecret } = require('../services/secretManager');
 const repo = require('../services/repo');
+const { log } = require('../services/log');
 
 const ACCESS_TTL = '30m';   // longer than the customer app's 15m: a driver on a
                             // bike in a dead zone must not be logged out mid-ride
@@ -51,22 +52,27 @@ function requireDriver() {
     try {
       const header = req.headers.authorization || '';
       const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-      if (!token) return res.status(401).json({ success: false, message: 'Sign in again on this device.' });
+      if (!token) return res.status(401).json({ success: false, code: 'NO_TOKEN', message: 'Sign in again on this device.' });
 
       const payload = await verifyDriverToken(token, 'driver_access');
       const driver = await repo.getDriver(payload.sub);
-      if (!driver) return res.status(401).json({ success: false, message: 'This driver account no longer exists.' });
+      if (!driver) return res.status(401).json({ success: false, code: 'NO_ACCOUNT', message: 'This driver account no longer exists.' });
       if (driver.status !== 'active') {
-        return res.status(403).json({ success: false, message: 'This driver account has been deactivated. Contact the office.' });
+        log.warn('driver_auth_inactive', { requestId: req.id, driverId: driver.id, path: req.path });
+        return res.status(403).json({ success: false, code: 'ACCOUNT_INACTIVE', message: 'This driver account has been deactivated. Contact the office.' });
       }
       if (driver.deviceId && payload.did && driver.deviceId !== payload.did) {
-        return res.status(401).json({ success: false, message: 'This account has been set up on another phone. Ask the office for a new code.' });
+        log.warn('driver_auth_other_device', { requestId: req.id, driverId: driver.id, path: req.path });
+        return res.status(401).json({ success: false, code: 'OTHER_DEVICE', message: 'This account has been set up on another phone. Ask the office for a new code.' });
       }
       req.driver = driver;
       req.driverId = driver.id;
       next();
-    } catch {
-      res.status(401).json({ success: false, message: 'Your session has expired. Open the app again.' });
+    } catch (e) {
+      // The reason only (expired, malformed, wrong key) — never the token.
+      const expired = e && e.name === 'TokenExpiredError';
+      if (!expired) log.warn('driver_auth_failed', { requestId: req.id, path: req.path, reason: String((e && e.name) || 'error') });
+      res.status(401).json({ success: false, code: expired ? 'TOKEN_EXPIRED' : 'BAD_TOKEN', message: 'Your session has expired. Open the app again.' });
     }
   };
 }
