@@ -6,7 +6,7 @@
 // always produce byte-identical output, on a server or in a test, today or in
 // two years when someone disputes a figure.
 
-const { planOrders } = require('./orderWindow');
+const { planOrders, expectedPlaces } = require('./orderWindow');
 const { detectShortVisits } = require('./shortVisits');
 const { resolveConfig, CALC_VERSION } = require('./config');
 const { cleanTrack, trackQuality, absorbStopJitter } = require('./track');
@@ -58,7 +58,13 @@ function processRideData(input) {
   // Halts at a restaurant under the 2-minute minimum: missed deliveries.
   const visitSpans = segments.filter((s) => s.kind === 'stop' && s.place && s.place.kind === 'restaurant' && !s.missedDelivery)
     .map((s) => ({ placeId: s.place.id, startTs: s.startTs, endTs: s.endTs }));
-  const shortVisits = detectShortVisits(track.points, ctx.restaurants, visitSpans, config);
+  // Only a restaurant on today's round can be missed; a halt anywhere else is
+  // a restaurant passed on the way, listed apart (passedBy).
+  const expected = expectedPlaces(ctx.orders, ctx.driverId);
+  const restaurantById = new Map(ctx.restaurants.map((r) => [r.id, r]));
+  const halts = detectShortVisits(track.points, ctx.restaurants, visitSpans, config);
+  const shortVisits = halts.filter((v) => expected.has(restaurantById.get(v.placeId)));
+  const passedBy = halts.filter((v) => !expected.has(restaurantById.get(v.placeId)));
   ctx.shortVisits = shortVisits;
   const route = routeLegs(segments, track.points);
   const matching = matchDeliveries(segments, ctx.orders, ctx.restaurants, ctx, config);
@@ -126,6 +132,8 @@ function processRideData(input) {
       reviewedAt: s.reviewedAt || null,
       transit: !!s.transit,
       missedDelivery: !!s.missedDelivery,
+      passedBy: s.passedBy || null,
+      notInPlan: !!s.notInPlan,
     })),
     // The ride as legs between the places the driver stopped at.
     legs: route.legs,
@@ -133,6 +141,7 @@ function processRideData(input) {
     distance,
     visits,
     shortVisits,
+    passedBy,
     matching,
     review: {
       pending: needsReview.length,

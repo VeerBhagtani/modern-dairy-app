@@ -26,7 +26,7 @@
 // place, and that would otherwise quietly move a real delivery run out of
 // business.
 
-const { customerKey, orderWindow, PLAN_SOURCE } = require('./orderWindow');
+const { customerKey, orderWindow, expectedPlaces, PLAN_SOURCE } = require('./orderWindow');
 const { placesContaining, nearestPlaces, haversineM } = require('./geo');
 const { SEGMENT_KIND } = require('./segmentation');
 
@@ -122,6 +122,7 @@ function classifySegments(segments, points, ctx, cfg) {
   const facilities = ctx.facilities || [];
   const restaurants = ctx.restaurants || [];
   const out = segments.map((s) => ({ ...s }));
+  const expected = expectedPlaces(ctx.orders, ctx.driverId);
 
   // ---- pass 1: stops --------------------------------------------------
   for (const seg of out) {
@@ -153,11 +154,25 @@ function classifySegments(segments, points, ctx, cfg) {
     }
 
     // --- restaurant / known delivery location ---------------------------
-    if (restaurantHits.length) {
-      const hit = restaurantHits[0];
+    // A halt under 2 minutes at a restaurant that is not on today's round (not
+    // planned, no order for this driver) is not a delivery and not a missed
+    // one: the driver was passing. It is judged like any other pause, with
+    // the restaurant noted as passed.
+    const shortStop = stop.dwellSec < cfg.visitMinDwellSec;
+    const plannedHit = restaurantHits.find((h) => expected.has(h.place));
+    const passing = restaurantHits.length && shortStop && !plannedHit;
+    if (passing) {
+      seg.passedBy = { id: restaurantHits[0].place.id, name: restaurantHits[0].place.name };
+      evidence.push(ev('passed_not_planned', `${stop.dwellSec}s beside ${restaurantHits[0].place.name}, which is not on today's round — not a delivery, not a missed one`));
+    }
+    if (restaurantHits.length && !passing) {
+      const hit = shortStop && plannedHit ? plannedHit : restaurantHits[0];
       const place = hit.place;
       seg.type = SEGMENT_TYPE.LIKELY_RESTAURANT_VISIT;
       seg.place = { id: place.id, name: place.name, customerId: place.customerId || null, kind: 'restaurant' };
+      // A real visit to a restaurant that was not on today's round: kept as a
+      // visit, and listed apart so the office sees it was extra.
+      if (expected.any && !expected.has(place)) seg.notInPlan = true;
       evidence.push(ev('geofence_match', `${place.name}: ${Math.round(hit.distanceM)} m inside a ${Math.round(hit.radiusM)} m geofence`, { placeId: place.id }));
 
       const { support, otherDriver } = ordersSupporting(ctx.orders, place.customerId, ctx.driverId, seg.startTs, seg.endTs, cfg, place.id);
@@ -233,7 +248,7 @@ function classifySegments(segments, points, ctx, cfg) {
       seg.confidence = CONFIDENCE.LOW;
       seg.needsReview = true;
       seg.anchor = 'unknown';
-      evidence.push(ev('no_known_location', 'this stop is not inside any restaurant or Modern Dairy geofence — purpose unknown until reviewed'));
+      if (!seg.passedBy) evidence.push(ev('no_known_location', 'this stop is not inside any restaurant or Modern Dairy geofence — purpose unknown until reviewed'));
     }
     // What was nearby, for the reviewer only. Proximity is context, never proof.
     const near = nearestPlaces(at, [...facilities, ...restaurants], 3)
@@ -241,7 +256,7 @@ function classifySegments(segments, points, ctx, cfg) {
     if (near.length) seg.nearbyPlaces = near;
     // A stop just outside a customer's geofence is the classic sign of a pin in
     // the wrong place. Personal by rule, but a human should look.
-    if (!declaration && near.length && near[0].distanceM <= NEAR_KNOWN_PLACE_M) {
+    if (!declaration && !seg.passedBy && near.length && near[0].distanceM <= NEAR_KNOWN_PLACE_M) {
       seg.needsReview = true;
       evidence.push(ev('near_known_place', `${near[0].name} is ${near[0].distanceM} m away — check its location on the map`));
     }

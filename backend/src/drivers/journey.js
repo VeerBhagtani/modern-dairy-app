@@ -154,7 +154,11 @@ function buildJourney({ ride, processing, replay, places = {} }) {
       segmentId: s.id,
       category,
       label: category === CATEGORY.MODERN_DAIRY || category === CATEGORY.RESTAURANT ? (s.place && s.place.name)
-        : category === CATEGORY.MISSED ? `Missed delivery: ${s.place ? s.place.name : 'restaurant'}` : CATEGORY_LABEL[category],
+        : category === CATEGORY.MISSED ? `Missed delivery: ${s.place ? s.place.name : 'restaurant'}`
+          : s.passedBy ? `Paused by ${s.passedBy.name} (not in plan)` : CATEGORY_LABEL[category],
+      // A restaurant not on today's round: passed briefly, or visited extra.
+      passedBy: s.passedBy || null,
+      notInPlan: !!s.notInPlan,
       placeId: s.place ? s.place.id : null,
       placeName: s.place ? s.place.name : null,
       address: place && place.address ? place.address : null,
@@ -250,6 +254,19 @@ function buildJourney({ ride, processing, replay, places = {} }) {
     events.push({ kind: 'missed', ts: v.startTs, endTs: v.endTs, label: v.placeName, placeId: v.placeId, durationSec: v.dwellSec, minSec: v.minSec,
       at: { lat: v.lat, lng: v.lng }, totalBeforeM: cum(v.startTs).d });
   }
+  // Restaurants not on today's round that the driver halted beside for under
+  // 2 minutes: passing, not deliveries and not missed. Shown apart.
+  const overlapsStop = (v) => stops.some((st) => st.arrivalTs <= v.endTs && (st.departureTs ?? Infinity) >= v.startTs);
+  const passedHalts = ((processing && processing.passedBy) || []).filter((v) => !overlapsStop(v));
+  for (const v of passedHalts) {
+    events.push({ kind: 'passed', ts: v.startTs, endTs: v.endTs, label: v.placeName, placeId: v.placeId, durationSec: v.dwellSec,
+      at: { lat: v.lat, lng: v.lng }, totalBeforeM: cum(v.startTs).d });
+  }
+  const notInPlan = [
+    ...passedHalts.map((v) => ({ kind: 'passed', placeId: v.placeId, placeName: v.placeName, startTs: v.startTs, endTs: v.endTs, durationSec: v.dwellSec, lat: v.lat, lng: v.lng })),
+    ...stops.filter((st) => st.passedBy).map((st) => ({ kind: 'passed', stop: st.n, placeId: st.passedBy.id, placeName: st.passedBy.name, startTs: st.arrivalTs, endTs: st.departureTs, durationSec: st.durationSec, lat: st.lat, lng: st.lng })),
+    ...stops.filter((st) => st.notInPlan).map((st) => ({ kind: 'visited', stop: st.n, placeId: st.placeId, placeName: st.placeName, startTs: st.arrivalTs, endTs: st.departureTs, durationSec: st.durationSec, lat: st.lat, lng: st.lng })),
+  ].sort((a, b) => a.startTs - b.startTs);
   events.sort((a, b) => a.ts - b.ts || (a.kind === 'start' ? -1 : b.kind === 'start' ? 1 : 0));
   events.push({ kind: active ? 'now' : 'end', ts: rideEnd, label: endPlace.label, category: endPlace.category, at: at(last), totalM: used.length ? used[used.length - 1].d || 0 : 0 });
 
@@ -275,6 +292,7 @@ function buildJourney({ ride, processing, replay, places = {} }) {
       unknownStops: stops.filter((s) => s.category === CATEGORY.UNKNOWN).length,
       depotStops: stops.filter((s) => s.category === CATEGORY.MODERN_DAIRY).length,
       missedDeliveries: shortVisits.length + stops.filter((s) => s.category === CATEGORY.MISSED).length,
+      notInPlan: notInPlan.length,
       timeAtStopsSec: stops.reduce((a, s) => a + s.durationSec, 0),
       fixes: points.length,
       fixesExcluded: points.filter((p) => !p.used).length,
@@ -283,6 +301,7 @@ function buildJourney({ ride, processing, replay, places = {} }) {
     segments,
     events,
     shortVisits,
+    notInPlan,
   };
 }
 

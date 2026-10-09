@@ -82,4 +82,22 @@ function planOrders(ride, restaurants) {
   return out;
 }
 
-module.exports = { customerKey, orderWindow, endOfDeliveryDay, planOrders, PLAN_SOURCE };
+/* The places this driver was meant to go today: the round they planned and
+ * the office orders assigned to them. Only these can be MISSED. A restaurant
+ * the driver merely passed, or paused beside, is not a missed delivery.
+ */
+function expectedPlaces(orders, driverId) {
+  const placeIds = new Set(); const keys = new Set();
+  for (const o of orders || []) {
+    if (o.source !== PLAN_SOURCE && !(o.assignedDriverId && o.assignedDriverId === driverId)) continue;
+    if (o.placeId) placeIds.add(o.placeId);
+    const k = customerKey(o.customerId);
+    if (k) keys.add(k);
+  }
+  return {
+    any: placeIds.size + keys.size > 0,
+    has: (place) => !!place && (placeIds.has(place.id) || (!!customerKey(place.customerId) && keys.has(customerKey(place.customerId)))),
+  };
+}
+
+module.exports = { customerKey, orderWindow, endOfDeliveryDay, planOrders, expectedPlaces, PLAN_SOURCE };
