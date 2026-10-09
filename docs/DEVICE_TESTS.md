@@ -2,7 +2,7 @@
 
 Automated tests cannot prove what Android does to a running app. Do this on
 each phone model the drivers use, with the newest APK
-(https://modern-drivers-pune.web.app/modern-drivers.apk, app version 2.1.0).
+(https://modern-drivers-pune.web.app/modern-drivers.apk, app version 2.2.0).
 Keep the office dashboard open on a laptop: Live fleet, and the driver's
 **Tracking diagnostics**.
 
@@ -19,6 +19,11 @@ Keep the office dashboard open on a laptop: Live fleet, and the driver's
 
 ## Tests (mark pass/fail, note times)
 
+0. **One-time setup** — on a fresh install press Start Ride. The ride must
+   NOT start; the "One-time setup" sheet asks for (1) Location "Allow all the
+   time" and (2) Battery "no restrictions". Do each, come back: a tick
+   appears, and after the second the ride starts by itself. Press Start Ride
+   on the next day: it starts at once, nothing asked.
 1. **Start** — Start Ride. Notification "Modern Drivers — ride in progress"
    appears. Dashboard: **Live** within 30 s.
 2. **Update rate** — drive 2 km. Marker moves at least every ~20 s;

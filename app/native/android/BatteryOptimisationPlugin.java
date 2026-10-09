@@ -129,6 +129,63 @@ public class BatteryOptimisationPlugin extends Plugin {
         call.resolve(result);
     }
 
+    private static final String BACKGROUND_LOCATION = "android.permission.ACCESS_BACKGROUND_LOCATION";
+
+    /* "Allow all the time". Android 10 shows its own dialog; Android 11 and
+     * later never offer it in a dialog and open this app's location
+     * permission page instead, where the driver picks it. Android only asks
+     * once or twice before ignoring the request, so the app falls back to
+     * openAppSettings. The answer is read again with status() when the driver
+     * comes back. Foreground location must be held first. */
+    @PluginMethod
+    public void requestBackgroundLocation(PluginCall call) {
+        Context context = getContext();
+        JSObject result = new JSObject();
+        if (Build.VERSION.SDK_INT < 29 || granted(context, BACKGROUND_LOCATION)) {
+            result.put("granted", true);
+            call.resolve(result);
+            return;
+        }
+        if (!granted(context, Manifest.permission.ACCESS_FINE_LOCATION)
+                && !granted(context, Manifest.permission.ACCESS_COARSE_LOCATION)) {
+            call.reject("Allow location for this app first.", "NO_FOREGROUND");
+            return;
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                getActivity().requestPermissions(new String[] { BACKGROUND_LOCATION }, 4711);
+            }
+        } catch (Exception e) {
+            if (!openDetails(context)) {
+                call.reject("Could not open the permission screen.", "UNAVAILABLE");
+                return;
+            }
+        }
+        result.put("granted", false);
+        result.put("opened", true);
+        call.resolve(result);
+    }
+
+    /* This app's own page in Settings: Permissions → Location → Allow all the time. */
+    @PluginMethod
+    public void openAppSettings(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("opened", openDetails(getContext()));
+        call.resolve(result);
+    }
+
+    private static boolean openDetails(Context context) {
+        try {
+            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:" + context.getPackageName()));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(intent);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private boolean isExempt() {
         // Before Android 6 there was no battery optimisation to be exempt from.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;

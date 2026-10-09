@@ -24,7 +24,7 @@
   var BRAND = window.BRANDING || {};
   var API = String(CFG.API_BASE || '').replace(/\/+$/, '');
   var HAS_SERVER = !!API;
-  var APP_VERSION = '2.1.0';
+  var APP_VERSION = '2.2.0';
 
   var $ = function (id) { return document.getElementById(id); };
   var show = function (el, on) { if (el) el.hidden = !on; };
@@ -73,6 +73,9 @@
     lastHealthAt: 0,
     oldestQueuedAt: null,
     authError: null,             // signed out: uploads cannot work until fixed
+    // The one-time background setup is outstanding: Start Ride was pressed
+    // and refused until "Allow all the time" and unrestricted battery are on.
+    bgSetup: null,               // { location, battery, maker } or null
     permission: 'unknown',
     starting: false,
     startError: null,
@@ -972,7 +975,8 @@
     // returns from, so asking here would put the dialog straight back in front
     // of a driver who just tapped Deny, again and again. Pressing Start Ride
     // clears the refusal, so the driver's own tap still asks properly.
-    var lookOnly = state.permission === 'denied' && typeof p.checkPermissions === 'function';
+    // Already granted: only look too (Start Ride has just asked).
+    var lookOnly = (state.permission === 'denied' || state.permission === 'granted') && typeof p.checkPermissions === 'function';
     var q = lookOnly ? p.checkPermissions() : p.requestPermissions({ permissions: ['location'] });
     return q.then(function (r) {
       if (!r) return 'unknown';
@@ -1225,7 +1229,9 @@
   function healthPayload() {
     return {
       locationPermission: state.permission,
-      backgroundPermission: state.backgroundTracking ? 'granted' : 'unknown',
+      // What Android says about "Allow all the time", not what the app hopes.
+      backgroundPermission: state.os && state.os.backgroundLocation === true ? 'granted'
+        : state.os && state.os.backgroundLocation === false ? 'denied' : 'unknown',
       gpsEnabled: state.permission === 'device-off' ? false : (state.permission === 'granted' ? true : null),
       watcherRunning: riding() ? !!state.watcherId : null,
       // The server's field means "the phone restricts this app", the reverse
@@ -1323,12 +1329,65 @@
   }
 
   // ── ride ───────────────────────────────────────────────────────────────
-  function startRide() {
+  /* What Android says right now about running in the background:
+   * "Allow all the time" location, and no battery restriction. Unknown
+   * (a build without the native plugin, or a browser) is { known: false }. */
+  function backgroundAccess() {
+    var p = batteryPlugin();
+    if (!p || typeof p.status !== 'function') return Promise.resolve({ known: false });
+    return p.status().then(function (r) {
+      state.os = r || null;
+      state.batteryExempt = !!(r && r.exempt);
+      state.phoneMaker = (r && r.manufacturer) || state.phoneMaker;
+      // A native build too old to say about background location is not
+      // blocked on it; one that says "no" is.
+      return { known: true, location: !!r && r.backgroundLocation !== false, battery: !!(r && r.exempt), maker: (r && r.manufacturer) || null };
+    }, function () { return { known: false }; });
+  }
+
+  /* A ride cannot start until the phone lets this app record in the
+   * background. Asked once: a phone that has both answers yes goes straight
+   * through every morning after. Without them, recording stops when the
+   * screen locks or the battery saver closes the app — the frozen marker the
+   * office saw in the trial. A ride already running is never stopped by this.
+   */
+  /* @param auto  true when retried on coming back to the app: only looks at
+   *              the permission, so a refusal does not bring the dialog
+   *              straight back. The driver's own tap asks properly. */
+  function startRide(auto) {
     if (state.starting) return;
     state.starting = true; state.startError = null;
     // The driver's own tap: ask Android properly again, dialog and all, rather
     // than only looking as the automatic retries do after a refusal.
-    if (state.permission === 'denied') state.permission = 'unknown';
+    if (state.permission === 'denied' && auto !== true) state.permission = 'unknown';
+    // Until the ride is running, coming back to the app tries again.
+    state.pendingStart = true;
+    render();
+    ensureLocationPermission().then(function (perm) {
+      if (perm === 'device-off' || perm === 'denied') {
+        state.starting = false;
+        watcherFailed(perm === 'device-off' ? 'Location services disabled.' : 'User denied location permission', 'NOT_AUTHORIZED');
+        return null;
+      }
+      if (perm === 'granted') state.permission = 'granted';
+      return backgroundAccess().then(function (a) {
+        if (a.known && !(a.location && a.battery)) {
+          state.starting = false;
+          state.bgSetup = a;
+          state.startError = 'One-time setup: allow Modern Drivers to work in the background, then your ride starts by itself.';
+          render();
+          showBackgroundSetup();
+          return null;
+        }
+        state.bgSetup = null;
+        state.pendingStart = false;
+        if ($('sheetBg')) $('sheetBg').classList.remove('on');
+        return beginRide();
+      });
+    });
+  }
+
+  function beginRide() {
     state.distanceM = 0; state.pointCount = 0; state.route = []; lastKept = null;
     LS.set('distanceM', 0); LS.set('pointCount', 0);
     render();
@@ -1494,9 +1553,10 @@
     // Then the battery saver, which only matters once location itself works.
     var locFault = state.permission === 'denied' || state.permission === 'device-off';
     var batFault = !locFault && riding() && state.batteryExempt === false;
-    show($('btnFixPerm'), locFault || batFault);
+    var setupDue = !locFault && !riding() && !!state.bgSetup;
+    show($('btnFixPerm'), locFault || batFault || setupDue);
     $('btnFixPerm').textContent = state.permission === 'device-off' ? 'How to turn location on'
-      : locFault ? 'Fix permission' : 'Keep recording with screen off';
+      : locFault ? 'Fix permission' : setupDue ? 'Finish one-time setup' : 'Keep recording with screen off';
 
     var n = $('notice');
     if (state.stoppedInfo && !riding()) {
@@ -2056,6 +2116,7 @@
     // The phone's master switch is not in this app's settings page, so sending
     // the driver there for that fault would be a dead end. Steps instead.
     if (state.permission === 'device-off') { showSettingsSteps(); return; }
+    if (state.bgSetup && !riding()) { showBackgroundSetup(); return; }
     if (state.permission !== 'denied' && state.batteryExempt === false) { showBatterySteps(); return; }
     var p = bg();
     if (p && p.openSettings) {
@@ -2064,6 +2125,67 @@
       showSettingsSteps();
     }
   });
+
+  /* The one-time setup sheet: two switches, each with its own button and a
+   * tick once Android says it is on. Re-read every time the driver comes
+   * back to the app; when both are on the sheet closes and the ride starts. */
+  function showBackgroundSetup() {
+    var a = state.bgSetup || {};
+    var maker = String(a.maker || state.phoneMaker || '').toLowerCase();
+    var extra = MAKER_STEPS[maker];
+    var step = function (n, done, title, how, btnId, btnText) {
+      return '<div style="border:1px solid var(--line,#e2e5ec);border-radius:12px;padding:12px;margin:0 0 10px;text-align:left">'
+        + '<div style="font-weight:700;margin-bottom:4px">' + (done ? '✅ ' : n + '. ') + esc(title) + '</div>'
+        + (done ? '<div class="note" style="margin:0">Done.</div>'
+          : '<div class="note" style="margin:0 0 8px">' + how + '</div>'
+            + '<button id="' + btnId + '" class="plan" style="width:100%">' + esc(btnText) + '</button>')
+        + '</div>';
+    };
+    $('sheetTitle').textContent = 'One-time setup';
+    $('sheetBody').innerHTML = '<p class="note" style="text-align:left;margin:0 0 12px">'
+      + 'Before your first ride, allow Modern Drivers to keep recording when the screen is off. '
+      + 'You do this once; after that Start Ride works straight away.</p>'
+      + step(1, a.location, 'Location: "Allow all the time"',
+        'Tap the button, then choose <b>Allow all the time</b>. If you see a list, tap <b>Permissions</b> → <b>Location</b> → <b>Allow all the time</b>.',
+        'btnBgLoc', 'Open location setting')
+      + step(2, a.battery, 'Battery: no restrictions',
+        'Tap the button and choose <b>Allow</b> (or <b>Unrestricted</b> / <b>No restrictions</b>).'
+          + (extra ? ' Also, on this ' + esc(a.maker || state.phoneMaker) + ' phone: ' + esc(extra) : ''),
+        'btnBgBat', 'Allow background running')
+      + '<p class="note" style="text-align:left;margin:4px 0 0">Come back to this app after each step. '
+      + 'Your ride starts by itself when both are ticked.</p>';
+    $('sheetBg').classList.add('on');
+    var p = batteryPlugin();
+    var loc = $('btnBgLoc');
+    if (loc) {
+      loc.addEventListener('click', function () {
+        // Android asks only once or twice in its own screen; after that, this
+        // app's settings page is the only way there.
+        var asked = LS.get('bgLocAsked', 0);
+        LS.set('bgLocAsked', asked + 1);
+        var direct = p && typeof p.requestBackgroundLocation === 'function' && asked < 1;
+        var go = direct ? p.requestBackgroundLocation()
+          : (p && typeof p.openAppSettings === 'function' ? p.openAppSettings() : bg().openSettings());
+        Promise.resolve(go).catch(function () {
+          if (p && typeof p.openAppSettings === 'function') p.openAppSettings().catch(showSettingsSteps);
+          else showSettingsSteps();
+        });
+      });
+    }
+    var bat = $('btnBgBat');
+    if (bat) {
+      bat.addEventListener('click', function () {
+        if (p && typeof p.requestExemption === 'function') p.requestExemption().catch(function () {});
+      });
+    }
+  }
+
+  /* Back from a setting: a Start Ride that was refused (permission, or the
+   * one-time setup) tries again by itself. */
+  function recheckBackgroundSetup() {
+    if (!state.pendingStart || riding() || state.starting) return;
+    startRide(true);
+  }
 
   function showSettingsSteps() {
     var deviceOff = state.permission === 'device-off';
@@ -2093,7 +2215,6 @@
   // The network coming back is the moment to send, back-off or not.
   window.addEventListener('online', function () { state.nextSyncAt = 0; sync(true); render(); });
   window.addEventListener('offline', function () { render(); });
-  window.addEventListener('offline', render);
 
   /* Coming back to the app.
    *
@@ -2105,6 +2226,7 @@
    */
   function resume() {
     queue.count().then(function (n) { state.queued = n; render(); });
+    recheckBackgroundSetup();
     if (riding() && !state.watcherId) startWatcher();
     // Back from the battery dialog or Settings: find out what was chosen.
     if (riding()) checkBattery(false);

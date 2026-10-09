@@ -108,8 +108,10 @@ function fakeCapacitor({ permission = 'granted', battery = null } = {}) {
   // The battery plugin exists only on builds that include app/native; absent,
   // registerPlugin still returns an object — just one with no methods.
   const bat = battery ? {
-    status() { return Promise.resolve({ exempt: battery.exempt, manufacturer: battery.manufacturer || 'Xiaomi' }); },
+    status() { return Promise.resolve({ exempt: battery.exempt, manufacturer: battery.manufacturer || 'Xiaomi', backgroundLocation: battery.background }); },
     requestExemption() { seen.exemptionRequests += 1; return Promise.resolve({ exempt: false, opened: true }); },
+    requestBackgroundLocation() { seen.backgroundRequests = (seen.backgroundRequests || 0) + 1; return Promise.resolve({ granted: false, opened: true }); },
+    openAppSettings() { seen.appSettings = (seen.appSettings || 0) + 1; return Promise.resolve({ opened: true }); },
   } : {};
   const geolocation = {
     // Never shows a dialog; the app uses it to look after a refusal.
@@ -383,24 +385,47 @@ test('turning location on and pressing Start Ride again then records', async () 
 
 // ── battery saver ──────────────────────────────────────────────────────────
 
-test('a phone whose battery saver will close the app is asked once, and warned about', async () => {
-  const t = await launch({ battery: { exempt: false } });
+// The ride cannot start until the phone allows background running: location
+// "Allow all the time" and no battery restriction. Once, then never again.
+test('a phone whose battery saver would close the app cannot start a ride until it is allowed', async () => {
+  const t = await launch({ battery: { exempt: false, background: true } });
   try {
     assert.equal(t.state.batteryExempt, false);
-    assert.equal(t.cap.seen.exemptionRequests, 1, 'Android\'s dialog is shown once, on the first ride');
-    assert.match(t.el('stTitle').textContent, /battery saver/i, 'not a green "Tracking is on"');
-    assert.equal(t.el('btnFixPerm').hidden, false, 'the way to fix it is offered');
+    assert.equal(t.cap.seen.watchers.length, 0, 'no recording');
+    assert.equal(t.state.localRide, null, 'and no ride');
+    assert.match(t.state.startError, /One-time setup/);
+    assert.equal(t.el('btnFixPerm').hidden, false, 'the way to finish it is offered');
+    assert.match(t.el('btnFixPerm').textContent, /one-time setup/i);
+    assert.match(t.el('sheetBody').innerHTML, /Battery: no restrictions/);
   } finally { t.stop(); }
 });
 
-test('a driver who said no is not asked again every time a ride starts', async () => {
-  const t = await launch({ battery: { exempt: false } });
+test('without "Allow all the time" the ride does not start; allowing it and coming back starts it by itself', async () => {
+  const battery = { exempt: true, background: false };
+  const t = await launch({ battery });
   try {
-    t.cap.refuse('User denied location permission', 'NOT_AUTHORIZED');
-    await tick();
-    t.el('btnStart').click();
+    assert.equal(t.cap.seen.watchers.length, 0);
+    assert.match(t.el('sheetBody').innerHTML, /Allow all the time/);
+    t.el('btnBgLoc').click();
     await settle();
-    assert.equal(t.cap.seen.exemptionRequests, 1);
+    assert.equal(t.cap.seen.backgroundRequests, 1, 'Android\'s own screen is opened');
+    await t.returnToApp();
+    assert.equal(t.cap.seen.watchers.length, 0, 'still not allowed: still no ride');
+    // The driver chose "Allow all the time".
+    battery.background = true;
+    await t.returnToApp();
+    assert.equal(t.cap.seen.watchers.length, 1, 'the ride started without pressing anything');
+    assert.ok(t.state.localRide, 'a ride is running');
+    assert.equal(t.state.startError, null);
+  } finally { t.stop(); }
+});
+
+test('the setup is one-time: a phone already allowed starts straight away', async () => {
+  const t = await launch({ battery: { exempt: true, background: true } });
+  try {
+    assert.equal(t.cap.seen.watchers.length, 1);
+    assert.equal(t.state.bgSetup, null);
+    assert.equal(t.cap.seen.backgroundRequests, undefined, 'nothing is asked');
   } finally { t.stop(); }
 });
 

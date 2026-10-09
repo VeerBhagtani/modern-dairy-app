@@ -1,6 +1,6 @@
 {
   "name": "modern-drivers-app",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "description": "Modern Drivers \u2014 the Android app a driver installs",
   "scripts": {
