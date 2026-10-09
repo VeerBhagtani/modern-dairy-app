@@ -41,6 +41,7 @@ test('a bigger map with a full-screen mode, and "stops done" instead of GPS poin
   assert.match(html, /id="btnBigMap"/);
   assert.match(html, /<b id="stStops">—<\/b><span>stops done<\/span>/);
   assert.doesNotMatch(html, /<span>points<\/span>/);
-  assert.match(app, /haversine\(\{ lat: loc\.latitude, lng: loc\.longitude \}, s\) <= 120/, 'a stop counts as reached within 120 m');
+  assert.match(app, /if \(d <= 120\) \{/, 'the clock starts within 120 m of the stop');
+  assert.match(app, /if \(t - s\.arrivedAt >= DELIVERY_MIN_MS\) \{ s\.done = true;/, 'and the stop is reached only after 2 minutes there');
   assert.match(app, /if \(state\.plan && state\.plan\.day !== todayKey\(\)\) \{ state\.plan = null; LS\.del\('plan'\); \}/, 'kept for today only');
 });

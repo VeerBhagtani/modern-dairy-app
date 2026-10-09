@@ -186,6 +186,21 @@ function matchDeliveries(segments, orders, places, ctx, cfg) {
   // a visit to a customer assigned to someone else is still caught), but
   // listing every other driver's orders as "unmatched" on each ride buried
   // the ones that mattered under hundreds that did not.
+  // An expected delivery with a halt there under the 2-minute minimum is
+  // missed for that reason, and says so.
+  const missedBecauseShort = (o) => {
+    const win = orderWindow(o);
+    const sv = (ctx.shortVisits || []).find((v) => (o.placeId ? v.placeId === o.placeId
+      : customerKey(o.customerId) && customerKey(v.customerId) === customerKey(o.customerId))
+      && (!win || (v.endTs >= win.start - cfg.matchTimeToleranceMin * 60000 && v.startTs <= win.end + cfg.matchTimeToleranceMin * 60000)));
+    if (sv) {
+      return { reason: `stopped only ${sv.dwellSec} s at ${sv.placeName} — under the ${Math.round(sv.minSec / 60)}-minute minimum, so not delivered`,
+        missedReason: 'too_short', shortVisit: { startTs: sv.startTs, endTs: sv.endTs, dwellSec: sv.dwellSec } };
+    }
+    return { reason: o.source === PLAN_SOURCE ? 'planned by the driver, but no visit to it was recorded'
+      : 'no GPS visit to this customer lines up with this order', missedReason: 'no_visit' };
+  };
+
   const unmatchedOrders = (orders || [])
     .filter((o) => !orderTaken.has(o.id) && o.assignedDriverId && ctx.driverId && o.assignedDriverId === ctx.driverId)
     .map((o) => ({
@@ -198,14 +213,13 @@ function matchDeliveries(segments, orders, places, ctx, cfg) {
       placeId: o.placeId || null,
       placeName: o.placeName || null,
       outcome: OUTCOME.UNMATCHED_DELIVERY,
-      reason: o.source === PLAN_SOURCE
-        ? 'planned by the driver, but no visit to it was recorded'
-        : 'no GPS visit to this customer lines up with this order',
+      ...missedBecauseShort(o),
     }));
 
   return {
     matches,
     unmatchedVisits,
+    shortVisits: (ctx.shortVisits || []).length,
     unmatchedOrders,
     summary: {
       visits: visits.length,

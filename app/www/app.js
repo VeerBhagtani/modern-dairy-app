@@ -514,12 +514,28 @@
     }
   }
   // Reached = a recorded position within 120 m of the stop.
+  // A delivery counts only after 2 minutes at the restaurant. Arriving within
+  // 120 m starts the clock; leaving (beyond 150 m) before 2 minutes resets it
+  // — the office sees that as a missed delivery.
+  var DELIVERY_MIN_MS = 120000;
   function markReached(loc) {
     var changed = false;
+    var t = loc.time || Date.now();
     planStops().forEach(function (s) {
-      if (!s.done && haversine({ lat: loc.latitude, lng: loc.longitude }, s) <= 120) { s.done = true; changed = true; }
+      if (s.done) return;
+      var d = haversine({ lat: loc.latitude, lng: loc.longitude }, s);
+      if (d <= 120) {
+        if (!s.arrivedAt) { s.arrivedAt = t; changed = true; }
+        if (t - s.arrivedAt >= DELIVERY_MIN_MS) { s.done = true; s.arrivedAt = null; changed = true; }
+      } else if (s.arrivedAt && d > 150) {
+        s.arrivedAt = null; changed = true;
+      }
     });
     if (changed) { LS.set('plan', state.plan); drawPlan(); if (state.plan) renderPlanList(); }
+  }
+  // The planned stop the driver is standing at, not yet 2 minutes in.
+  function waitingAt() {
+    return planStops().filter(function (s) { return !s.done && s.arrivedAt; })[0] || null;
   }
 
   // Google Maps does the turn-by-turn. A plain link: the app hands any
@@ -1260,6 +1276,13 @@
         title: 'Recording — battery saver may stop it',
         sub: 'Tap "Keep recording with screen off" below, or the ride stops recording when the screen locks.',
       };
+    }
+    var w = waitingAt();
+    if (w) {
+      var left = Math.max(0, Math.ceil((DELIVERY_MIN_MS - (Date.now() - w.arrivedAt)) / 1000));
+      if (!left) return { cls: 'on', title: 'At ' + w.name + ' — 2 minutes reached', sub: 'This delivery counts. It is ticked on the map at the next GPS update.' };
+      return { cls: 'warn', title: 'At ' + w.name + ' — stay ' + (left > 60 ? Math.floor(left / 60) + ' min ' + (left % 60) + ' s' : left + ' s') + ' more',
+        sub: 'A delivery counts only after 2 minutes at the restaurant. Leaving sooner is a missed delivery.' };
     }
     if (!HAS_SERVER) return { cls: 'on', title: 'Recording', sub: 'Saved on this phone. Not sent to the office yet.' };
     if (!navigator.onLine && state.queued) return { cls: 'on', title: 'Recording — offline', sub: state.queued + ' positions saved. They send when the network returns.' };

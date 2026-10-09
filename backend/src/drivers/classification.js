@@ -183,9 +183,13 @@ function classifySegments(segments, points, ctx, cfg) {
         seg.needsReview = false;
         evidence.push(ev('no_order_data', 'no delivery order available to corroborate this visit'));
       } else {
+        // Under the 2-minute minimum: not a delivery. A missed delivery, kept
+        // out of business and listed, with the restaurant named.
+        seg.type = SEGMENT_TYPE.UNKNOWN;
         seg.confidence = CONFIDENCE.LOW;
         seg.needsReview = true;
-        evidence.push(ev('short_dwell', `dwell ${stop.dwellSec}s is under the ${cfg.visitMinDwellSec}s visit threshold`));
+        seg.missedDelivery = true;
+        evidence.push(ev('too_short_for_delivery', `only ${stop.dwellSec}s at ${place.name} — under the ${Math.round(Math.max(120, cfg.visitMinDwellSec) / 60)}-minute minimum, so a missed delivery`));
       }
 
       if (otherDriver.length) {
@@ -205,7 +209,7 @@ function classifySegments(segments, points, ctx, cfg) {
       }
 
       seg.evidence = evidence;
-      seg.anchor = seg.type === SEGMENT_TYPE.LIKELY_RESTAURANT_VISIT ? 'business' : 'personal';
+      seg.anchor = seg.type === SEGMENT_TYPE.LIKELY_RESTAURANT_VISIT ? 'business' : seg.missedDelivery ? 'missed' : 'personal';
       continue;
     }
 

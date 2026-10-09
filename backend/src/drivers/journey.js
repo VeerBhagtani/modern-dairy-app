@@ -34,6 +34,7 @@ const CATEGORY = {
   BUSINESS: 'BUSINESS',          // set to business by an admin, no restaurant record
   UNKNOWN: 'UNKNOWN',
   PERSONAL: 'PERSONAL',
+  MISSED: 'MISSED',              // at a restaurant, but under the 2-minute minimum
 };
 const CATEGORY_LABEL = {
   MODERN_DAIRY: 'Modern Dairy',
@@ -41,6 +42,7 @@ const CATEGORY_LABEL = {
   BUSINESS: 'Modern Dairy customer',
   UNKNOWN: 'Unknown stop',
   PERSONAL: 'Personal / excluded',
+  MISSED: 'Missed delivery (under 2 min)',
 };
 
 function decidedByPerson(seg) {
@@ -50,6 +52,7 @@ function decidedByPerson(seg) {
 function categoryOf(seg) {
   if (seg.type === SEGMENT_TYPE.MODERN_DAIRY_FACILITY_STOP || (seg.place && seg.place.kind === 'facility')) return CATEGORY.MODERN_DAIRY;
   if (seg.type === SEGMENT_TYPE.PERSONAL_OR_NON_BUSINESS) return decidedByPerson(seg) ? CATEGORY.PERSONAL : CATEGORY.UNKNOWN;
+  if (seg.missedDelivery && !seg.reviewedBy) return CATEGORY.MISSED;
   if (seg.place && seg.place.kind === 'restaurant' && seg.type !== SEGMENT_TYPE.UNKNOWN) return CATEGORY.RESTAURANT;
   if (seg.reviewedBy && BUSINESS_TYPES.has(seg.type)) return CATEGORY.BUSINESS;
   return CATEGORY.UNKNOWN;
@@ -150,7 +153,8 @@ function buildJourney({ ride, processing, replay, places = {} }) {
       n: stops.length + 1,
       segmentId: s.id,
       category,
-      label: category === CATEGORY.MODERN_DAIRY || category === CATEGORY.RESTAURANT ? (s.place && s.place.name) : CATEGORY_LABEL[category],
+      label: category === CATEGORY.MODERN_DAIRY || category === CATEGORY.RESTAURANT ? (s.place && s.place.name)
+        : category === CATEGORY.MISSED ? `Missed delivery: ${s.place ? s.place.name : 'restaurant'}` : CATEGORY_LABEL[category],
       placeId: s.place ? s.place.id : null,
       placeName: s.place ? s.place.name : null,
       address: place && place.address ? place.address : null,
@@ -238,6 +242,15 @@ function buildJourney({ ride, processing, replay, places = {} }) {
     const g = segments[si];
     if (g.distanceM > 0 || g.gapEstimateM > 0) events.push({ kind: 'travel', ts: g.startTs, endTs: g.endTs, segment: g.n, distanceM: g.distanceM, gapEstimateM: g.gapEstimateM, durationSec: g.durationSec, classification: g.classification });
   }
+  // Halts at a restaurant too short to be a delivery (under 2 minutes), in
+  // their place in the day. Those already shown as a stop are not repeated.
+  const shortVisits = ((processing && processing.shortVisits) || [])
+    .filter((v) => !stops.some((s) => s.arrivalTs <= v.endTs && (s.departureTs ?? Infinity) >= v.startTs));
+  for (const v of shortVisits) {
+    events.push({ kind: 'missed', ts: v.startTs, endTs: v.endTs, label: v.placeName, placeId: v.placeId, durationSec: v.dwellSec, minSec: v.minSec,
+      at: { lat: v.lat, lng: v.lng }, totalBeforeM: cum(v.startTs).d });
+  }
+  events.sort((a, b) => a.ts - b.ts || (a.kind === 'start' ? -1 : b.kind === 'start' ? 1 : 0));
   events.push({ kind: active ? 'now' : 'end', ts: rideEnd, label: endPlace.label, category: endPlace.category, at: at(last), totalM: used.length ? used[used.length - 1].d || 0 : 0 });
 
   const dist = processing && processing.distance;
@@ -261,6 +274,7 @@ function buildJourney({ ride, processing, replay, places = {} }) {
       restaurantsVisited: new Set(stops.filter((s) => s.category === CATEGORY.RESTAURANT).map((s) => s.placeId)).size,
       unknownStops: stops.filter((s) => s.category === CATEGORY.UNKNOWN).length,
       depotStops: stops.filter((s) => s.category === CATEGORY.MODERN_DAIRY).length,
+      missedDeliveries: shortVisits.length + stops.filter((s) => s.category === CATEGORY.MISSED).length,
       timeAtStopsSec: stops.reduce((a, s) => a + s.durationSec, 0),
       fixes: points.length,
       fixesExcluded: points.filter((p) => !p.used).length,
@@ -268,6 +282,7 @@ function buildJourney({ ride, processing, replay, places = {} }) {
     stops,
     segments,
     events,
+    shortVisits,
   };
 }
 

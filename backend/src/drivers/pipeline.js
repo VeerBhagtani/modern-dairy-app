@@ -7,6 +7,7 @@
 // two years when someone disputes a figure.
 
 const { planOrders } = require('./orderWindow');
+const { detectShortVisits } = require('./shortVisits');
 const { resolveConfig, CALC_VERSION } = require('./config');
 const { cleanTrack, trackQuality, absorbStopJitter } = require('./track');
 const { detectStops } = require('./stops');
@@ -54,6 +55,11 @@ function processRideData(input) {
   const segments = classifySegments(rawSegments, track.points, ctx, config);
   const distance = summariseDistance(segments, track.totals);
   const visits = distancePerVisit(segments);
+  // Halts at a restaurant under the 2-minute minimum: missed deliveries.
+  const visitSpans = segments.filter((s) => s.kind === 'stop' && s.place && s.place.kind === 'restaurant' && !s.missedDelivery)
+    .map((s) => ({ placeId: s.place.id, startTs: s.startTs, endTs: s.endTs }));
+  const shortVisits = detectShortVisits(track.points, ctx.restaurants, visitSpans, config);
+  ctx.shortVisits = shortVisits;
   const route = routeLegs(segments, track.points);
   const matching = matchDeliveries(segments, ctx.orders, ctx.restaurants, ctx, config);
   const quality = trackQuality(track.totals, config);
@@ -119,12 +125,14 @@ function processRideData(input) {
       reviewedBy: s.reviewedBy || null,
       reviewedAt: s.reviewedAt || null,
       transit: !!s.transit,
+      missedDelivery: !!s.missedDelivery,
     })),
     // The ride as legs between the places the driver stopped at.
     legs: route.legs,
     legsCheck: route.check,
     distance,
     visits,
+    shortVisits,
     matching,
     review: {
       pending: needsReview.length,

@@ -115,7 +115,9 @@ const RANGES = {
   transitStopMaxSec: [0, 7200],
   geofenceDefaultRadiusM: [20, 2000],
   facilityRadiusM: [20, 5000],
-  visitMinDwellSec: [0, 7200],
+  // Never under 2 minutes: shorter than that at a restaurant is a missed
+  // delivery, not a visit (drivers/shortVisits.js).
+  visitMinDwellSec: [120, 7200],
   matchRadiusM: [20, 5000],
   matchTimeToleranceMin: [0, 1440],
   autoStopAfterHours: [1, 48],
@@ -129,7 +131,7 @@ const RANGES = {
 // Bumped whenever a change here or in the pipeline can change a reported
 // number. Stored on every ride_processing document so results are traceable
 // and so a recalculation can be triggered for everything below a version.
-const CALC_VERSION = '1.4.0';
+const CALC_VERSION = '1.5.0';
 
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
 
