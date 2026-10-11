@@ -100,7 +100,9 @@ test('add-native.js installs and registers the plugin in a generated project', a
     // Registration must come before super.onCreate, when the bridge fixes its
     // plugin list; after it, the plugin silently does not exist.
     assert.ok(first.indexOf('registerPlugin(BatteryOptimisationPlugin.class)') < first.indexOf('super.onCreate'));
-    assert.equal((first.match(/registerPlugin\(/g) || []).length, 1, 'registered once');
+    assert.ok(first.indexOf('registerPlugin(NativeTrackingPlugin.class)') < first.indexOf('super.onCreate'));
+    assert.equal((first.match(/registerPlugin\(/g) || []).length, 2, 'each plugin registered once');
+    for (const f of ['NativeTrackingPlugin', 'TrackingService', 'TrackingStore']) assert.ok(fs.existsSync(path.join(pkgDir, `${f}.java`)), f);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

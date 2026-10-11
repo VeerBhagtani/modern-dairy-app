@@ -29,12 +29,18 @@ test('the manifest declares the restart receiver, not exported, idempotently', (
 test('the receiver only notifies when a ride was being recorded, and never starts tracking itself', () => {
   const src = read('app/native/android/BootReceiver.java');
   assert.match(src, /if \(!prefs\.getBoolean\(KEY_ACTIVE, false\)\) return;/);
-  assert.doesNotMatch(src, /startForegroundService|startService\(/, 'Android 10+ forbids it; a crash loop would be worse');
+  // Restarting the recorder after boot is allowed only with background
+  // location (which Start Ride now requires), and never unguarded: a refusal
+  // falls back to the notification instead of crashing.
+  const restart = src.slice(src.indexOf('TrackingService.prefs(context)'), src.indexOf('static void notifyResume'));
+  assert.match(restart, /ACCESS_BACKGROUND_LOCATION/);
+  assert.match(restart, /try \{[\s\S]*startForegroundService[\s\S]*\} catch \(Exception refused\)/);
+  assert.match(restart, /notifyResume\(context\);/);
   assert.match(src, /PendingIntent\.FLAG_IMMUTABLE/, 'required from Android 12');
   assert.match(src, /Build\.VERSION\.SDK_INT >= 26/, 'channels only where they exist');
   const plugin = read('app/native/android/BatteryOptimisationPlugin.java');
   assert.match(plugin, /public void setRideActive\(PluginCall call\)/);
-  assert.match(read('scripts/add-native.js'), /const OTHERS = \['BootReceiver'\];/);
+  assert.match(read('scripts/add-native.js'), /const OTHERS = \['BootReceiver', 'TrackingService', 'TrackingStore'\];/);
 });
 
 test('the app keeps the native flag in step with recording', () => {

@@ -60,13 +60,15 @@ function sanitizeHealth(b, { correction = 0 } = {}) {
     pointsRecorded: num(b.pointsRecorded),
     authError: str(b.authError, 160),
     appVersion: str(b.appVersion),
+    // 'native' = the phone's own recording service (2.3+), 'web' = the app page.
+    recorder: str(b.recorder, 16),
     batteryPct: num(b.batteryPct),
   };
 }
 
 // The fields whose change is worth an event row. Counters and times change on
 // every report and would write a row a minute per driver for nothing.
-const STATE_FIELDS = ['locationPermission', 'backgroundPermission', 'gpsEnabled', 'batteryOptimised', 'online', 'watcherRunning', 'authError', 'appVersion'];
+const STATE_FIELDS = ['locationPermission', 'backgroundPermission', 'gpsEnabled', 'batteryOptimised', 'online', 'watcherRunning', 'authError', 'appVersion', 'recorder'];
 function healthChanged(prev, next) {
   if (!next) return false;
   if (!prev) return true;

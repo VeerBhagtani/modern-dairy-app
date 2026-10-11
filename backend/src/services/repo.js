@@ -349,8 +349,12 @@ async function closeIfDayOver(ride, nowMs = Date.now()) {
 // Start, or return the ride already running. The transaction is what makes
 // "one active ride per driver" a fact rather than a hope: a double-tap, a
 // retry after a timeout and two phones all converge on the same ride document.
+/* @param meta.rideId     a ride id made on the phone (a ride started with no
+ *                        signal, registered here when the phone is back
+ *                        online); the call is idempotent on it
+ * @param meta.startedAt  when that ride really started (server clock) */
 async function startRide(driverId, meta = {}) {
-  const now = Date.now();
+  const now = meta.startedAt || Date.now();
   // Rides closed below because their day had ended. Audited after the
   // transaction commits: every ride stop is on the record, whoever made it.
   let closedForDayEnd = [];
@@ -376,6 +380,15 @@ async function startRide(driverId, meta = {}) {
 
     // Reads first: a Firestore transaction must do all its reads before any
     // write.
+    // The phone's own ride id, sent again (a retry, or a ride registered
+    // after starting offline): the same ride, never a second one.
+    if (meta.rideId) {
+      const own = await tx.get(C.rides().doc(meta.rideId));
+      if (own.exists) {
+        if (own.data().driverId !== driverId) throw Object.assign(new Error('That ride id belongs to another account.'), { code: 'RIDE_ID_TAKEN' });
+        return { rideId: own.id, ...own.data(), alreadyActive: true };
+      }
+    }
     const existing = driver.activeRideId ? await tx.get(C.rides().doc(driver.activeRideId)) : null;
     // Belt and braces: the driver document could have drifted (a crash between
     // the two writes below in an older version), so also look for a stray
@@ -392,7 +405,7 @@ async function startRide(driverId, meta = {}) {
       return { rideId: current.id, ...current.data(), alreadyActive: true };
     }
 
-    const rideId = crypto.randomUUID();
+    const rideId = meta.rideId || crypto.randomUUID();
     const ride = {
       driverId,
       driverName: driver.name,
@@ -401,6 +414,8 @@ async function startRide(driverId, meta = {}) {
       status: 'active',
       startedAt: now,
       startedBy: `driver:${driverId}`,
+      // Started on the phone with no signal and registered later.
+      startedOffline: !!meta.rideId && meta.startedAt != null && Date.now() - meta.startedAt > 60000,
       dayKey: dayKeyFor(now),
       stoppedAt: null, stoppedBy: null, stopReason: null,
       lastPointAt: null, pointCount: 0,

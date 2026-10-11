@@ -34,6 +34,9 @@ Android fused location (1 fix/s, foreground service "ride in progress")
 | 10 | **A reloaded app could leave a second native GPS watcher running.** | Watcher id held only in memory. | Id persisted; the stale watcher is removed before a new one is added. |
 | 11 | **GPS spikes, parked drift, jams** (km audit, CALC 1.6.0). | `km-audit.test.mjs`. | Spike filter, stop merge, pause-on-the-way rule. |
 
+| 12 | **Recording and uploading stopped whenever Android closed the app's screen** (2026-10-11 trial: "nothing from the phone since 11:41", 7 h). The location plugin's service is bound to the app's screen and stops itself when the screen is destroyed — Android does that in the background to free memory, and when the driver swipes the app away — and the upload code lived in the page. | Plugin source: `onUnbind` and `handleOnDestroy` stop the service. | App 2.3: `TrackingService`, a started foreground service of type location, independent of the screen, `START_STICKY`, restarted after a reboot (background location is required now). It saves every fix in SQLite and uploads on its own thread with back-off; the page only starts the ride and draws. |
+| 13 | **A ride could not start without internet.** | `/rides/start` needed a reply. | The phone gives the ride its own id and start time; the server registers it under that id when the phone is back online (idempotent; a ride already running that day is returned instead and the phone's fixes follow it). |
+
 Not defects (checked): duplicates are impossible (fix id = document id,
 `create`); out-of-order batches are re-sorted; delayed fixes before an
 office stop are kept, after it refused by name; drivers cannot stop rides
@@ -83,8 +86,9 @@ connection, one timer, diagnostics).
 Not verifiable without a phone: C (screen locked), D (backgrounded), OEM
 battery killers, real upload latency. See `docs/DEVICE_TESTS.md`.
 
-Known limits: if Android kills the app process, recording stops until the
-driver opens the app (the boot notification covers restarts; a killed app
-is shown to the office as STALE). Queued fixes are kept and sent on the next
+Known limits: a phone maker's own app-killer (Xiaomi Autostart off, etc.)
+can still stop the service; the setup sheet names the maker's switch, and
+the office sees STALE with the cause. Signing up the very first time needs
+internet once. Queued fixes are kept and sent on the next
 open — they are not lost, but they wait. A phone clock changed mid-ride is
 corrected only for fixes sent after the change.

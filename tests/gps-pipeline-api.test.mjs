@@ -324,3 +324,41 @@ test('tracking states on the dashboard follow the evidence, and diagnostics sepa
     assert.equal(ev.length, 2, 'one for the first report, one for the change — not one per heartbeat');
   } finally { t.close(); }
 });
+
+test('a ride started on the phone with no signal is registered later with its own id and start time', async () => {
+  const t = await boot();
+  try {
+    const reg = await t.call('POST', '/driver/register', { name: 'Offline Start', deviceId: 'dev-off-abcdef' });
+    const token = reg.body.data.accessToken;
+    const now = Date.now();
+    const rideId = 'local-0a1b2c3d4e5f';
+    // The phone started 40 minutes ago in a dead zone and recorded all along.
+    const startedAt = now - 40 * 60000;
+    const pts = drive({ prefix: 'off', t0: startedAt + 5000, count: 50, dt: 40000 });
+    const r1 = await t.call('POST', '/driver/rides/start', { rideId, startedAt, sentAt: now, deviceId: 'dev-off-abcdef' }, token);
+    assert.equal(r1.status, 200, JSON.stringify(r1.body));
+    assert.equal(r1.body.data.rideId, rideId, 'the phone\'s id is kept');
+    assert.ok(Math.abs(r1.body.data.startedAt - startedAt) < 2000, 'and its real start time');
+    // Retried (the reply was lost): the same ride, not a second one.
+    const r2 = await t.call('POST', '/driver/rides/start', { rideId, startedAt, sentAt: now, deviceId: 'dev-off-abcdef' }, token);
+    assert.equal(r2.body.data.rideId, rideId);
+    assert.equal(r2.body.data.alreadyActive, true);
+    assert.equal((await t.repo.listRides({ driverId: reg.body.data.driver.id })).length, 1);
+    // Every fix since the real start is accepted (none "before the ride started").
+    const up = await t.call('POST', `/driver/rides/${rideId}/points`, { points: pts, sentAt: Date.now() }, token);
+    assert.equal(up.body.data.accepted.length, 50, JSON.stringify(up.body.data.rejected.slice(0, 2)));
+    const ride = await t.repo.getRide(rideId);
+    assert.equal(ride.startedOffline, true);
+    // A start time in the future or days ago is not believed.
+    const r3 = await t.call('POST', '/driver/rides/start', { rideId: 'local-zzzzzzzzzz', startedAt: now - 5 * 864e5, sentAt: now }, token);
+    assert.equal(r3.body.data.rideId, rideId, 'a ride already running today is returned instead');
+    // Someone else's ride id is refused.
+    const other = await t.call('POST', '/driver/register', { name: 'Other Phone', deviceId: 'dev-oth-abcdef' });
+    const clash = await t.call('POST', '/driver/rides/start', { rideId, startedAt, sentAt: now }, other.body.data.accessToken);
+    assert.equal(clash.status, 409);
+    assert.equal(clash.body.code, 'RIDE_ID_TAKEN');
+    // The heartbeat tells the phone which ride is running.
+    const hb = await t.call('POST', '/driver/health', { sentAt: Date.now(), recorder: 'native' }, token);
+    assert.equal(hb.body.data.activeRideId, rideId);
+  } finally { t.close(); }
+});

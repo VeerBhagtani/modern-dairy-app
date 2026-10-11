@@ -42,7 +42,7 @@ function fakeDom() {
   };
 }
 
-function fakePhone() {
+function fakePhone({ native = null } = {}) {
   const seen = { added: [], removed: [] };
   let cb = null; let n = 0;
   const bg = {
@@ -57,7 +57,11 @@ function fakePhone() {
   return {
     seen,
     fix: (i, t) => cb({ latitude: 18.5, longitude: 73.86 + i * 0.0003, accuracy: 7, time: t, speed: 8, bearing: 90 }),
-    capacitor: { registerPlugin: (name) => (name === 'BackgroundGeolocation' ? bg : name === 'Geolocation' ? geo : {}), Plugins: {} },
+    capacitor: {
+      registerPlugin: (name) => (name === 'BackgroundGeolocation' ? bg : name === 'Geolocation' ? geo : name === 'NativeTracking' && native ? native : {}),
+      isPluginAvailable: (name) => name === 'NativeTracking' && !!native,
+      Plugins: {},
+    },
   };
 }
 
@@ -70,10 +74,15 @@ function fakeServer() {
     const reply = (status, json) => ({ ok: status < 400, status, json: async () => json });
     if (s.mode === 'offline') throw new TypeError('Failed to fetch');
     if (p === '/driver/register') return reply(200, { success: true, data: { accessToken: 'a', refreshToken: 'r', driver: { id: 'd1', name: 'Ravi', driverCode: 'MD-1' }, tracking: { sampleIntervalSec: 30, maxBatchPoints: 200, uploadIntervalSec: 15, healthIntervalSec: 60 } } });
-    if (p === '/driver/rides/active') return reply(200, { success: true, data: s.rideActive && s.started ? { active: true, rideId: 'ride1', startedAt: 1 } : { active: false, reason: 'End of shift', kind: 'admin' } });
-    if (p === '/driver/rides/start') { s.started = true; return reply(200, { success: true, data: { rideId: 'ride1', startedAt: Date.now() } }); }
+    if (p === '/driver/rides/active') return reply(200, { success: true, data: s.rideActive && s.started ? { active: true, rideId: s.rideId || 'ride1', startedAt: 1 } : { active: false, reason: 'End of shift', kind: 'admin' } });
+    if (p === '/driver/rides/start') {
+      s.started = true; s.starts = (s.starts || []).concat([body]);
+      if (!s.rideId) s.rideId = s.useClientIds && body.rideId ? body.rideId : 'ride1';
+      return reply(200, { success: true, data: { rideId: s.rideId, startedAt: body.startedAt || Date.now(), status: 'active' } });
+    }
     if (p === '/driver/health') { s.health.push(body); return reply(200, { success: true, data: {} }); }
-    if (p.startsWith('/driver/rides/ride1/points')) {
+    if (/^\/driver\/rides\/[^/]+\/points$/.test(p)) {
+      body.rideId = p.split('/')[3];
       s.uploads.push(body);
       if (s.mode === 'inactive') return reply(403, { success: false, code: 'ACCOUNT_INACTIVE', message: 'deactivated' });
       if (s.mode === 'notyours') return reply(403, { success: false, code: 'NOT_YOUR_RIDE', message: 'not yours' });
@@ -87,9 +96,9 @@ function fakeServer() {
   return s;
 }
 
-async function launch({ server = fakeServer(), store = new Map() } = {}) {
+async function launch({ server = fakeServer(), store = new Map(), native = null, beforeStart = null } = {}) {
   const dom = fakeDom();
-  const phone = fakePhone();
+  const phone = fakePhone({ native });
   const winListeners = {};
   const win = {
     APP_CONFIG: { API_BASE: 'https://api.test', WATCHER_RETRY_MS: 5 },
@@ -113,6 +122,7 @@ async function launch({ server = fakeServer(), store = new Map() } = {}) {
   dom.get('inName').value = 'Ravi';
   dom.get('btnName').click();
   await settle();
+  if (beforeStart) beforeStart(server);
   dom.get('btnStart').click();
   await settle();
   return {
@@ -217,4 +227,109 @@ test('reopening the app does not leave a second recorder running', async () => {
     assert.ok(b.phone.seen.removed.includes(first), 'the stale watcher is removed before a new one is added');
     assert.equal(b.phone.seen.added.length, 1);
   } finally { b.stop(); }
+});
+
+
+test('a ride starts with no signal, records, and is registered under its own id when the signal returns', async () => {
+  const server = fakeServer();
+  server.useClientIds = true;
+  const t = await launch({ server, beforeStart: (s) => { s.mode = 'offline'; } });
+  try {
+    assert.ok(t.state.rideId && t.state.rideId.startsWith('m-'), 'the phone gave the ride its own id');
+    assert.equal(t.state.rideRegistered, false);
+    assert.ok(t.state.watcherId, 'and is recording');
+    for (let i = 0; i < 5; i += 1) { t.state.lastSyncAttemptAt = 0; t.state.nextSyncAt = 0; t.phone.fix(i, Date.now() - (5 - i) * 30000); await settle(8); }
+    assert.equal(t.state.queued, 5, 'kept on the phone');
+    // The office cannot be told to stop a ride it has not heard of: still running.
+    assert.ok(t.state.rideId);
+    server.mode = 'ok';
+    await t.fire('online');
+    await settle(80);
+    const reg = server.starts.find((b) => b.rideId === t.state.rideId);
+    assert.ok(reg, 'registered with its own id');
+    assert.ok(reg.startedAt <= Date.now() && reg.startedAt === t.state.rideStartedAt && reg.sentAt, 'with its real start time and the phone clock');
+    assert.equal(t.state.rideRegistered, true);
+    assert.equal(t.state.queued, 0);
+    assert.equal(server.stored.size, 5);
+    assert.ok(server.uploads.every((u) => u.rideId === t.state.rideId));
+  } finally { t.stop(); }
+});
+
+test('if the server already had a ride running, fixes recorded offline go to that ride', async () => {
+  const server = fakeServer();
+  server.rideId = 'server-ride';   // a ride already running today
+  const t = await launch({ server, beforeStart: (s) => { s.mode = 'offline'; } });
+  try {
+    const local = t.state.rideId;
+    t.phone.fix(0, Date.now());
+    await settle();
+    server.mode = 'ok';
+    await t.fire('online');
+    await settle(80);
+    assert.equal(t.state.rideId, local, 'the phone keeps its own id');
+    assert.equal(t.state.serverRideId, 'server-ride');
+    assert.ok(server.uploads.length && server.uploads.every((u) => u.rideId === 'server-ride'));
+    // Checking the ride does not end it or start a second one.
+    await t.resume();
+    assert.equal(t.state.rideId, local);
+  } finally { t.stop(); }
+});
+
+/* The phone's own recorder, as the plugin behaves. */
+function fakeNative() {
+  const n = { calls: [], listeners: {}, st: { queued: 0, recording: false, active: false, rideId: null, points: 0, distanceM: 0, lastUploadOkAt: 0 } };
+  const call = (name, impl) => (o) => { n.calls.push([name, o]); return Promise.resolve(impl ? impl(o) : {}); };
+  Object.assign(n, {
+    configure: call('configure'),
+    start: call('start', (o) => { Object.assign(n.st, { active: true, recording: true, rideId: o.rideId, rideRegistered: o.registered !== false }); return n.st; }),
+    stop: call('stop', () => { n.st.active = false; n.st.recording = false; return n.st; }),
+    flush: call('flush', () => n.st),
+    ensure: call('ensure', () => n.st),
+    getStatus: call('getStatus', () => ({ ...n.st })),
+    track: call('track', () => ({ points: [[73.86, 18.5, 1], [73.861, 18.5, 2]] })),
+    addListener(name, fn) { n.listeners[name] = fn; return Promise.resolve({ remove() {} }); },
+    emit(name, data) { n.listeners[name](data); },
+  });
+  return n;
+}
+
+test('with the phone\'s own recorder, the page starts the ride there and only draws', async () => {
+  const native = fakeNative();
+  const t = await launch({ native });
+  try {
+    const start = native.calls.find((c) => c[0] === 'start');
+    assert.ok(start, 'the recorder was started');
+    assert.equal(start[1].rideId, t.state.rideId);
+    assert.equal(t.phone.seen.added.length, 0, 'the page\'s own GPS watcher is not used');
+    const conf = native.calls.find((c) => c[0] === 'configure');
+    assert.equal(conf[1].apiBase, 'https://api.test');
+    assert.equal(conf[1].refreshToken, 'r', 'it can upload and sign in again without the page');
+    assert.equal(t.state.route.length, 2, 'the day\'s route comes back from the phone\'s store');
+    // A fix from the recorder moves the map; nothing is queued by the page.
+    native.emit('fix', { lat: 18.5, lng: 73.862, time: Date.now(), accuracy: 6, kept: true });
+    await settle();
+    assert.equal(t.state.route.length, 3);
+    assert.equal(t.server.uploads.length, 0, 'the page uploads nothing itself');
+    // The recorder's queue and errors show on the screen.
+    Object.assign(native.st, { queued: 7, lastUploadError: 'no connection to the server', uploadFailures: 2, distanceM: 4200, points: 90 });
+    await t.resume();
+    assert.equal(t.state.queued, 7);
+    assert.match(t.state.lastUploadError, /no connection/);
+    assert.equal(t.state.distanceM, 4200);
+    // The office stops the ride: the recorder is told.
+    t.server.rideActive = false;
+    await t.resume();
+    assert.ok(native.calls.some((c) => c[0] === 'stop'));
+    assert.equal(t.state.rideId, null);
+  } finally { t.stop(); }
+});
+
+test('a ride started offline is handed to the recorder as not yet registered', async () => {
+  const native = fakeNative();
+  const t = await launch({ native, beforeStart: (s) => { s.mode = 'offline'; } });
+  try {
+    const start = native.calls.find((c) => c[0] === 'start');
+    assert.equal(start[1].registered, false, 'the recorder registers it itself when it can');
+    assert.ok(start[1].startedAt <= Date.now());
+  } finally { t.stop(); }
 });

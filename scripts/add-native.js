@@ -17,9 +17,9 @@ const path = require('path');
 
 const androidDir = process.argv[2] || path.join(__dirname, '..', 'app', 'android');
 const sourceDir = path.join(__dirname, '..', 'app', 'native', 'android');
-const PLUGINS = ['BatteryOptimisationPlugin'];
+const PLUGINS = ['BatteryOptimisationPlugin', 'NativeTrackingPlugin'];
 // Copied too, but not plugins: nothing to register (the manifest declares them).
-const OTHERS = ['BootReceiver'];
+const OTHERS = ['BootReceiver', 'TrackingService', 'TrackingStore'];
 
 function findMainActivity(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

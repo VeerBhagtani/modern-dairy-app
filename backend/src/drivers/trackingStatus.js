@@ -115,7 +115,11 @@ function trackingStatus({ ride, live, nowMs, cfg }) {
     return out(STATE.INTERNET_DISCONNECTED, `The phone last reported no internet at ${hm(live.healthAt)}. ${lastSeen}`, live.healthAt);
   }
   if (sameRide && hasFix) {
-    return out(STATE.STALE, `Nothing from the phone since ${hm(Math.max(fixAt, live.healthAt || 0))}: no internet, the phone switched off, or the app closed by the phone. ${lastSeen}`, fixAt);
+    // An app older than 2.3 records from its screen, which Android closes in
+    // the background: the most likely cause, and the fix is the new APK.
+    const old = device && device.recorder !== 'native'
+      ? ' This phone runs an older app version that stops recording when Android closes it in the background — install the latest APK.' : '';
+    return out(STATE.STALE, `Nothing from the phone since ${hm(Math.max(fixAt, live.healthAt || 0))}: no internet, the phone switched off, or the app closed by the phone.${old} ${lastSeen}`, fixAt);
   }
   return out(STATE.UNKNOWN, `Ride started ${hm(ride.startedAt)}; no fix and no report from the phone yet.`, ride.startedAt || null);
 }

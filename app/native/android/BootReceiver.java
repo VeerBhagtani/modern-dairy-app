@@ -14,9 +14,10 @@ import android.os.Build;
  * After a restart (or an app update), tell the driver their ride is not being
  * recorded.
  *
- * Recording runs inside the app. A reboot ends it, and Android 10+ does not let
- * an app start a location service or open itself from the background after
- * boot, so silently resuming is not possible. What IS allowed is a notification:
+ * Since 2.3 the ride is recorded by TrackingService, which is restarted here
+ * after a boot when the driver has allowed location "all the time" (required
+ * before a ride can start). Without that, Android 10+ does not let an app
+ * start a location service from the background after boot. What IS allowed is a notification:
  * if a ride was being recorded when the phone went down, one tap reopens the
  * app, which asks the server whether the ride is still on and restarts
  * recording by itself. If the office stopped the ride meanwhile, opening the
@@ -39,6 +40,26 @@ public class BootReceiver extends BroadcastReceiver {
         if (!Intent.ACTION_BOOT_COMPLETED.equals(action)
                 && !Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)
                 && !"android.intent.action.QUICKBOOT_POWERON".equals(action)) return;
+        // The app's own recorder (2.3+): with "Allow all the time" — which a
+        // ride now cannot start without — Android lets a location foreground
+        // service start after boot, so the ride simply carries on. Anything
+        // refused falls back to the notification below.
+        if (TrackingService.prefs(context).getBoolean("active", false)) {
+            boolean background = Build.VERSION.SDK_INT < 29
+                    || TrackingService.granted(context, "android.permission.ACCESS_BACKGROUND_LOCATION");
+            if (background) {
+                try {
+                    Intent svc = new Intent(context, TrackingService.class).setAction(TrackingService.ACTION_START);
+                    if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(svc);
+                    else context.startService(svc);
+                    return;
+                } catch (Exception refused) {
+                    // Fall through to the notification.
+                }
+            }
+            notifyResume(context);
+            return;
+        }
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         if (!prefs.getBoolean(KEY_ACTIVE, false)) return;
         notifyResume(context);

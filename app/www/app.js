@@ -24,7 +24,7 @@
   var BRAND = window.BRANDING || {};
   var API = String(CFG.API_BASE || '').replace(/\/+$/, '');
   var HAS_SERVER = !!API;
-  var APP_VERSION = '2.2.0';
+  var APP_VERSION = '2.3.0';
 
   var $ = function (id) { return document.getElementById(id); };
   var show = function (el, on) { if (el) el.hidden = !on; };
@@ -48,6 +48,12 @@
     driver: LS.get('driver', null),
     tokens: LS.get('tokens', null),
     rideId: LS.get('rideId', null),
+    // A ride started with no signal has an id made on the phone and is
+    // registered with the server later; until then rideRegistered is false.
+    // If the server already had a ride running, it answers with that one's
+    // id, kept as serverRideId (fixes recorded under the phone's id go there).
+    rideRegistered: LS.get('rideRegistered', true),
+    serverRideId: LS.get('serverRideId', null),
     rideStartedAt: LS.get('rideStartedAt', null),
     localRide: LS.get('localRide', null),      // a ride running with no server
     notice: LS.get('notice', null),
@@ -239,6 +245,7 @@
       state.authError = null;
       state.tokens.accessToken = j.data.accessToken;
       LS.set('tokens', state.tokens);
+      configureNative();
       return true;
     }).catch(function () { return false; });
   }
@@ -697,6 +704,137 @@
     });
   }
 
+  // ── the phone's own recorder (2.3+) ─────────────────────────────────────
+  //
+  // app/native/android/TrackingService.java records, saves and uploads by
+  // itself, whether or not this page exists — the page used to do the
+  // uploading, and when Android closed the app's screen in the background the
+  // recording and the uploads stopped together ("nothing from the phone since
+  // 11:41"). With it, this page only starts the ride and draws. Builds without
+  // it (and the tests) use the page's own recorder below.
+  var NT = null;
+  function nativeRec() {
+    if (NT) return NT;
+    var C = window.Capacitor;
+    if (!C || !C.registerPlugin || typeof C.isPluginAvailable !== 'function' || !C.isPluginAvailable('NativeTracking')) return null;
+    NT = C.registerPlugin('NativeTracking');
+    try {
+      NT.addListener('fix', onNativeFix);
+      NT.addListener('state', function (e) { if (e && e.event === 'rideStopped') checkRide(); pollNative(); });
+    } catch (e) { /* listeners are a nicety; status polling covers it */ }
+    return NT;
+  }
+  function configureNative() {
+    var n = nativeRec();
+    if (!n || !HAS_SERVER) return Promise.resolve();
+    return n.configure({
+      apiBase: API,
+      accessToken: state.tokens && state.tokens.accessToken,
+      refreshToken: state.tokens && state.tokens.refreshToken,
+      deviceId: state.deviceId,
+      appVersion: APP_VERSION,
+      sampleIntervalSec: state.tracking.sampleIntervalSec,
+      uploadIntervalSec: state.tracking.uploadIntervalSec,
+      healthIntervalSec: state.tracking.healthIntervalSec,
+      maxBatchPoints: state.tracking.maxBatchPoints,
+    }).catch(function () {});
+  }
+  // A fix as the recorder saw it: the map and the stop timer follow it.
+  function onNativeFix(f) {
+    if (!f) return;
+    state.permission = 'granted';
+    state.startError = state.bgSetup ? state.startError : null;
+    state.lastFix = { lat: f.lat, lng: f.lng };
+    state.lastFixAt = Date.now();
+    state.lastAccuracyM = f.accuracy == null ? null : f.accuracy;
+    state.lastHeading = (f.bearing == null || f.speed === 0) ? null : f.bearing;
+    if (riding() && f.kept) {
+      state.route.push([f.lng, f.lat]);
+      if (state.route.length > 5000) state.route = state.route.slice(-5000);
+      markReached({ latitude: f.lat, longitude: f.lng, accuracy: f.accuracy, time: f.time });
+      drawRoute();
+    }
+    render();
+  }
+  /* What the recorder reports: queue, uploads, errors, the phone's own km. */
+  function pollNative() {
+    var n = nativeRec();
+    if (!n) return Promise.resolve();
+    return n.getStatus().then(function (st) {
+      state.queued = st.queued || 0;
+      state.oldestQueuedAt = st.oldestQueuedAt || null;
+      if (st.lastUploadOkAt) { state.lastSyncAt = st.lastUploadOkAt; LS.set('lastSyncAt', state.lastSyncAt); }
+      state.lastUploadError = st.lastUploadError || null;
+      state.uploadFailures = st.uploadFailures || 0;
+      state.nextSyncAt = st.nextAttemptAt || 0;
+      state.authError = st.authError || null;
+      if (st.lastFixAt && (!state.lastFixAt || st.lastFixAt > state.lastFixAt)) {
+        state.lastFixAt = st.lastFixAt;
+        if (st.lastLat || st.lastLng) state.lastFix = { lat: st.lastLat, lng: st.lastLng };
+        if (st.lastAccuracyM >= 0) state.lastAccuracyM = st.lastAccuracyM;
+      }
+      if (riding()) {
+        state.distanceM = st.distanceM || 0;
+        state.pointCount = st.points || 0;
+        state.watcherId = st.recording ? 'native' : null;
+        state.backgroundTracking = !!st.recording;
+        if (st.recorderError && !st.recording) state.startError = 'Recording could not start: ' + st.recorderError;
+        if (st.rideRegistered && !state.rideRegistered && st.rideId === state.rideId) {
+          state.rideRegistered = true; LS.set('rideRegistered', true);
+          state.serverRideId = st.serverRideId || null; LS.set('serverRideId', state.serverRideId);
+        }
+        // The recorder learned the office stopped the ride.
+        if (!st.active && st.stoppedAt && st.rideId === state.rideId) {
+          state.stoppedInfo = { stoppedAt: st.stoppedAt, reason: st.stoppedReason, kind: st.stoppedKind };
+          clearRide();
+        }
+      }
+      render();
+    }).catch(function () {});
+  }
+  function clearRide() {
+    state.rideId = null; state.serverRideId = null; state.rideRegistered = true;
+    LS.del('rideId'); LS.del('serverRideId'); LS.set('rideRegistered', true);
+    state.watcherId = null;
+  }
+  // A ride id made on the phone: safe as a server document id.
+  function newRideId() {
+    var hex = '';
+    try {
+      var b = new Uint8Array(12);
+      window.crypto.getRandomValues(b);
+      for (var i = 0; i < b.length; i += 1) hex += ('0' + b[i].toString(16)).slice(-2);
+    } catch (e) { hex = Date.now().toString(16) + Math.random().toString(16).slice(2, 12); }
+    return 'm-' + hex;
+  }
+  /* A ride started offline, registered once the server can be reached. */
+  function registerRide() {
+    if (!HAS_SERVER || !state.tokens || !state.rideId || state.rideRegistered) return Promise.resolve(true);
+    return apiFetch('/driver/rides/start', { method: 'POST', body: {
+      rideId: state.rideId, startedAt: state.rideStartedAt, sentAt: Date.now(), deviceId: state.deviceId, appVersion: APP_VERSION,
+    } }).then(function (data) {
+      state.rideRegistered = true; LS.set('rideRegistered', true);
+      state.serverRideId = data.rideId !== state.rideId ? data.rideId : null;
+      LS.set('serverRideId', state.serverRideId);
+      var n = nativeRec();
+      if (n) n.start({ rideId: state.rideId, startedAt: state.rideStartedAt, registered: true, serverRideId: state.serverRideId || undefined }).catch(function () {});
+      return true;
+    }, function () { return false; });
+  }
+  /* Signed up with no signal: finish signing up as soon as there is one. */
+  function ensureRegistered() {
+    if (!HAS_SERVER || state.tokens || !state.name || ensureRegistered.busy) return Promise.resolve();
+    ensureRegistered.busy = true;
+    return apiFetch('/driver/register', { method: 'POST', body: { name: state.name, deviceId: state.deviceId, appVersion: APP_VERSION } })
+      .then(function (data) {
+        state.tokens = { accessToken: data.accessToken, refreshToken: data.refreshToken };
+        state.driver = data.driver;
+        state.tracking = Object.assign({}, state.tracking, data.tracking || {});
+        LS.set('tokens', state.tokens); LS.set('driver', state.driver);
+        return configureNative();
+      }).catch(function () {}).then(function () { ensureRegistered.busy = false; render(); });
+  }
+
   // ── tracking ───────────────────────────────────────────────────────────
   var BG = null;
   function bg() {
@@ -1001,7 +1139,37 @@
           'NOT_AUTHORIZED');
         return null;
       }
+      var n = nativeRec();
+      if (n && state.rideId) return startNative(n);
       return addRecorder();
+    });
+  }
+
+  /* The phone's own recorder: started for this ride (idempotent — the same
+   * ride carries on with its saved fixes and totals). */
+  function startNative(n) {
+    return configureNative().then(function () {
+      return n.start({
+        rideId: state.rideId, startedAt: state.rideStartedAt, registered: state.rideRegistered !== false,
+        serverRideId: state.serverRideId || undefined,
+      });
+    }).then(function (st) {
+      startingWatcher = false;
+      state.watcherId = 'native';
+      state.backgroundTracking = true;
+      state.startError = null;
+      // The day's route so far, from the phone's own store.
+      return n.track({ rideId: state.rideId }).then(function (t) {
+        var pts = (t && t.points) || [];
+        if (pts.length) { state.route = pts.map(function (p) { return [p[0], p[1]]; }); drawRoute(); }
+      }).catch(function () {}).then(function () {
+        render();
+        checkBattery(false);
+        return pollNative();
+      });
+    }).catch(function (e) {
+      startingWatcher = false;
+      watcherFailed((e && e.message) || 'could not start the recorder', e && e.code);
     });
   }
 
@@ -1095,6 +1263,13 @@
   }
 
   function stopWatcher() {
+    var n = nativeRec();
+    if (n) {
+      state.watcherId = null;
+      state.backgroundTracking = false;
+      if (!riding()) markRideNative(false);
+      return n.stop().catch(function () {}).then(pollNative);
+    }
     var p = bg();
     // Cleared whenever the ride is known to be over, recorder running or not.
     if (!riding()) markRideNative(false);
@@ -1147,8 +1322,23 @@
    * is how the office learns what is wrong without a separate request.
    */
   function sync(force) {
+    var n = nativeRec();
+    if (n) {
+      // Fixes the page's own recorder saved before this version (an update
+      // in the middle of a ride) are still sent, once, the old way.
+      var legacy = queue.count().then(function (c) { return c ? webSync(true) : null; }, function () { return null; });
+      return Promise.all([n.flush().catch(function () {}), legacy]).then(pollNative);
+    }
+    return webSync(force);
+  }
+
+  function webSync(force) {
     if (!HAS_SERVER || syncing || !state.tokens) return Promise.resolve();
     if (!force && Date.now() < state.nextSyncAt) return Promise.resolve();
+    if (state.rideId && state.rideRegistered === false) {
+      // A ride started offline is registered before its fixes can go anywhere.
+      return registerRide().then(function (ok) { if (ok) return webSync(force); backOff(); return null; });
+    }
     syncing = true;
     state.lastSyncAttemptAt = Date.now();
     var anyStopped = false;
@@ -1161,6 +1351,8 @@
         pts.forEach(function (p) {
           var ride = p.rideId || state.rideId;
           if (!ride) return;              // recorded with no ride and none now: wait
+          // Recorded under the phone's own id, registered as the server's ride.
+          if (ride === state.rideId && state.serverRideId) ride = state.serverRideId;
           if (!groups[ride]) { groups[ride] = []; order.push(ride); }
           var copy = {};
           Object.keys(p).forEach(function (k) { if (k !== 'rideId') copy[k] = p[k]; });
@@ -1249,6 +1441,7 @@
       authError: state.authError,
       batteryPct: batteryLevel,
       appVersion: APP_VERSION,
+      recorder: 'web',
     };
   }
 
@@ -1272,6 +1465,8 @@
    * the fix callback (onLocation) carries uploads then. */
   var gpsSilentReported = false;
   function heartbeat() {
+    ensureRegistered();
+    if (nativeRec()) { pollNative(); return; }   // the recorder reports for itself
     if (!riding() || !HAS_SERVER || !state.tokens) return;
     var now = Date.now();
     if (state.queued) sync();
@@ -1310,6 +1505,7 @@
         state.tracking = data.tracking || state.tracking;
         state.notice = data.privacyNotice;
         LS.set('tokens', state.tokens); LS.set('driver', state.driver); LS.set('notice', state.notice);
+        configureNative();
         return checkRide();
       })
       .catch(function (e) {
@@ -1407,15 +1603,34 @@
       return;
     }
 
-    apiFetch('/driver/rides/start', { method: 'POST', body: { deviceId: state.deviceId, appVersion: APP_VERSION } })
-      .then(function (data) {
-        state.rideId = data.rideId;
-        state.rideStartedAt = data.startedAt;
-        state.stoppedInfo = null;
-        LS.set('rideId', state.rideId); LS.set('rideStartedAt', state.rideStartedAt);
-        return begin();
-      })
-      .catch(function (e) { state.startError = e.message; })
+    // The ride gets its id on the phone, so it can start with no signal at
+    // all: it is registered with the server under that id when there is one.
+    var rideId = newRideId();
+    var startedAt = Date.now();
+    var go = function (id, at, registered) {
+      state.rideId = id;
+      state.rideStartedAt = at;
+      state.rideRegistered = registered;
+      state.serverRideId = null;
+      state.stoppedInfo = null;
+      LS.set('rideId', id); LS.set('rideStartedAt', at); LS.set('rideRegistered', registered); LS.set('serverRideId', null);
+      return begin();
+    };
+    var online = state.tokens
+      ? apiFetch('/driver/rides/start', { method: 'POST', body: { rideId: rideId, startedAt: startedAt, sentAt: Date.now(), deviceId: state.deviceId, appVersion: APP_VERSION } })
+      : Promise.reject(Object.assign(new Error('not signed in yet'), { status: 0 }));
+    online.then(function (data) {
+      // The server's id: this one, or a ride of today already running.
+      return go(data.rideId, data.startedAt || startedAt, true);
+    }, function (e) {
+      // No connection: the ride starts anyway and is registered later.
+      if (e.status == null || e.status === 0) {
+        state.offlineStart = true;
+        return go(rideId, startedAt, false);
+      }
+      state.startError = e.message;
+      return null;
+    }).catch(function (e) { state.startError = e.message; })
       .then(function () { state.starting = false; render(); });
   }
 
@@ -1423,10 +1638,23 @@
   // stops rides; the phone finds out from here.
   function checkRide() {
     if (!HAS_SERVER || !state.tokens) return Promise.resolve();
+    // A ride started offline is unknown to the server until registered; asking
+    // first would end it. Not reachable yet: it simply carries on.
+    if (state.rideId && state.rideRegistered === false) {
+      return registerRide().then(function (ok) { return ok ? checkRide() : null; }).then(render);
+    }
     return apiFetch('/driver/rides/active').then(function (data) {
-      if (data.tracking) state.tracking = Object.assign({}, state.tracking, data.tracking);
+      if (data.tracking) { state.tracking = Object.assign({}, state.tracking, data.tracking); configureNative(); }
       if (data.active) {
+        // The same ride, under the server's id: nothing changes on the phone.
+        if (state.rideId && state.serverRideId === data.rideId) {
+          state.stoppedInfo = null;
+          initMap();
+          return startWatcher();
+        }
         state.rideId = data.rideId;
+        state.serverRideId = null; state.rideRegistered = true;
+        LS.set('serverRideId', null); LS.set('rideRegistered', true);
         state.rideStartedAt = data.startedAt;
         LS.set('rideId', state.rideId); LS.set('rideStartedAt', state.rideStartedAt);
         state.stoppedInfo = null;
@@ -1436,8 +1664,7 @@
       if (state.rideId) {
         state.stoppedInfo = { stoppedAt: data.stoppedAt, reason: data.reason, kind: data.kind };
       }
-      state.rideId = null;
-      LS.del('rideId');
+      clearRide();
       return stopWatcher();
     }).catch(function () {})
       .then(render);
@@ -2225,7 +2452,9 @@
    * this is safe to call on every resume.
    */
   function resume() {
-    queue.count().then(function (n) { state.queued = n; render(); });
+    if (nativeRec()) { configureNative(); pollNative(); }
+    else queue.count().then(function (n) { state.queued = n; render(); });
+    ensureRegistered();
     recheckBackgroundSetup();
     if (riding() && !state.watcherId) startWatcher();
     // Back from the battery dialog or Settings: find out what was chosen.
@@ -2255,6 +2484,8 @@
     // Uploads, back-off and the phone's own reports (heartbeat). Only while a
     // ride is running: outside one there is nothing the office can act on.
     setInterval(heartbeat, 15000);
+    // The recorder's queue and upload state, shown on the screen.
+    if (nativeRec()) setInterval(pollNative, 5000);
     setInterval(checkRide, (CFG.RIDE_POLL_SEC || 60) * 1000);
   }
   setInterval(render, 5000);

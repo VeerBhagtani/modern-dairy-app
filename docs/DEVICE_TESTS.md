@@ -2,7 +2,7 @@
 
 Automated tests cannot prove what Android does to a running app. Do this on
 each phone model the drivers use, with the newest APK
-(https://modern-drivers-pune.web.app/modern-drivers.apk, app version 2.2.0).
+(https://modern-drivers-pune.web.app/modern-drivers.apk, app version 2.3.0).
 Keep the office dashboard open on a laptop: Live fleet, and the driver's
 **Tracking diagnostics**.
 
@@ -42,11 +42,16 @@ Keep the office dashboard open on a laptop: Live fleet, and the driver's
    Location switch is off** within ~1 min. Turn on: back to **Live**.
 7. **Indoors** — stay in a basement 5 min: **GPS unavailable — no GPS fix
    since …** (not "no signal").
-8. **Kill the app** — swipe it away from recents. Note whether the
-   notification stays (phone-dependent). Dashboard after 2 min: **Stale**.
-   Reopen the app: recording resumes; queued fixes upload.
-9. **Restart the phone mid-ride** — "ride not recorded" notification appears;
-   tapping it resumes.
+8. **Swipe the app away** from recents mid-ride. The notification "ride in
+   progress" must stay and the dashboard must stay **Live** (the recorder no
+   longer depends on the app screen). Diagnostics → Recorder type: phone
+   service.
+9. **Restart the phone mid-ride** — recording resumes by itself after boot
+   (notification back, dashboard Live within ~2 min of unlocking). If a phone
+   refuses, a "ride not recorded" notification appears; tapping it resumes.
+9a. **Start offline** — data off, press Start Ride: the ride starts, records.
+   Data on: within ~1 min the ride appears on the dashboard with its real
+   start time and the whole route.
 10. **I: office stop** — stop the ride from the dashboard while the phone has
     data off; turn data on: the app shows "The office stopped your ride",
     the notification disappears, no new ride starts.

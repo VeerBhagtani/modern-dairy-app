@@ -52,6 +52,9 @@ const PERMISSIONS = [
   // progress. See app/native/android/BatteryOptimisationPlugin.java. (Play
   // Store restricts this permission; the app is installed from an APK.)
   'android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS',
+  // Keeps the CPU awake for the few seconds an upload takes with the screen
+  // off (app/native/android/TrackingService.java).
+  'android.permission.WAKE_LOCK',
 ];
 
 for (const perm of PERMISSIONS) {
@@ -88,6 +91,17 @@ if (!xml.includes('BackgroundGeolocationService')) {
     + '            android:foregroundServiceType="location"\n'
     + '            tools:node="merge"\n'
     + '            tools:replace="android:foregroundServiceType" />\n'
+    + '    </application>',
+  );
+}
+
+// The app's own ride recorder (app/native/android/TrackingService.java): a
+// started foreground service of type location, independent of the app's
+// screen. Not exported: only this app starts it.
+if (!xml.includes('.TrackingService"')) {
+  xml = xml.replace(
+    /<\/application>/,
+    '        <service android:name=".TrackingService" android:exported="false" android:foregroundServiceType="location" />\n'
     + '    </application>',
   );
 }

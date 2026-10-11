@@ -138,8 +138,22 @@ router.get('/me', async (req, res) => {
 // repo.startRide).
 router.post('/rides/start', writeLimiter, async (req, res) => {
   const { deviceId, appVersion } = req.body || {};
+  // A ride the phone started by itself with no signal: its own id, and the
+  // time it really started, moved onto the server's clock. Bounded: not in
+  // the future, not more than a working day ago.
+  let rideId = null; let startedAt = null;
+  if (req.body && req.body.rideId != null) {
+    if (!isValidId(req.body.rideId)) return res.status(400).json({ success: false, message: 'Invalid ride id' });
+    rideId = req.body.rideId;
+    const t = Number(req.body.startedAt);
+    if (Number.isFinite(t)) {
+      const at = t + clockCorrection(req.body.sentAt, Date.now());
+      const now = Date.now();
+      if (at <= now + 2 * 60000 && at >= now - 20 * 3600e3) startedAt = Math.min(at, now);
+    }
+  }
   try {
-    const ride = await repo.startRide(req.driverId, { deviceId, appVersion });
+    const ride = await repo.startRide(req.driverId, { deviceId, appVersion, rideId, startedAt });
     if (!ride.alreadyActive) {
       await repo.writeEvent({ driverId: req.driverId, rideId: ride.rideId, kind: 'ride_started', detail: { deviceId: deviceId || null } });
     }
@@ -148,13 +162,14 @@ router.post('/rides/start', writeLimiter, async (req, res) => {
       data: {
         rideId: ride.rideId,
         startedAt: ride.startedAt,
+        status: ride.status || 'active',
         alreadyActive: ride.alreadyActive,
         message: ride.alreadyActive ? 'Your ride is already running.' : 'Tracking has started.',
       },
     });
   } catch (e) {
-    const status = e.code === 'INACTIVE' ? 403 : e.code === 'NO_DRIVER' ? 404 : 500;
-    res.status(status).json({ success: false, message: e.code ? e.message : 'Could not start the ride. Try again.' });
+    const status = e.code === 'INACTIVE' ? 403 : e.code === 'NO_DRIVER' ? 404 : e.code === 'RIDE_ID_TAKEN' ? 409 : 500;
+    res.status(status).json({ success: false, code: e.code || undefined, message: e.code ? e.message : 'Could not start the ride. Try again.' });
   }
 });
 
@@ -381,6 +396,10 @@ router.post('/health', async (req, res) => {
   const b = req.body || {};
   const detail = sanitizeHealth(b, { correction: clockCorrection(b.sentAt, Date.now()) });
   await repo.recordHealth(req.driverId, req.driver.activeRideId || null, detail);
+  // The heartbeat is how a phone that is getting no GPS fixes (so uploads
+  // nothing) still learns the office stopped its ride.
+  const current = req.driver.activeRideId ? await repo.getRide(req.driver.activeRideId) : null;
+  res.locals.ride = { activeRideId: current && current.status === 'active' ? current.id : null };
 
   const degraded = detail.locationPermission === 'denied' || detail.gpsEnabled === false;
   if (degraded && req.driver.activeRideId) {
@@ -395,7 +414,7 @@ router.post('/health', async (req, res) => {
         : 'Driver has revoked location permission during an active ride.',
     }).catch(() => {});
   }
-  res.json({ success: true, data: { received: true } });
+  res.json({ success: true, data: { received: true, activeRideId: res.locals.ride ? res.locals.ride.activeRideId : null } });
 });
 
 // POST /driver/rides/:rideId/stop — ALWAYS REFUSED.
