@@ -60,10 +60,10 @@ async function boot() {
 }
 
 async function driver(t, name, n) {
-  const reg = await t.call('POST', '/driver/register', { name, deviceId: `dev-${n}-abcdef` });
+  const reg = await t.call('POST', '/driver/register', { name, deviceId: `dev-${n}-abcdef`, appVersion: '2.4.0' });
   assert.equal(reg.status, 200, JSON.stringify(reg.body));
   const token = reg.body.data.accessToken;
-  const start = await t.call('POST', '/driver/rides/start', { deviceId: `dev-${n}-abcdef` }, token);
+  const start = await t.call('POST', '/driver/rides/start', { deviceId: `dev-${n}-abcdef`, appVersion: '2.4.0' }, token);
   assert.equal(start.status, 200, JSON.stringify(start.body));
   // Started two hours ago, so the test's fixes (from the last few minutes) are
   // inside the ride, as a real phone's are.
@@ -335,12 +335,12 @@ test('a ride started on the phone with no signal is registered later with its ow
     // The phone started 40 minutes ago in a dead zone and recorded all along.
     const startedAt = now - 40 * 60000;
     const pts = drive({ prefix: 'off', t0: startedAt + 5000, count: 50, dt: 40000 });
-    const r1 = await t.call('POST', '/driver/rides/start', { rideId, startedAt, sentAt: now, deviceId: 'dev-off-abcdef' }, token);
+    const r1 = await t.call('POST', '/driver/rides/start', { rideId, startedAt, sentAt: now, deviceId: 'dev-off-abcdef', appVersion: '2.3.0' }, token);
     assert.equal(r1.status, 200, JSON.stringify(r1.body));
     assert.equal(r1.body.data.rideId, rideId, 'the phone\'s id is kept');
     assert.ok(Math.abs(r1.body.data.startedAt - startedAt) < 2000, 'and its real start time');
     // Retried (the reply was lost): the same ride, not a second one.
-    const r2 = await t.call('POST', '/driver/rides/start', { rideId, startedAt, sentAt: now, deviceId: 'dev-off-abcdef' }, token);
+    const r2 = await t.call('POST', '/driver/rides/start', { rideId, startedAt, sentAt: now, deviceId: 'dev-off-abcdef', appVersion: '2.3.0' }, token);
     assert.equal(r2.body.data.rideId, rideId);
     assert.equal(r2.body.data.alreadyActive, true);
     assert.equal((await t.repo.listRides({ driverId: reg.body.data.driver.id })).length, 1);
@@ -350,15 +350,39 @@ test('a ride started on the phone with no signal is registered later with its ow
     const ride = await t.repo.getRide(rideId);
     assert.equal(ride.startedOffline, true);
     // A start time in the future or days ago is not believed.
-    const r3 = await t.call('POST', '/driver/rides/start', { rideId: 'local-zzzzzzzzzz', startedAt: now - 5 * 864e5, sentAt: now }, token);
+    const r3 = await t.call('POST', '/driver/rides/start', { rideId: 'local-zzzzzzzzzz', startedAt: now - 5 * 864e5, sentAt: now, appVersion: '2.3.0' }, token);
     assert.equal(r3.body.data.rideId, rideId, 'a ride already running today is returned instead');
     // Someone else's ride id is refused.
     const other = await t.call('POST', '/driver/register', { name: 'Other Phone', deviceId: 'dev-oth-abcdef' });
-    const clash = await t.call('POST', '/driver/rides/start', { rideId, startedAt, sentAt: now }, other.body.data.accessToken);
+    const clash = await t.call('POST', '/driver/rides/start', { rideId, startedAt, sentAt: now, appVersion: '2.3.0' }, other.body.data.accessToken);
     assert.equal(clash.status, 409);
     assert.equal(clash.body.code, 'RIDE_ID_TAKEN');
     // The heartbeat tells the phone which ride is running.
     const hb = await t.call('POST', '/driver/health', { sentAt: Date.now(), recorder: 'native' }, token);
     assert.equal(hb.body.data.activeRideId, rideId);
+  } finally { t.close(); }
+});
+
+
+test('an app too old to start a ride is told to update, in words every old app shows; running rides go on', async () => {
+  const t = await boot();
+  try {
+    const reg = await t.call('POST', '/driver/register', { name: 'Old App', deviceId: 'dev-old-abcdef', appVersion: '2.2.0' });
+    assert.equal(reg.body.data.update.available, true);
+    assert.equal(reg.body.data.update.required, true);
+    const token = reg.body.data.accessToken;
+    for (const v of ['2.2.0', '2.0.0', undefined]) {
+      const r = await t.call('POST', '/driver/rides/start', { deviceId: 'dev-old-abcdef', appVersion: v }, token);
+      assert.equal(r.status, 426, String(v));
+      assert.equal(r.body.code, 'UPDATE_REQUIRED');
+      assert.match(r.body.message, /modern-drivers-pune\.web\.app\/modern-drivers\.apk/);
+    }
+    const ok = await t.call('POST', '/driver/rides/start', { deviceId: 'dev-old-abcdef', appVersion: '2.3.0' }, token);
+    assert.equal(ok.status, 200);
+    // Uploads from an older app are never refused: a running ride is not cut off.
+    const up = await t.call('POST', `/driver/rides/${ok.body.data.rideId}/points`, { points: [{ clientPointId: 'old:1', lat: 18.5, lng: 73.86, deviceTs: Date.now(), accuracyM: 5 }] }, token);
+    assert.equal(up.body.data.accepted.length, 1);
+    const act = await t.call('GET', '/driver/rides/active?v=2.3.0', null, token);
+    assert.equal(act.body.data.update.required, false);
   } finally { t.close(); }
 });

@@ -69,11 +69,11 @@ function fakePhone({ native = null } = {}) {
 function fakeServer() {
   const s = { uploads: [], health: [], mode: 'ok', stored: new Map(), rideActive: true };
   s.fetch = async (url, opts = {}) => {
-    const p = url.replace('https://api.test', '');
+    const p = url.replace('https://api.test', '').split('?')[0];
     const body = opts.body ? JSON.parse(opts.body) : {};
     const reply = (status, json) => ({ ok: status < 400, status, json: async () => json });
     if (s.mode === 'offline') throw new TypeError('Failed to fetch');
-    if (p === '/driver/register') return reply(200, { success: true, data: { accessToken: 'a', refreshToken: 'r', driver: { id: 'd1', name: 'Ravi', driverCode: 'MD-1' }, tracking: { sampleIntervalSec: 30, maxBatchPoints: 200, uploadIntervalSec: 15, healthIntervalSec: 60 } } });
+    if (p === '/driver/register') return reply(200, { success: true, data: { accessToken: 'a', refreshToken: 'r', driver: { id: 'd1', name: 'Ravi', driverCode: 'MD-1' }, tracking: { sampleIntervalSec: 30, maxBatchPoints: 200, uploadIntervalSec: 15, healthIntervalSec: 60 }, update: s.update || null } });
     if (p === '/driver/rides/active') return reply(200, { success: true, data: s.rideActive && s.started ? { active: true, rideId: s.rideId || 'ride1', startedAt: 1 } : { active: false, reason: 'End of shift', kind: 'admin' } });
     if (p === '/driver/rides/start') {
       s.started = true; s.starts = (s.starts || []).concat([body]);
@@ -331,5 +331,18 @@ test('a ride started offline is handed to the recorder as not yet registered', a
     const start = native.calls.find((c) => c[0] === 'start');
     assert.equal(start[1].registered, false, 'the recorder registers it itself when it can');
     assert.ok(start[1].startedAt <= Date.now());
+  } finally { t.stop(); }
+});
+
+
+test('a newer app version is offered as a banner with a one-tap download', async () => {
+  const server = fakeServer();
+  server.update = { latest: '9.9.0', minimum: '2.3.0', url: 'https://modern-drivers-pune.web.app/modern-drivers.apk', available: true, required: false };
+  const t = await launch({ server });
+  try {
+    const n = globalThis.document.getElementById('notice');
+    assert.equal(n.hidden, false);
+    assert.match(n.innerHTML, /New app version 9\.9\.0 available/);
+    assert.match(n.innerHTML, /Update now/);
   } finally { t.stop(); }
 });

@@ -24,7 +24,7 @@
   var BRAND = window.BRANDING || {};
   var API = String(CFG.API_BASE || '').replace(/\/+$/, '');
   var HAS_SERVER = !!API;
-  var APP_VERSION = '2.3.0';
+  var APP_VERSION = '2.4.0';
 
   var $ = function (id) { return document.getElementById(id); };
   var show = function (el, on) { if (el) el.hidden = !on; };
@@ -79,6 +79,8 @@
     lastHealthAt: 0,
     oldestQueuedAt: null,
     authError: null,             // signed out: uploads cannot work until fixed
+    // { latest, minimum, url, available, required } from the server.
+    update: LS.get('update', null),
     // The one-time background setup is outstanding: Start Ride was pressed
     // and refused until "Allow all the time" and unrestricted battery are on.
     bgSetup: null,               // { location, battery, maker } or null
@@ -1504,6 +1506,7 @@
         state.driver = data.driver;
         state.tracking = data.tracking || state.tracking;
         state.notice = data.privacyNotice;
+        noteUpdate(data.update);
         LS.set('tokens', state.tokens); LS.set('driver', state.driver); LS.set('notice', state.notice);
         configureNative();
         return checkRide();
@@ -1628,6 +1631,7 @@
         state.offlineStart = true;
         return go(rideId, startedAt, false);
       }
+      if (e.code === 'UPDATE_REQUIRED') noteUpdate(e.data && e.data.update);
       state.startError = e.message;
       return null;
     }).catch(function (e) { state.startError = e.message; })
@@ -1636,6 +1640,20 @@
 
   // The server is the only authority on whether a ride is running. The office
   // stops rides; the phone finds out from here.
+  /* A newer app: noted, shown as a banner with a one-tap download. Android
+   * installs it only when the driver taps Install; nothing is lost. */
+  function noteUpdate(u) {
+    if (!u || !u.latest) return;
+    state.update = u;
+    LS.set('update', u);
+  }
+  function openUpdate() {
+    var url = (state.update && state.update.url) || 'https://modern-drivers-pune.web.app/modern-drivers.apk';
+    var p = batteryPlugin();
+    var viaPhone = p && typeof p.openUrl === 'function' ? p.openUrl({ url: url }) : Promise.reject(new Error('no plugin'));
+    viaPhone.catch(function () { window.location.href = url; });
+  }
+
   function checkRide() {
     if (!HAS_SERVER || !state.tokens) return Promise.resolve();
     // A ride started offline is unknown to the server until registered; asking
@@ -1643,7 +1661,8 @@
     if (state.rideId && state.rideRegistered === false) {
       return registerRide().then(function (ok) { return ok ? checkRide() : null; }).then(render);
     }
-    return apiFetch('/driver/rides/active').then(function (data) {
+    return apiFetch('/driver/rides/active?v=' + encodeURIComponent(APP_VERSION)).then(function (data) {
+      noteUpdate(data.update);
       if (data.tracking) { state.tracking = Object.assign({}, state.tracking, data.tracking); configureNative(); }
       if (data.active) {
         // The same ride, under the server's id: nothing changes on the phone.
@@ -1786,7 +1805,16 @@
       : locFault ? 'Fix permission' : setupDue ? 'Finish one-time setup' : 'Keep recording with screen off';
 
     var n = $('notice');
-    if (state.stoppedInfo && !riding()) {
+    var upd = state.update && state.update.available && state.update.latest !== APP_VERSION ? state.update : null;
+    if (upd) {
+      n.className = 'msg warn';
+      n.innerHTML = '<b>New app version ' + esc(upd.latest) + ' available.</b> '
+        + (upd.required ? 'Needed before your next ride. ' : '')
+        + 'Install it over this one — your rides are kept.'
+        + '<br><button id="btnUpdate" class="plan" style="width:100%;margin-top:8px">Update now</button>';
+      n.hidden = false;
+      n.onclick = function (ev) { if (ev && ev.target && ev.target.id === 'btnUpdate') openUpdate(); };
+    } else if (state.stoppedInfo && !riding()) {
       n.className = 'msg info';
       // A ride ends with its day: every day is kept as its own ride, so the
       // driver's history and the office's reports show one row per day. That

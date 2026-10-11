@@ -43,6 +43,28 @@ const PRIVACY_NOTICE = {
   ],
 };
 
+/* App versions. Android never installs an app silently, so the newest APK
+ * reaches a phone only when the driver taps Install. Two things get it
+ * there: the app (2.4+) shows "Update available" with a one-tap download,
+ * and a ride cannot be STARTED from a version older than APP_MIN — every
+ * earlier app shows the server's refusal message under Start Ride, so the
+ * notice reaches phones that have no update check at all. A ride already
+ * running is never interrupted. Raise these with each release that must
+ * reach everyone (env APP_MIN_VERSION / APP_LATEST_VERSION override).
+ */
+const APP_LATEST = process.env.APP_LATEST_VERSION || '2.4.0';
+const APP_MIN = process.env.APP_MIN_VERSION || '2.3.0';
+const APK_URL = process.env.APK_URL || 'https://modern-drivers-pune.web.app/modern-drivers.apk';
+function versionBefore(v, ref) {
+  if (typeof v !== 'string' || !/^\d+(\.\d+){0,2}/.test(v)) return true;   // no version: very old
+  const a = v.split('.').map((x) => parseInt(x, 10) || 0); const b = ref.split('.').map(Number);
+  for (let i = 0; i < 3; i += 1) if ((a[i] || 0) !== b[i]) return (a[i] || 0) < b[i];
+  return false;
+}
+function updateInfo(appVersion) {
+  return { latest: APP_LATEST, minimum: APP_MIN, url: APK_URL, available: versionBefore(appVersion, APP_LATEST), required: versionBefore(appVersion, APP_MIN) };
+}
+
 // What the app needs to know to record and upload: sent at registration, on
 // every ride check and with every upload reply, so a change in Settings
 // reaches every phone within a minute without a new APK.
@@ -77,6 +99,7 @@ router.post('/register', registerLimiter, async (req, res) => {
         ...tokens,
         created,
         tracking: trackingConfig(config),
+        update: updateInfo(appVersion),
         privacyNotice: PRIVACY_NOTICE,
       },
     });
@@ -138,6 +161,16 @@ router.get('/me', async (req, res) => {
 // repo.startRide).
 router.post('/rides/start', writeLimiter, async (req, res) => {
   const { deviceId, appVersion } = req.body || {};
+  // Too old to start a ride: the message is what every older app shows,
+  // word for word, under Start Ride.
+  if (versionBefore(appVersion, APP_MIN)) {
+    return res.status(426).json({
+      success: false,
+      code: 'UPDATE_REQUIRED',
+      message: `Please update the app first. Open ${APK_URL.replace(/^https:\/\//, '')} in Chrome, tap Download, then Install (over this app — nothing is lost). Then press Start Ride again.`,
+      data: { update: updateInfo(appVersion) },
+    });
+  }
   // A ride the phone started by itself with no signal: its own id, and the
   // time it really started, moved onto the server's clock. Bounded: not in
   // the future, not more than a working day ago.
@@ -193,11 +226,12 @@ router.get('/rides/active', async (req, res) => {
         stoppedAt: last?.stoppedAt || null,
         reason: last?.stopReason || null,
         kind: last?.stopKind || null,
+        update: updateInfo(req.query.v),
       },
     });
   }
   const { config } = await repo.getConfig();
-  res.json({ success: true, data: { active: true, rideId: ride.id, startedAt: ride.startedAt, lastPointAt: ride.lastPointAt || null, serverTime: Date.now(), tracking: trackingConfig(config) } });
+  res.json({ success: true, data: { active: true, rideId: ride.id, startedAt: ride.startedAt, lastPointAt: ride.lastPointAt || null, serverTime: Date.now(), tracking: trackingConfig(config), update: updateInfo(req.query.v) } });
 });
 
 // POST /driver/rides/:rideId/points { points: [...] }

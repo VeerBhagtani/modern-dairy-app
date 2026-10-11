@@ -174,6 +174,21 @@ public class BatteryOptimisationPlugin extends Plugin {
         call.resolve(result);
     }
 
+    /* Open a link in the phone's browser — the app's update download. */
+    @PluginMethod
+    public void openUrl(PluginCall call) {
+        String url = call.getString("url");
+        if (url == null || !url.startsWith("https://")) { call.reject("A https link is required."); return; }
+        try {
+            Intent view = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            view.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(view);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("No browser to open the link.");
+        }
+    }
+
     private static boolean openDetails(Context context) {
         try {
             Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
