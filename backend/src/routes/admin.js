@@ -124,29 +124,25 @@ router.get('/dashboard', requireRole('viewer'), async (req, res) => {
   const today = repo.dayKeyFor(now);
 
   await housekeeping(now);
-  const [drivers, todays, running, liveSnap, alerts] = await Promise.all([
+  const todayStart = Date.parse(`${today}T00:00:00+05:30`);
+  const [drivers, todays, running, liveSnap, alerts, recent] = await Promise.all([
     repo.listDrivers({ includeInactive: true }),
-    repo.listRides({ from: Date.parse(`${today}T00:00:00+05:30`), limit: 500 }),
-    // A ride still running from an earlier day is today's work too. Listing
-    // only rides that STARTED today hid every driver whose ride nobody had
-    // stopped: their points arrived, and the dashboard showed nothing.
+    repo.listRides({ from: todayStart, limit: 500 }),
+    // Rides run overnight until the office closes them (a 7:30 PM round is
+    // closed at reporting time next morning), so a ride still running from an
+    // earlier day is on the board, with its kilometres.
     repo.activeRides(),
     repo.C.live().get(),
     repo.openAlerts(),
+    // …and one from yesterday the office closed this morning.
+    repo.listRides({ from: todayStart - 864e5, to: todayStart - 1, limit: 500 }),
   ]);
-  // Rides are one per day. A running ride from an earlier day is closed at the
-  // end of its day right here — housekeeping only runs every few minutes — and
-  // then calculated like any finished ride, but it is not TODAY's: today's
-  // figures count today's rides only. Adding it in reported yesterday
-  // afternoon's kilometres as this morning's.
   const seen = new Set(todays.map((r) => r.id));
   const earlier = running.filter((r) => !seen.has(r.id));
-  for (const r of earlier) {
-    // eslint-disable-next-line no-await-in-loop
-    await repo.closeIfDayOver(r, now);
-  }
-  const rides = todays;
-  const calculation = await bringUpToDate(todays.concat(earlier));
+  earlier.forEach((r) => seen.add(r.id));
+  const closedToday = recent.filter((r) => !seen.has(r.id) && (r.stoppedAt || 0) >= todayStart);
+  const rides = todays.concat(earlier, closedToday);
+  const calculation = await bringUpToDate(rides);
   const live = new Map(liveSnap.docs.map((d) => [d.id, d.data()]));
   const ridesByDriver = new Map();
   for (const r of rides) {

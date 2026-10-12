@@ -34,10 +34,13 @@ test('a very long silence escalates to critical', () => {
 });
 
 test('a long-running ride warns before the hard auto-stop', () => {
-  const a = evaluateRideAlerts(ride({ startedAt: NOW - 13 * 3600000 }), CFG, NOW);
+  // Rides run overnight now (closed by the office next morning), so a 13 h
+  // ride is normal; the warning comes at 16 h, the hard stop at 24 h.
+  assert.ok(!evaluateRideAlerts(ride({ startedAt: NOW - 13 * 3600000 }), CFG, NOW).some((x) => x.kind === ALERT.RIDE_TOO_LONG));
+  const a = evaluateRideAlerts(ride({ startedAt: NOW - 17 * 3600000 }), CFG, NOW);
   const long = a.find((x) => x.kind === ALERT.RIDE_TOO_LONG);
   assert.ok(long);
-  assert.match(long.detail, /auto-close at 16 h/);
+  assert.match(long.detail, /auto-close at 24 h/);
 });
 
 test('a stopped ride raises nothing at all', () => {

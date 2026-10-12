@@ -317,22 +317,29 @@ const dayKeyFor = (ms) => new Date(ms + 5.5 * 3600000).toISOString().slice(0, 10
 // The last millisecond of an IST calendar day.
 const endOfDayMs = (dayKey) => Date.parse(`${dayKey}T23:59:59.999+05:30`);
 const DAY_END_REASON = (dayKey) => `The day ${dayKey} ended. Each day is kept as its own ride.`;
+const NEXT_RIDE_REASON = (dayKey) => `The ride of ${dayKey} was still open when the next ride started; closed then.`;
 
-/* One ride per day.
+/* Rides are NOT closed at midnight (office decision, 2026-10-12).
  *
- * Only the office stops a ride, and nobody stops every ride every evening, so
- * rides used to run on for days: Start Ride the next morning returned the same
- * ride, and a week of driving became one ride with one total. A ride now ends
- * with its day. It is closed at the end of that day — not when somebody next
- * notices — so its points up to midnight stay in it and later ones are refused
- * from it and go to the next day's ride instead.
+ * A driver leaves at 7:30 PM, finishes the round, goes home, and the office
+ * closes that ride at reporting time the next morning. Cutting it at midnight
+ * refused every fix after 00:00 (and the phone deleted them), and stopped the
+ * recorder mid-evening. A ride now runs until the office stops it; travel
+ * after the last restaurant is UNKNOWN, never business, by the
+ * classification rules. Safety nets: Start Ride for a new ride closes an
+ * older day's ride at that moment (startRide), and autoStopAfterHours closes
+ * a ride nobody stopped at all.
  *
- * Called from every place that touches an active ride (the phone starting,
- * checking and uploading; the dashboard looking), because there is no
- * scheduler to do it at midnight. Returns the closed ride, or null if the ride
- * was not over.
+ * Kept, as a no-op, because every path that touches a running ride calls it.
  */
+// eslint-disable-next-line no-unused-vars
 async function closeIfDayOver(ride, nowMs = Date.now()) {
+  return null;
+}
+
+// The old midnight close, kept for reference and for rides closed under it.
+// eslint-disable-next-line no-unused-vars
+async function closeAtDayEnd(ride, nowMs = Date.now()) {
   if (!ride || ride.status !== 'active' || !ride.dayKey) return null;
   if (ride.dayKey >= dayKeyFor(nowMs)) return null;
   const id = ride.id || ride.rideId;
@@ -370,10 +377,12 @@ async function startRide(driverId, meta = {}) {
     // this same transaction, and today gets a new ride. Only a ride from today
     // is carried on.
     const today = dayKeyFor(now);
+    // Closed at the moment the new ride starts, not at its own midnight:
+    // the night's fixes belong to it.
     const closeOld = (ref, data) => {
       tx.update(ref, {
-        status: STOP_STATUS.day_end, stoppedAt: Math.min(now, endOfDayMs(data.dayKey)),
-        stoppedBy: 'system:day_end', stopReason: DAY_END_REASON(data.dayKey), stopKind: 'day_end',
+        status: STOP_STATUS.day_end, stoppedAt: Math.max(data.startedAt || 0, now),
+        stoppedBy: 'system:day_end', stopReason: NEXT_RIDE_REASON(data.dayKey), stopKind: 'day_end',
       });
       closedForDayEnd.push({ rideId: ref.id, dayKey: data.dayKey });
     };
@@ -431,7 +440,7 @@ async function startRide(driverId, meta = {}) {
     return { rideId, ...ride, alreadyActive: false };
   });
   for (const c of closedForDayEnd) {
-    const reason = DAY_END_REASON(c.dayKey);
+    const reason = NEXT_RIDE_REASON(c.dayKey);
     /* eslint-disable no-await-in-loop */
     await writeAudit({ adminId: 'system:day_end', action: 'ride.day_end', target: c.rideId, after: { reason, kind: 'day_end' } }).catch(() => {});
     await writeEvent({ driverId, rideId: c.rideId, kind: 'ride_stopped', detail: { by: 'system:day_end', reason, kind: 'day_end' } }).catch(() => {});
@@ -577,7 +586,10 @@ async function ingestPoints(rideId, driverId, points, { health = null, clockSkew
     }
     tx.set(liveRef, update, { merge: true });
   });
-  if (healthEvent) await writeEvent({ driverId, rideId, kind: 'health', detail: healthEvent }).catch(() => {});
+  if (healthEvent) {
+    await writeEvent({ driverId, rideId, kind: 'health', detail: healthEvent }).catch(() => {});
+    if (healthEvent.phone) await C.drivers().doc(driverId).set({ phoneModel: healthEvent.phone, androidVersion: healthEvent.android || null, appVersion: healthEvent.appVersion || null }, { merge: true }).catch(() => {});
+  }
 
   return { written, duplicates, serverTs };
 }
@@ -594,7 +606,10 @@ async function recordHealth(driverId, rideId, health) {
     changed = healthChanged(prev.health, health);
     tx.set(liveRef, { driverId, health, healthAt: now, healthRideId: rideId || null, lastContactAt: now }, { merge: true });
   });
-  if (changed) await writeEvent({ driverId, rideId: rideId || null, kind: 'health', detail: health }).catch(() => {});
+  if (changed) {
+    await writeEvent({ driverId, rideId: rideId || null, kind: 'health', detail: health }).catch(() => {});
+    if (health && health.phone) await C.drivers().doc(driverId).set({ phoneModel: health.phone, androidVersion: health.android || null, appVersion: health.appVersion || null }, { merge: true }).catch(() => {});
+  }
   return { changed };
 }
 

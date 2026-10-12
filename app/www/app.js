@@ -24,7 +24,7 @@
   var BRAND = window.BRANDING || {};
   var API = String(CFG.API_BASE || '').replace(/\/+$/, '');
   var HAS_SERVER = !!API;
-  var APP_VERSION = '2.4.0';
+  var APP_VERSION = '2.5.0';
 
   var $ = function (id) { return document.getElementById(id); };
   var show = function (el, on) { if (el) el.hidden = !on; };
@@ -1820,7 +1820,7 @@
       // driver's history and the office's reports show one row per day. That
       // is not the office stopping anybody, and it must not read like it.
       n.innerHTML = state.stoppedInfo.kind === 'day_end'
-        ? '<b>Yesterday\'s ride has ended.</b> Each day is its own ride. Press Start Ride to begin today.'
+        ? '<b>Your previous ride has been closed.</b> Press Start Ride to begin the next one.'
         : '<b>The office stopped your ride.</b> '
           + esc(state.stoppedInfo.kind === 'timeout'
             ? 'It was closed automatically after running a long time.'

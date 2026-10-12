@@ -61,3 +61,17 @@ test('uploads carry the phone clock and state, back off with jitter, and sign in
   // The heartbeat is how a phone with no GPS fixes still hears the office stop the ride.
   assert.match(SVC, /call\("POST", "\/driver\/health", body\)[\s\S]*activeRideId[\s\S]*rideEnded\(\)/);
 });
+
+test('overnight rides: GPS slows to every 20 s when parked 10 min, full rate the moment it moves', () => {
+  assert.match(SVC, /GPS_MOVING_MS = 2000L/);
+  assert.match(SVC, /GPS_PARKED_MS = 20000L/);
+  assert.match(SVC, /PARK_AFTER_MS = 10 \* 60 \* 1000L/);
+  const adapt = SVC.slice(SVC.indexOf('private void adaptRate'), SVC.indexOf('private void setRate'));
+  assert.match(adapt, /d\[0\] > PARK_RADIUS_M[\s\S]*setRate\(GPS_MOVING_MS\)/, 'moving away: back to full rate');
+  assert.match(adapt, /now - anchorAt > PARK_AFTER_MS\)[\s\S]*setRate\(GPS_PARKED_MS\)/);
+});
+
+test('the phone says which phone it is', () => {
+  assert.match(SVC, /h\.put\("phone", \(Build\.MANUFACTURER \+ " " \+ Build\.MODEL\)\.trim\(\)\);/);
+  assert.match(SVC, /h\.put\("android", /);
+});

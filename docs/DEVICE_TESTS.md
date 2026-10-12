@@ -2,7 +2,7 @@
 
 Automated tests cannot prove what Android does to a running app. Do this on
 each phone model the drivers use, with the newest APK
-(https://modern-drivers-pune.web.app/modern-drivers.apk, app version 2.3.0).
+(https://modern-drivers-pune.web.app/modern-drivers.apk, app version 2.5.0).
 Keep the office dashboard open on a laptop: Live fleet, and the driver's
 **Tracking diagnostics**.
 
@@ -58,6 +58,11 @@ Keep the office dashboard open on a laptop: Live fleet, and the driver's
 11. **Distance** — compare the day's measured km with the car's trip meter or
     Google Maps timeline for the same route; note the difference.
 12. **Battery** — note battery % at start and after 2 h of riding.
+13. **Overnight** — start an evening round, go home, leave the phone parked.
+    Diagnostics → GPS rate shows "parked" after ~10 min; the ride is still
+    running in the morning with the night's route; note battery overnight.
+    The office closes it; the phone then shows "previous ride has been
+    closed".
 
 ## Pass criteria
 

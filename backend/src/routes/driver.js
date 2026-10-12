@@ -52,7 +52,7 @@ const PRIVACY_NOTICE = {
  * running is never interrupted. Raise these with each release that must
  * reach everyone (env APP_MIN_VERSION / APP_LATEST_VERSION override).
  */
-const APP_LATEST = process.env.APP_LATEST_VERSION || '2.4.0';
+const APP_LATEST = process.env.APP_LATEST_VERSION || '2.5.0';
 const APP_MIN = process.env.APP_MIN_VERSION || '2.3.0';
 const APK_URL = process.env.APK_URL || 'https://modern-drivers-pune.web.app/modern-drivers.apk';
 function versionBefore(v, ref) {
@@ -315,7 +315,7 @@ router.post('/rides/:rideId/points', gpsIngestLimiter, async (req, res) => {
   const accepted = [];
   const rejected = afterStop.map((p) => ({
     clientPointId: p?.clientPointId ?? null,
-    error: ride.stopKind === 'day_end' ? 'recorded after this ride\'s day ended' : 'recorded after the office stopped this ride',
+    error: ride.stopKind === 'day_end' ? 'recorded after this ride was closed' : 'recorded after the office stopped this ride',
   })).concat(beforeStart.map((p) => ({
     clientPointId: p?.clientPointId ?? null,
     error: 'recorded before this ride started',

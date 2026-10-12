@@ -1,9 +1,9 @@
-// One ride per day.
+// Days and rides.
 //
-// Only the office stops a ride, and nobody stops every ride every evening, so
-// rides ran on for days: Start Ride the next morning returned the same ride,
-// and a week of driving became one ride with one total. A ride now ends with
-// its day, at the end of that day.
+// A ride belongs to the day it started (IST). It is NOT cut at midnight: a
+// driver who leaves at 7:30 PM is recorded until the office closes the ride
+// next morning. A new ride closes an older day's ride that is still open, and
+// a ride nobody stops is closed after autoStopAfterHours.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Module from 'node:module';
@@ -38,41 +38,28 @@ test('a day ends at the last millisecond before IST midnight', () => {
   assert.equal(dayKeyFor(end + 1), '2026-09-25');
 });
 
-test('a ride from an earlier day is closed at the end of ITS day, not when noticed', () => {
-  // So its points up to midnight stay in it, and later ones are refused from
-  // it rather than being counted as that day's driving.
-  const fn = REPO.slice(REPO.indexOf('async function closeIfDayOver'), REPO.indexOf('async function', REPO.indexOf('async function closeIfDayOver') + 10));
-  assert.match(fn, /if \(ride\.dayKey >= dayKeyFor\(nowMs\)\) return null;/);
-  assert.match(fn, /stoppedAt: Math\.min\(nowMs, endOfDayMs\(ride\.dayKey\)\)/);
-  assert.match(fn, /kind: 'day_end'/);
+test('a ride is not closed at midnight: it runs until the office stops it', () => {
+  // A 7:30 PM round is closed by the office at reporting time next morning.
+  const fn = REPO.slice(REPO.indexOf('async function closeIfDayOver'), REPO.indexOf('async function closeAtDayEnd'));
+  assert.match(fn, /return null;/);
+  assert.doesNotMatch(fn, /stopRide\(/);
 });
 
-test('Start Ride on a new day closes the old ride and starts a new one', () => {
+test('Start Ride for a new ride closes an older day\'s open ride at that moment, not at its midnight', () => {
   const fn = REPO.slice(REPO.indexOf('async function startRide'), REPO.indexOf('// The only way a ride stops.'));
-  assert.match(fn, /const current = open\.find\(\(d\) => \(d\.data\(\)\.dayKey \|\| today\) >= today\);/,
-    'only a ride from today is carried on');
+  assert.match(fn, /const current = open\.find\(\(d\) => \(d\.data\(\)\.dayKey \|\| today\) >= today\);/);
   assert.match(fn, /for \(const d of open\) if \(d !== current\) closeOld\(d\.ref, d\.data\(\)\);/);
+  assert.match(fn, /stoppedAt: Math\.max\(data\.startedAt \|\| 0, now\)/, 'the night\'s fixes stay in it');
 });
 
-test('every path that touches a running ride closes a finished day first', () => {
-  const drv = read('backend/src/routes/driver.js');
-  const active = drv.slice(drv.indexOf("router.get('/rides/active'"), drv.indexOf("router.post('/rides/:rideId/points'"));
-  assert.match(active, /repo\.closeIfDayOver\(ride\)/, 'the phone checking its ride');
-  const points = drv.slice(drv.indexOf("router.post('/rides/:rideId/points'"));
-  assert.match(points, /repo\.closeIfDayOver\(ride\)/, 'the phone uploading');
-  assert.match(read('backend/src/services/rideProcessing.js'), /repo\.closeIfDayOver\(ride, nowMs\)/, 'housekeeping');
-  assert.match(read('backend/src/routes/admin.js'), /await repo\.closeIfDayOver\(r, now\);/, 'the dashboard');
-});
-
-test('today\'s dashboard figures count today\'s rides only', () => {
+test('the dashboard shows a ride running since last night, and one the office closed this morning', () => {
   const adm = read('backend/src/routes/admin.js');
-  assert.match(adm, /const rides = todays;/);
+  assert.match(adm, /const rides = todays\.concat\(earlier, closedToday\);/);
+  assert.match(adm, /\(r\.stoppedAt \|\| 0\) >= todayStart/);
 });
 
-test('a day-end close says so, and is not presented as the office stopping anyone', () => {
-  const app = read('app/www/app.js');
-  assert.match(app, /state\.stoppedInfo\.kind === 'day_end'/);
-  assert.match(app, /Each day is its own ride\. Press Start Ride to begin today\./);
-  const drv = read('backend/src/routes/driver.js');
-  assert.match(drv, /recorded after this ride\\'s day ended/);
+test('safety net: a ride nobody stops is closed after a full day, and flagged before that', () => {
+  const cfg = read('backend/src/drivers/config.js');
+  assert.match(cfg, /autoStopAfterHours: 24,/);
+  assert.match(cfg, /longRideAlertHours: 16,/);
 });

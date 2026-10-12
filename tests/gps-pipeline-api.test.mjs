@@ -386,3 +386,65 @@ test('an app too old to start a ride is told to update, in words every old app s
     assert.equal(act.body.data.update.required, false);
   } finally { t.close(); }
 });
+
+test('an evening ride runs overnight: fixes after midnight are kept until the office closes it next morning', async () => {
+  const t = await boot();
+  try {
+    const d = await driver(t, 'Night Round', 12);
+    // Left at 7:30 PM yesterday (13 h ago); the ride belongs to yesterday.
+    const startedAt = Date.now() - 13 * 3600e3;
+    const yesterday = t.repo.dayKeyFor(startedAt);
+    await t.db.collection('rides').doc(d.rideId).set({ startedAt, dayKey: yesterday }, { merge: true });
+    // A fix every 5 minutes all night, up to now.
+    const pts = drive({ prefix: 'night', t0: startedAt + 60000, count: 155, dt: 5 * 60000 });
+    pts.push({ ...pts[154], clientPointId: 'night:now', deviceTs: Date.now() - 10000 });   // and one just now
+    for (let i = 0; i < pts.length; i += 50) {
+      const r = await upload(t, d, pts.slice(i, i + 50));
+      assert.equal(r.body.data.rejected.length, 0, JSON.stringify(r.body.data.rejected.slice(0, 2)));
+      assert.equal(r.body.data.rideActive, true, 'still running after midnight');
+    }
+    const ride = await t.repo.getRide(d.rideId);
+    assert.equal(ride.status, 'active');
+    assert.equal(ride.pointCount, 156);
+    const active = await t.call('GET', '/driver/rides/active?v=2.4.0', null, d.token);
+    assert.equal(active.body.data.active, true, 'the phone is not told to stop at midnight');
+    const row = (await t.admin('GET', '/admin/dashboard')).body.data.drivers.find((x) => x.driverId === d.id);
+    assert.equal(row.rideStatus, 'active', 'on the board this morning');
+    assert.equal(row.tracking.state, 'LIVE');
+    // The office closes it at reporting time.
+    const stop = await t.admin('POST', `/admin/rides/${d.rideId}/stop`, { reason: 'Round closed at reporting time', driverId: d.id });
+    assert.equal(stop.status, 200, JSON.stringify(stop.body));
+    const after = (await t.admin('GET', '/admin/dashboard')).body.data.drivers.find((x) => x.driverId === d.id);
+    assert.equal(after.tracking.state, 'RIDE_STOPPED', 'closed this morning: still shown, as stopped');
+    // The next ride starts as a new ride.
+    const next = await t.call('POST', '/driver/rides/start', { deviceId: 'dev-12-abcdef', appVersion: '2.4.0' }, d.token);
+    assert.notEqual(next.body.data.rideId, d.rideId);
+  } finally { t.close(); }
+});
+
+test('a new ride closes a previous day\'s ride still open, at the moment the new one starts', async () => {
+  const t = await boot();
+  try {
+    const d = await driver(t, 'Forgot To Close', 13);
+    const startedAt = Date.now() - 14 * 3600e3;
+    await t.db.collection('rides').doc(d.rideId).set({ startedAt, dayKey: t.repo.dayKeyFor(Date.now() - 864e5) }, { merge: true });
+    const next = await t.call('POST', '/driver/rides/start', { deviceId: 'dev-13-abcdef', appVersion: '2.4.0' }, d.token);
+    assert.notEqual(next.body.data.rideId, d.rideId);
+    const old = await t.repo.getRide(d.rideId);
+    assert.notEqual(old.status, 'active');
+    assert.ok(old.stoppedAt >= Date.now() - 60000, 'closed now, so the night\'s fixes stay in it');
+  } finally { t.close(); }
+});
+
+test('the phone model reported by the app is kept on the driver, for the Drivers list', async () => {
+  const t = await boot();
+  try {
+    const d = await driver(t, 'Phone Model', 14);
+    await t.call('POST', '/driver/health', { sentAt: Date.now(), recorder: 'native', phone: 'Xiaomi Redmi Note 12', android: '13 (SDK 33)', appVersion: '2.5.0' }, d.token);
+    const drv = (await t.db.collection('drivers').doc(d.id).get()).data();
+    assert.equal(drv.phoneModel, 'Xiaomi Redmi Note 12');
+    assert.equal(drv.androidVersion, '13 (SDK 33)');
+    const list = await t.admin('GET', '/admin/list');
+    assert.equal(list.body.data.find((x) => x.id === d.id).phoneModel, 'Xiaomi Redmi Note 12');
+  } finally { t.close(); }
+});

@@ -91,14 +91,14 @@ const DEFAULTS = {
   // ---- ride lifecycle -------------------------------------------------
   // A ride nobody stopped is auto-closed after this many hours, recorded as
   // status 'auto_closed' with the threshold that closed it. Never silent.
-  autoStopAfterHours: 16,
+  autoStopAfterHours: 24,
   // Position older than this is NOT live. The dashboard must say "stale".
   staleLocationSec: 180,
   // No GPS at all for this long during an active ride raises an alert.
   gpsMissingAlertMin: 15,
   // A ride running longer than this raises a "still active" alert (before the
   // hard auto-stop above).
-  longRideAlertHours: 12,
+  longRideAlertHours: 16,
 
   // ---- upload ---------------------------------------------------------
   // Max points the driver app may send in one batch.

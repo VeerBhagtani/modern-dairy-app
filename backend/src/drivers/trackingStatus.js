@@ -84,7 +84,7 @@ function trackingStatus({ ride, live, nowMs, cfg }) {
 
   if (!ride) return out(STATE.NOT_STARTED, 'No ride today.');
   if (ride.status !== 'active') {
-    const by = ride.stopKind === 'day_end' ? 'closed at the end of the day' : ride.stoppedByName ? `stopped by ${ride.stoppedByName}` : 'stopped by the office';
+    const by = ride.stopKind === 'day_end' ? 'closed when the next ride started' : ride.stoppedByName ? `stopped by ${ride.stoppedByName}` : 'stopped by the office';
     return out(STATE.RIDE_STOPPED, `Ride ${by} at ${hm(ride.stoppedAt)}.`, ride.stoppedAt || null);
   }
 

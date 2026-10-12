@@ -72,6 +72,17 @@ public class TrackingService extends Service implements LocationListener {
     // GPS is preferred; a network position is used only when GPS has said
     // nothing for this long (indoors).
     private static final long GPS_PREFERRED_MS = 20000L;
+    // Battery: a ride now runs overnight (closed by the office next morning).
+    // GPS every 2 s while moving; once the phone has stayed within PARK_RADIUS_M
+    // for PARK_AFTER_MS, every 20 s, back to 2 s as soon as it moves away.
+    private static final long GPS_MOVING_MS = 2000L;
+    private static final long GPS_PARKED_MS = 20000L;
+    private static final long PARK_AFTER_MS = 10 * 60 * 1000L;
+    private static final float PARK_RADIUS_M = 50f;
+    private long gpsIntervalMs = GPS_MOVING_MS;
+    private double anchorLat;
+    private double anchorLng;
+    private long anchorAt = 0L;
 
     static volatile boolean running = false;     // the service exists
     static volatile boolean recording = false;   // location updates are requested
@@ -139,11 +150,19 @@ public class TrackingService extends Service implements LocationListener {
     private void startRecording() {
         if (!goForeground()) return;
         if (recording) return;
+        gpsIntervalMs = GPS_MOVING_MS;
+        anchorAt = 0L;
+        recording = request(gpsIntervalMs);
+        state("recording");
+    }
+
+    /* (Re)register for fixes at this GPS interval. Both providers are
+     * registered even when switched off: Android delivers fixes as soon as the
+     * driver turns Location back on. */
+    private boolean request(long gpsMs) {
         boolean any = false;
-        // Both are registered even when switched off: Android delivers fixes
-        // as soon as the driver turns Location back on.
         try {
-            locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 0f, this, locThread.getLooper());
+            locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, gpsMs, 0f, this, locThread.getLooper());
             any = true;
         } catch (SecurityException e) {
             note("recorderError", "location permission refused");
@@ -156,9 +175,28 @@ public class TrackingService extends Service implements LocationListener {
         } catch (SecurityException | IllegalArgumentException ignored) {
             // No network location on this phone: GPS alone.
         }
-        recording = any;
         if (any) note("recorderError", null);
-        state("recording");
+        return any;
+    }
+
+    /* Parked for a while: fewer GPS fixes. Moving again: full rate at once. */
+    private void adaptRate(Location l, long now) {
+        float[] d = new float[1];
+        if (anchorAt != 0L) Location.distanceBetween(anchorLat, anchorLng, l.getLatitude(), l.getLongitude(), d);
+        if (anchorAt == 0L || d[0] > PARK_RADIUS_M) {
+            anchorLat = l.getLatitude();
+            anchorLng = l.getLongitude();
+            anchorAt = now;
+            if (gpsIntervalMs != GPS_MOVING_MS) setRate(GPS_MOVING_MS);
+        } else if (gpsIntervalMs == GPS_MOVING_MS && now - anchorAt > PARK_AFTER_MS) {
+            setRate(GPS_PARKED_MS);
+        }
+    }
+
+    private void setRate(long gpsMs) {
+        try { locations.removeUpdates(this); } catch (Exception ignored) { /* re-registered below */ }
+        gpsIntervalMs = gpsMs;
+        recording = request(gpsMs);
     }
 
     private void stopRecording() {
@@ -220,6 +258,7 @@ public class TrackingService extends Service implements LocationListener {
         boolean gps = LocationManager.GPS_PROVIDER.equals(l.getProvider());
         if (gps) lastGpsAt = now;
         else if (now - lastGpsAt < GPS_PREFERRED_MS) return;
+        if (recording && (gps || now - lastGpsAt >= GPS_PREFERRED_MS)) adaptRate(l, now);
         long ts = l.getTime() > 0 ? l.getTime() : now;
 
         SharedPreferences.Editor e = prefs.edit();
@@ -607,6 +646,10 @@ public class TrackingService extends Service implements LocationListener {
             if (b != null) h.put("batteryPct", b);
             h.put("appVersion", prefs.getString("appVersion", null));
             h.put("recorder", "native");
+            // Which phone this is: the office does not otherwise know.
+            h.put("phone", (Build.MANUFACTURER + " " + Build.MODEL).trim());
+            h.put("android", Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")");
+            h.put("gpsMode", gpsIntervalMs == GPS_PARKED_MS ? "parked" : "moving");
         } catch (Exception ignored) {
             // A partial report is still a report.
         }
