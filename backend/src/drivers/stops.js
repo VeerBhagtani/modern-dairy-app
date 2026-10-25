@@ -13,6 +13,47 @@
 
 const { haversineM, centroid } = require('./geo');
 
+/* Was the vehicle parked, or crawling in traffic?
+ *
+ * Inside a stop the fixes of a parked phone scatter around one point (GPS
+ * noise, indoor wander) with no direction. In a jam or a slow queue the
+ * vehicle inches forward: the fixes drift steadily one way. Measured as the
+ * distance from where the stop's first quarter of fixes sat to where its last
+ * quarter sat, and how many steps went forward along that line. A long red
+ * light with no movement at all looks parked: that is said, not guessed.
+ */
+const CRAWL_MIN_DRIFT_M = 25;
+const CRAWL_MIN_FORWARD = 0.6;
+function motionOf(all) {
+  const out = { driftM: 0, forward: 0, pattern: 'still' };
+  // Only the middle of the stop: the fixes of arriving and leaving fall
+  // inside the radius too, and would look like steady movement. Fixes at
+  // driving speed are left out for the same reason.
+  const t0 = all[0].deviceTs; const t1 = all[all.length - 1].deviceTs;
+  const edge = (t1 - t0) * 0.15;
+  const c = all.filter((p) => p.deviceTs >= t0 + edge && p.deviceTs <= t1 - edge
+    && !(Number.isFinite(p.speedMps) && p.speedMps > 3));
+  if (c.length < 4) return out;
+  const q = Math.max(1, Math.floor(c.length / 4));
+  const a = centroid(c.slice(0, q));
+  const b = centroid(c.slice(-q));
+  const drift = haversineM(a, b);
+  // Forward steps: each fix a little further from the start than the last.
+  let fwd = 0; let steps = 0;
+  for (let i = 1; i < c.length; i += 1) {
+    const d0 = haversineM(a, c[i - 1]); const d1 = haversineM(a, c[i]);
+    if (Math.abs(d1 - d0) < 1) continue;   // standing still: neither way
+    steps += 1;
+    if (d1 > d0) fwd += 1;
+  }
+  const accs = c.map((p) => p.accuracyM).filter((x) => Number.isFinite(x)).sort((x, y) => x - y);
+  const medAcc = accs.length ? accs[Math.floor(accs.length / 2)] : 10;
+  out.driftM = Math.round(drift);
+  out.forward = steps ? Math.round((fwd / steps) * 100) / 100 : 0;
+  if (drift >= Math.max(CRAWL_MIN_DRIFT_M, 1.5 * medAcc) && out.forward >= CRAWL_MIN_FORWARD) out.pattern = 'crawl';
+  return out;
+}
+
 function median(xs) {
   if (!xs.length) return null;
   const a = [...xs].sort((x, y) => x - y);
@@ -93,8 +134,10 @@ function detectStops(points, cfg) {
       // Typical accuracy: whether the fixes could place the stop inside a
       // geofence at all.
       medianAccuracyM: median(c.map((p) => p.accuracyM).filter((a) => Number.isFinite(a))),
+      // 'crawl' = kept inching forward (traffic); 'still' = did not move.
+      motion: motionOf(c),
     };
   });
 }
 
-module.exports = { detectStops };
+module.exports = { detectStops, motionOf, CRAWL_MIN_DRIFT_M };

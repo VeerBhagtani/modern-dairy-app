@@ -155,7 +155,9 @@ function buildJourney({ ride, processing, replay, places = {} }) {
       category,
       label: category === CATEGORY.MODERN_DAIRY || category === CATEGORY.RESTAURANT ? (s.place && s.place.name)
         : category === CATEGORY.MISSED ? `Missed delivery: ${s.place ? s.place.name : 'restaurant'}`
-          : s.passedBy ? `Paused by ${s.passedBy.name} (not in plan)` : CATEGORY_LABEL[category],
+          : s.passedBy ? (s.passedBy.traffic ? `Slow traffic by ${s.passedBy.name} (not in plan)` : `Paused by ${s.passedBy.name} (not in plan)`) : CATEGORY_LABEL[category],
+      // Parked, or crawling in traffic, while stopped (stops.motionOf).
+      motion: s.motion || (s.stop && s.stop.motion) || null,
       // A restaurant not on today's round: passed briefly, or visited extra.
       passedBy: s.passedBy || null,
       notInPlan: !!s.notInPlan,
@@ -264,8 +266,8 @@ function buildJourney({ ride, processing, replay, places = {} }) {
   }
   const notInPlan = [
     ...passedHalts.map((v) => ({ kind: 'passed', placeId: v.placeId, placeName: v.placeName, startTs: v.startTs, endTs: v.endTs, durationSec: v.dwellSec, lat: v.lat, lng: v.lng })),
-    ...stops.filter((st) => st.passedBy).map((st) => ({ kind: 'passed', stop: st.n, placeId: st.passedBy.id, placeName: st.passedBy.name, startTs: st.arrivalTs, endTs: st.departureTs, durationSec: st.durationSec, lat: st.lat, lng: st.lng })),
-    ...stops.filter((st) => st.notInPlan).map((st) => ({ kind: 'visited', stop: st.n, placeId: st.placeId, placeName: st.placeName, startTs: st.arrivalTs, endTs: st.departureTs, durationSec: st.durationSec, lat: st.lat, lng: st.lng })),
+    ...stops.filter((st) => st.passedBy).map((st) => ({ kind: st.passedBy.traffic ? 'traffic' : 'passed', movedM: st.motion ? st.motion.driftM : null, stop: st.n, placeId: st.passedBy.id, placeName: st.passedBy.name, startTs: st.arrivalTs, endTs: st.departureTs, durationSec: st.durationSec, lat: st.lat, lng: st.lng })),
+    ...stops.filter((st) => st.notInPlan).map((st) => ({ kind: 'visited', check: true, movedM: st.motion ? st.motion.driftM : null, stop: st.n, placeId: st.placeId, placeName: st.placeName, startTs: st.arrivalTs, endTs: st.departureTs, durationSec: st.durationSec, lat: st.lat, lng: st.lng })),
   ].sort((a, b) => a.startTs - b.startTs);
   events.sort((a, b) => a.ts - b.ts || (a.kind === 'start' ? -1 : b.kind === 'start' ? 1 : 0));
   events.push({ kind: active ? 'now' : 'end', ts: rideEnd, label: endPlace.label, category: endPlace.category, at: at(last), totalM: used.length ? used[used.length - 1].d || 0 : 0 });

@@ -278,7 +278,9 @@ window.DRIVERS_JOURNEY = (function () {
         var c = CAT[s.category] || CAT.UNKNOWN;
         return '<li class="' + cls + '" data-ev="' + i + '"><span class="jt">' + hm(e.ts) + '</span>'
           + '<span class="jb"><span class="jdot" style="background:' + c.color + '">' + s.gn + '</span>'
-          + '<b>' + esc(s.label || c.label) + '</b>' + (s.transit ? ' <span class="tiny">(short stop on the way)</span>' : '')
+          + '<b>' + esc(s.label || c.label) + '</b>'
+          + (s.motion && s.motion.pattern === 'crawl' ? ' <span class="tiny">(slow traffic, ' + dur(s.durationSec) + ')</span>' : s.transit ? ' <span class="tiny">(short stop on the way)</span>' : '')
+          + (s.notInPlan ? ' <span class="pill warn">extra visit — check</span>' : '')
           + (s.needsReview ? ' <span class="pill warn">review</span>' : '')
           + '<br><span class="tiny">' + esc(c.label) + ' · ' + hm(s.arrivalTs) + '–' + (s.departureTs ? hm(s.departureTs) : 'now') + ' · ' + dur(s.durationSec)
           + (s.address && s.category !== 'MODERN_DAIRY' ? ' · ' + esc(s.address) : '') + '</span></span></li>';
@@ -308,12 +310,15 @@ window.DRIVERS_JOURNEY = (function () {
   function notInPlanHtml() {
     if (!st.notInPlan.length) return '';
     return '<div class="card"><h2 style="margin-top:0">Restaurants not in today\'s plan</h2>'
-      + '<p class="tiny" style="margin-top:0">Only restaurants in the planned round (or office orders for this driver) can be missed. These were not, so they are shown here instead.</p>'
+      + '<p class="tiny" style="margin-top:0">Only restaurants in the planned round (or office orders for this driver) can be missed. These were not, so they are shown here instead. '
+      + '<b>Extra visit</b>: parked 2 min or more — counted as a visit, check whether goods were delivered (correct it from the stop if not). '
+      + '<b>Slow traffic</b>: kept inching forward — a jam or a queue, not a visit.</p>'
       + '<div style="overflow-x:auto"><table><thead><tr><th>Time</th><th>Restaurant</th><th>How long</th><th>What it was</th></tr></thead><tbody>'
       + st.notInPlan.map(function (x) {
         return '<tr><td>' + hm(x.startTs) + '</td><td>' + esc(x.placeName || 'Restaurant') + (x.gn ? ' <span class="tiny">stop ' + x.gn + '</span>' : '') + '</td>'
           + '<td>' + dur(x.durationSec || 0) + '</td>'
-          + '<td>' + (x.kind === 'visited' ? '<span class="pill warn">extra visit</span> <span class="tiny">2 min or more, not planned</span>'
+          + '<td>' + (x.kind === 'visited' ? '<span class="pill warn">extra visit — check</span> <span class="tiny">parked, did not move — a delivery, or a long red light?</span>'
+            : x.kind === 'traffic' ? '<span class="pill">slow traffic</span> <span class="tiny">kept moving (' + (x.movedM || 0) + ' m) — a jam, not a visit</span>'
             : '<span class="pill">passed by</span> <span class="tiny">under 2 min — not a delivery, not missed</span>') + '</td></tr>';
       }).join('') + '</tbody></table></div></div>';
   }
@@ -534,9 +539,12 @@ window.DRIVERS_JOURNEY = (function () {
   function openStop(i) {
     var s = st.stops[i]; var c = CAT[s.category] || CAT.UNKNOWN;
     modal('<h3 style="margin:0 0 4px"><span class="jdot" style="background:' + c.color + '">' + s.gn + '</span> ' + esc(s.label || c.label) + '</h3>'
-      + '<p class="tiny" style="margin:0 0 10px">' + esc(c.label) + (s.transit ? ' · a short stop on the way' : '') + '</p>'
+      + '<p class="tiny" style="margin:0 0 10px">' + esc(c.label) + (s.motion && s.motion.pattern === 'crawl' ? ' · slow traffic' : s.transit ? ' · a short stop on the way' : '') + '</p>'
       + '<table class="kv">'
       + row('Arrived', hms(s.arrivalTs)) + row('Left', s.departureTs ? hms(s.departureTs) : 'still there') + row('Stayed', dur(s.durationSec))
+      + (s.motion ? row('While stopped', s.motion.pattern === 'crawl'
+        ? 'kept inching forward, ' + s.motion.driftM + ' m — <b>slow traffic</b>'
+        : 'did not move — parked (or a long red light)') : '')
       + row('Location', (isFinite(s.lat) ? s.lat.toFixed(6) + ', ' + s.lng.toFixed(6) : '—') + (s.medianAccuracyM ? ' <span class="tiny">(GPS ±' + s.medianAccuracyM + ' m)</span>' : ''))
       + row('Address', s.address ? esc(s.address) + (s.addressApproximate ? ' <span class="tiny">(approximate)</span>' : '') : '<span class="tiny">not available</span>')
       + row('From the previous stop', kmTxt(s.distanceFromPrevM) + (s.gapFromPrevM ? ' <span class="tiny">+' + kmTxt(s.gapFromPrevM) + ' estimated</span>' : ''))

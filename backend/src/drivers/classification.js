@@ -158,12 +158,20 @@ function classifySegments(segments, points, ctx, cfg) {
     // planned, no order for this driver) is not a delivery and not a missed
     // one: the driver was passing. It is judged like any other pause, with
     // the restaurant noted as passed.
+    //
+    // Stuck in traffic beside a restaurant that is not on the round — a jam,
+    // a queue at a signal — is not a visit either, however long it lasts: the
+    // vehicle kept inching forward (stops.motionOf). It is shown to the office
+    // as slow traffic, with how long and how far.
     const shortStop = stop.dwellSec < cfg.visitMinDwellSec;
+    const crawling = !!(stop.motion && stop.motion.pattern === 'crawl');
     const plannedHit = restaurantHits.find((h) => expected.has(h.place));
-    const passing = restaurantHits.length && shortStop && !plannedHit;
+    const passing = restaurantHits.length && (shortStop || crawling) && !plannedHit;
     if (passing) {
-      seg.passedBy = { id: restaurantHits[0].place.id, name: restaurantHits[0].place.name };
-      evidence.push(ev('passed_not_planned', `${stop.dwellSec}s beside ${restaurantHits[0].place.name}, which is not on today's round — not a delivery, not a missed one`));
+      seg.passedBy = { id: restaurantHits[0].place.id, name: restaurantHits[0].place.name, traffic: crawling && !shortStop };
+      evidence.push(crawling && !shortStop
+        ? ev('slow_traffic', `${Math.round(stop.dwellSec / 60)} min in slow traffic beside ${restaurantHits[0].place.name} (kept moving, ${stop.motion.driftM} m) — traffic, not a visit; it is not on today's round`)
+        : ev('passed_not_planned', `${stop.dwellSec}s beside ${restaurantHits[0].place.name}, which is not on today's round — not a delivery, not a missed one`));
     }
     if (restaurantHits.length && !passing) {
       const hit = shortStop && plannedHit ? plannedHit : restaurantHits[0];
@@ -173,6 +181,12 @@ function classifySegments(segments, points, ctx, cfg) {
       // A real visit to a restaurant that was not on today's round: kept as a
       // visit, and listed apart so the office sees it was extra.
       if (expected.any && !expected.has(place)) seg.notInPlan = true;
+      // At a planned restaurant but crawling the whole time: kept as the
+      // visit, and a person looks (a delivery made from a queue is possible).
+      if (crawling) {
+        seg.needsReview = true;
+        evidence.push(ev('looked_like_traffic', `kept moving slowly here (${stop.motion.driftM} m in ${Math.round(stop.dwellSec / 60)} min) — looks like traffic; check the delivery`));
+      }
       evidence.push(ev('geofence_match', `${place.name}: ${Math.round(hit.distanceM)} m inside a ${Math.round(hit.radiusM)} m geofence`, { placeId: place.id }));
 
       const { support, otherDriver } = ordersSupporting(ctx.orders, place.customerId, ctx.driverId, seg.startTs, seg.endTs, cfg, place.id);
@@ -200,8 +214,15 @@ function classifySegments(segments, points, ctx, cfg) {
         evidence.push(ev('order_record', `${support.length} delivery order(s) for this customer in the time window`, { orderIds: support.map((o) => o.id) }));
       } else if (stop.dwellSec >= cfg.visitMinDwellSec) {
         seg.confidence = CONFIDENCE.MEDIUM;
-        seg.needsReview = false;
+        seg.needsReview = crawling;
         evidence.push(ev('no_order_data', 'no delivery order available to corroborate this visit'));
+        // Parked 2 minutes or more at a customer who is not on today's round
+        // (the driver forgot to add it, or stopped for something else): it
+        // counts as a visit, and the office is asked to check it.
+        if (seg.notInPlan) {
+          seg.needsReview = true;
+          evidence.push(ev('not_in_plan_visit', `${Math.round(stop.dwellSec / 60)} min parked at ${place.name}, which is not on today's round — check whether goods were delivered`));
+        }
       } else {
         // Under the 2-minute minimum: not a delivery. A missed delivery, kept
         // out of business and listed, with the restaurant named.
@@ -301,7 +322,8 @@ function classifySegments(segments, points, ctx, cfg) {
   const candidate = out.map((seg) => seg.kind === SEGMENT_KIND.STOP
     && seg.type === SEGMENT_TYPE.UNKNOWN && seg.anchor === 'unknown'
     && !(seg.evidence || []).some((e) => e.code === 'driver_declared')
-    && seg.stop && seg.stop.dwellSec < cfg.transitStopMaxSec);
+    // A jam is a pause on the way however long it lasts.
+    && seg.stop && (seg.stop.dwellSec < cfg.transitStopMaxSec || (seg.stop.motion && seg.stop.motion.pattern === 'crawl')));
   const posOf = (seg, end) => {
     if (seg.kind === SEGMENT_KIND.STOP && seg.stop) return seg.stop.center;
     const idx = end === 'start' ? seg.startIdx : seg.endIdx;

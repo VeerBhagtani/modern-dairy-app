@@ -124,6 +124,7 @@ function processRideData(input) {
       dwellSec: s.stop?.dwellSec ?? null,
       center: s.stop?.center ?? null,
       medianAccuracyM: s.stop?.medianAccuracyM ?? null,
+      motion: s.stop?.motion ?? null,
       evidence: s.evidence || [],
       originalType: s.originalType || null,
       originalPlace: s.originalPlace || null,
