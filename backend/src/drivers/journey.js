@@ -199,8 +199,8 @@ function buildJourney({ ride, processing, replay, places = {} }) {
   };
   const startStop = stops[0] && stops[0].arrivalTs - rideStart <= 60000 ? stops[0] : null;
   const endStop = stops.length && (stops[stops.length - 1].departureTs == null || rideEnd - stops[stops.length - 1].departureTs <= 60000) ? stops[stops.length - 1] : null;
-  const startPlace = startStop ? { label: startStop.label, category: startStop.category } : placeAt(first) || { label: 'Ride start', category: null };
-  const endPlace = endStop ? { label: endStop.label, category: endStop.category } : placeAt(last) || { label: active ? 'Latest position' : 'Ride end', category: null };
+  const startPlace = startStop ? { label: startStop.label, category: startStop.category, stopN: startStop.n } : placeAt(first) || { label: 'Ride start', category: null };
+  const endPlace = endStop ? { label: endStop.label, category: endStop.category, stopN: endStop.n } : placeAt(last) || { label: active ? 'Latest position' : 'Ride end', category: null };
 
   // ── travel segments between stops ──
   const segments = [];
@@ -233,7 +233,7 @@ function buildJourney({ ride, processing, replay, places = {} }) {
   }
 
   // ── the timeline ──
-  const events = [{ kind: 'start', ts: rideStart, label: startPlace.label, category: startPlace.category, at: at(first) }];
+  const events = [{ kind: 'start', ts: rideStart, label: startPlace.label, category: startPlace.category, stopN: startPlace.stopN ?? null, at: at(first) }];
   let si = 0;
   for (const st of stops) {
     while (si < segments.length && segments[si].to.n === st.n) {
@@ -270,7 +270,7 @@ function buildJourney({ ride, processing, replay, places = {} }) {
     ...stops.filter((st) => st.notInPlan).map((st) => ({ kind: 'visited', check: true, movedM: st.motion ? st.motion.driftM : null, stop: st.n, placeId: st.placeId, placeName: st.placeName, startTs: st.arrivalTs, endTs: st.departureTs, durationSec: st.durationSec, lat: st.lat, lng: st.lng })),
   ].sort((a, b) => a.startTs - b.startTs);
   events.sort((a, b) => a.ts - b.ts || (a.kind === 'start' ? -1 : b.kind === 'start' ? 1 : 0));
-  events.push({ kind: active ? 'now' : 'end', ts: rideEnd, label: endPlace.label, category: endPlace.category, at: at(last), totalM: used.length ? used[used.length - 1].d || 0 : 0 });
+  events.push({ kind: active ? 'now' : 'end', ts: rideEnd, label: endPlace.label, category: endPlace.category, stopN: endPlace.stopN ?? null, at: at(last), totalM: used.length ? used[used.length - 1].d || 0 : 0 });
 
   const dist = processing && processing.distance;
   const totalMeasured = used.length ? used[used.length - 1].d || 0 : 0;
@@ -307,4 +307,36 @@ function buildJourney({ ride, processing, replay, places = {} }) {
   };
 }
 
-module.exports = { buildJourney, CATEGORY, CATEGORY_LABEL, categoryOf };
+/* The stops at no known place that are worth a name from Google Maps:
+ * undecided or personal, not a restaurant, not one passed by. Real stops
+ * first, short pauses on the way after, so a lookup cap spends on the ones
+ * the office reads. */
+function stopsToName(journey) {
+  return journey.stops
+    .filter((s) => !s.placeId && !s.passedBy && (s.category === CATEGORY.UNKNOWN || s.category === CATEGORY.PERSONAL))
+    .sort((a, b) => (a.transit === b.transit ? 0 : a.transit ? 1 : -1));
+}
+
+/* After services/landmarks.js has set `landmark` on stops: "Near Hotel X"
+ * instead of "Unknown stop", everywhere the stop is named. A name only — the
+ * category, and every kilometre, stay exactly as calculated. */
+function applyLandmarks(journey) {
+  const byN = new Map();
+  for (const st of stopsToName(journey)) {
+    if (!st.landmark) continue;
+    st.label = `Near ${st.landmark.name}`;
+    byN.set(st.n, st.label);
+  }
+  if (!byN.size) return journey;
+  for (const g of journey.segments) {
+    if (byN.has(g.from.n)) g.from.label = byN.get(g.from.n);
+    if (byN.has(g.to.n)) g.to.label = byN.get(g.to.n);
+  }
+  for (const e of journey.events) {
+    if (e.kind === 'stop' && byN.has(e.stop)) e.label = byN.get(e.stop);
+    if (e.stopN != null && byN.has(e.stopN)) e.label = byN.get(e.stopN);
+  }
+  return journey;
+}
+
+module.exports = { buildJourney, CATEGORY, CATEGORY_LABEL, categoryOf, stopsToName, applyLandmarks };

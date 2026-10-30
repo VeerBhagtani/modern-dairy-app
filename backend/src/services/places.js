@@ -248,5 +248,5 @@ function acceptNameMismatch(match) {
 
 module.exports = {
   MATCH, GENERIC, distinctive, compareNames, buildQuery, assessResponse, toPoint,
-  acceptNameMismatch, searchOne, searchByName, textSearch, nearby,
+  acceptNameMismatch, searchOne, searchByName, textSearch, nearby, placesPost,
 };

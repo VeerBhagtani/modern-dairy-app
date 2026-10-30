@@ -546,6 +546,9 @@ window.DRIVERS_JOURNEY = (function () {
         ? 'kept inching forward, ' + s.motion.driftM + ' m — <b>slow traffic</b>'
         : 'did not move — parked (or a long red light)') : '')
       + row('Location', (isFinite(s.lat) ? s.lat.toFixed(6) + ', ' + s.lng.toFixed(6) : '—') + (s.medianAccuracyM ? ' <span class="tiny">(GPS ±' + s.medianAccuracyM + ' m)</span>' : ''))
+      + (s.landmark ? row('Nearest on Google Maps', esc(s.landmark.name) + ' · ' + s.landmark.distanceM + ' m'
+        + ' <span class="tiny">(' + (s.landmark.kind === 'restaurant' ? 'nearest restaurant' : 'no restaurant within 150 m — nearest landmark')
+        + '; a name to find the spot by, not a customer)</span>') : '')
       + row('Address', s.address ? esc(s.address) + (s.addressApproximate ? ' <span class="tiny">(approximate)</span>' : '') : '<span class="tiny">not available</span>')
       + row('From the previous stop', kmTxt(s.distanceFromPrevM) + (s.gapFromPrevM ? ' <span class="tiny">+' + kmTxt(s.gapFromPrevM) + ' estimated</span>' : ''))
       + row('Travelled before this stop', kmTxt(s.totalBeforeM))

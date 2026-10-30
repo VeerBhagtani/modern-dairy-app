@@ -169,7 +169,12 @@ function routeLegs(segments, points) {
   const endOf = (s) => (s ? {
     kind: s.type === 'MODERN_DAIRY_FACILITY_STOP' ? 'depot' : s.type === 'LIKELY_RESTAURANT_VISIT' ? 'restaurant' : (s.place ? 'restaurant' : 'other'),
     placeId: s.place ? s.place.id : null,
-    name: s.place ? s.place.name : 'a place that is not a customer',
+    // A stop at no known place is "Unknown stop" here; the office's screens
+    // name it after the nearest restaurant or landmark on Google Maps
+    // (services/landmarks.js). It is not a customer either way.
+    name: s.place ? s.place.name : 'Unknown stop',
+    lat: s.stop?.center?.lat ?? null,
+    lng: s.stop?.center?.lng ?? null,
     at: s.startTs, leftAt: s.endTs, segmentId: s.id,
   } : null);
   const legs = [];

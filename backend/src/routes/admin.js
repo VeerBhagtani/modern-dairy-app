@@ -25,7 +25,8 @@ const mobileVendor = require('../drivers/mobileVendor');
 const { TRUCK_ROUTE_STATUS } = require('../drivers/truckRoute');
 const { customerKey } = require('../drivers/orderWindow');
 const { addAddresses } = require('../services/addresses');
-const { buildJourney } = require('../drivers/journey');
+const { addLandmarks, nearLabel } = require('../services/landmarks');
+const { buildJourney, stopsToName, applyLandmarks } = require('../drivers/journey');
 const nameMatch = require('../services/nameMatch');
 const placesApi = require('../services/places');
 const locationAudit = require('../services/locationAudit');
@@ -322,6 +323,31 @@ router.get('/rides/active', requireRole('viewer'), async (req, res) => {
 
 // The ride detail the individual-driver view is built from: the ride, its
 // processed result with segments, and (optionally) the raw points for replay.
+/* A ride's stops at no known place, named after the nearest restaurant or
+ * landmark on Google Maps: route legs ("Near Hotel X → Sai Restaurant") and
+ * stop segments. Names only; the stored calculation is not touched. */
+async function nameUnknownPlaces(processing) {
+  const segs = processing.segments || [];
+  const byId = new Map(segs.map((sg) => [sg.id, sg]));
+  const items = [];
+  for (const l of processing.legs || []) {
+    for (const e of [l.from, l.to]) {
+      if (!e || e.kind !== 'other' || e.placeId) continue;
+      if (e.name === 'a place that is not a customer') e.name = 'Unknown stop';   // calculated before this wording changed
+      const c = !Number.isFinite(e.lat) && byId.get(e.segmentId) ? byId.get(e.segmentId).center : null;
+      if (c) { e.lat = c.lat; e.lng = c.lng; }
+      items.push(e);
+    }
+  }
+  for (const sg of segs) {
+    if (sg.kind === 'stop' && !sg.place && sg.center) items.push(Object.assign(sg, { lat: sg.center.lat, lng: sg.center.lng }));
+  }
+  if (!items.length) return;
+  const apiKey = await getSecret('geocoding').catch(() => null);
+  await addLandmarks(items, { cache: repo.addressCache, apiKey });
+  for (const l of processing.legs || []) for (const e of [l.from, l.to]) if (e && e.landmark) e.name = nearLabel(e.landmark);
+}
+
 router.get('/rides/:rideId', requireRole('viewer'), async (req, res) => {
   const { rideId } = req.params;
   if (!isValidId(rideId)) return bad(res, 'Invalid ride id');
@@ -338,6 +364,7 @@ router.get('/rides/:rideId', requireRole('viewer'), async (req, res) => {
     repo.declarationsForRide(rideId),
     repo.reviewsForRide(rideId),
   ]);
+  if (processing) await nameUnknownPlaces(processing).catch(() => {});
   res.json({
     success: true,
     data: {
@@ -485,6 +512,10 @@ router.get('/journey', requireRole('viewer'), async (req, res) => {
     const journey = buildJourney({ ride, processing, replay, places });
     await addAddresses(journey.stops.filter((s) => s.category !== 'MODERN_DAIRY' && s.category !== 'RESTAURANT'),
       { cache: repo.addressCache, apiKey }).catch(() => {});
+    // "Near Hotel X" rather than "Unknown stop": a name from Google Maps, never
+    // a customer, never a change to the kilometres.
+    await addLandmarks(stopsToName(journey), { cache: repo.addressCache, apiKey }).catch(() => {});
+    applyLandmarks(journey);
     out.push({
       ride: {
         id: ride.id, dayKey: ride.dayKey, startedAt: ride.startedAt, stoppedAt: ride.stoppedAt || null, status: ride.status,
