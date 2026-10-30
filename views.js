@@ -578,7 +578,8 @@ window.DRIVERS_VIEWS = (function () {
             return '<tr>'
               + '<td>' + time(s.startTs) + '<br><span class="tiny">' + time(s.endTs) + '</span></td>'
               + '<td><b>' + esc(s.type.replace(/_/g, ' ').toLowerCase()) + '</b>'
-              + (s.place ? '<br><span class="tiny">' + esc(s.place.name) + '</span>' : '')
+              + (s.place ? '<br><span class="tiny">' + esc(s.place.name) + '</span>'
+                : s.landmark ? '<br><span class="tiny">Near ' + esc(s.landmark.name) + ' (' + s.landmark.distanceM + ' m, Google Maps — not a customer)</span>' : '')
               + (s.originalType ? '<br><span class="tiny">was ' + esc(s.originalType.replace(/_/g, ' ').toLowerCase()) + ', changed by ' + esc(s.reviewedBy || 'an admin') + '</span>' : '')
               + '</td>'
               + '<td><span class="pill ' + esc(s.confidence) + '">' + esc(s.confidence) + '</span>'
